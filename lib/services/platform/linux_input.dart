@@ -1,0 +1,193 @@
+/// Linux platform input — uses X11/XDOTOOL for mouse/keyboard simulation.
+library;
+
+import 'dart:async';
+import 'dart:io';
+import 'package:flutter/services.dart';
+import 'platform_input.dart';
+
+class LinuxInput extends PlatformInput {
+  static const _channel = MethodChannel('com.clicker.pro/platform');
+
+  final StreamController<String> _keyController =
+      StreamController<String>.broadcast();
+
+  bool _listening = false;
+
+  @override
+  bool get isSupported => Platform.isLinux;
+
+  @override
+  Future<void> mouseClick({
+    required int x,
+    required int y,
+    String button = 'left',
+    bool doubleClick = false,
+  }) async {
+    try {
+      await _channel.invokeMethod('mouseClick', {
+        'x': x,
+        'y': y,
+        'button': button,
+        'doubleClick': doubleClick,
+      });
+    } catch (_) {
+      // Fallback: use xdotool
+      await _xdotoolClick(x, y, button, doubleClick);
+    }
+  }
+
+  @override
+  void syncClick({required int x, required int y, String button = 'left'}) {
+    // Linux sync click — fire and forget via xdotool
+    _xdotoolClickSync(x, y, button);
+  }
+
+  @override
+  Future<void> mouseMove(int x, int y) async {
+    try {
+      await _channel.invokeMethod('mouseMove', {'x': x, 'y': y});
+    } catch (_) {
+      await Process.run('xdotool', ['mousemove', '$x', '$y']);
+    }
+  }
+
+  @override
+  Future<void> mouseDown({
+    required int x,
+    required int y,
+    String button = 'left',
+  }) async {
+    final btn = _linuxButton(button);
+    try {
+      await _channel.invokeMethod('mouseDown', {'x': x, 'y': y, 'button': btn});
+    } catch (_) {
+      await Process.run('xdotool', ['mousemove', '$x', '$y', 'mousedown', btn]);
+    }
+  }
+
+  @override
+  Future<void> mouseUp({
+    required int x,
+    required int y,
+    String button = 'left',
+  }) async {
+    final btn = _linuxButton(button);
+    try {
+      await _channel.invokeMethod('mouseUp', {'x': x, 'y': y, 'button': btn});
+    } catch (_) {
+      await Process.run('xdotool', ['mousemove', '$x', '$y', 'mouseup', btn]);
+    }
+  }
+
+  @override
+  Future<void> mouseScroll({double dx = 0, double dy = 0}) async {
+    try {
+      await _channel.invokeMethod('mouseScroll', {'dx': dx, 'dy': dy});
+    } catch (_) {
+      // xdotool scroll: button 4 = up, button 5 = down
+      final clicks = (dy.abs() / 120).round().clamp(1, 20);
+      final btn = dy > 0 ? '5' : '4';
+      for (int i = 0; i < clicks; i++) {
+        await Process.run('xdotool', ['click', btn]);
+      }
+    }
+  }
+
+  @override
+  Future<void> keyPress(String key) async {
+    try {
+      await _channel.invokeMethod('keyPress', {'key': key});
+    } catch (_) {
+      await Process.run('xdotool', ['key', key]);
+    }
+  }
+
+  @override
+  Future<void> keyRelease(String key) async {
+    try {
+      await _channel.invokeMethod('keyRelease', {'key': key});
+    } catch (_) {
+      await Process.run('xdotool', ['keyup', key]);
+    }
+  }
+
+  @override
+  Future<void> keyType(String text, {int delayMs = 30}) async {
+    try {
+      await _channel.invokeMethod('keyType', {'text': text, 'delayMs': delayMs});
+    } catch (_) {
+      await Process.run('xdotool', ['type', '--delay', '$delayMs', text]);
+    }
+  }
+
+  @override
+  Future<({int height, int width})> getScreenSize() async {
+    try {
+      final result = await _channel.invokeMethod('getScreenSize');
+      if (result != null) {
+        final m = Map<String, dynamic>.from(result as Map);
+        return (width: m['width'] as int, height: m['height'] as int);
+      }
+    } catch (_) {}
+    // Fallback: use xdotool
+    try {
+      final result = await Process.run('xdotool', ['getdisplaygeometry']);
+      final parts = (result.stdout as String).trim().split(' ');
+      if (parts.length == 2) {
+        return (width: int.parse(parts[0]), height: int.parse(parts[1]));
+      }
+    } catch (_) {}
+    return (width: 1920, height: 1080);
+  }
+
+  @override
+  Stream<String> get globalKeyEvents => _keyController.stream;
+
+  @override
+  void startListening() {
+    if (_listening) return;
+    _listening = true;
+    _channel.setMethodCallHandler((call) async {
+      if (call.method == 'onGlobalKey') {
+        _keyController.add(call.arguments as String);
+      }
+    });
+  }
+
+  @override
+  void stopListening() {
+    _listening = false;
+    _channel.setMethodCallHandler(null);
+  }
+
+  @override
+  void dispose() {
+    stopListening();
+    _keyController.close();
+  }
+
+  // ─── Helpers ───────────────────────────────────────────────
+
+  String _linuxButton(String button) {
+    switch (button) {
+      case 'right': return '3';
+      case 'middle': return '2';
+      default: return '1';
+    }
+  }
+
+  Future<void> _xdotoolClick(int x, int y, String button, bool doubleClick) async {
+    final btn = _linuxButton(button);
+    await Process.run('xdotool', ['mousemove', '$x', '$y', 'click', btn]);
+    if (doubleClick) {
+      await Future.delayed(const Duration(milliseconds: 50));
+      await Process.run('xdotool', ['click', btn]);
+    }
+  }
+
+  void _xdotoolClickSync(int x, int y, String button) {
+    final btn = _linuxButton(button);
+    Process.run('xdotool', ['mousemove', '$x', '$y', 'click', btn]);
+  }
+}

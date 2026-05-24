@@ -1,0 +1,30 @@
+# Flutter
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.iml
+.idea/
+.vscode/
+*.lock
+.**/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build outputs
+windows/Flutter/
+android/.gradle/
+android/app/build/
+android/local.properties
+
+# User data
+profiles/config.json
+macros/*.json
+
+# Misc
+*.pyc
+__pycache__/
+.ruff_cache/

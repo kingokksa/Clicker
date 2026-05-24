@@ -1,0 +1,44 @@
+name: clicker
+description: 跨平台连点器
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.2.0 <4.0.0"
+  flutter: ">=3.16.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # UI
+  fluent_ui: ^4.9.1
+  flutter_acrylic: ^1.1.3
+  google_fonts: ^6.1.0
+
+  # State management
+  provider: ^6.1.1
+
+  # Storage
+  shared_preferences: ^2.2.2
+  path_provider: ^2.1.1
+  file_picker: ^8.0.0
+
+  # Platform
+  window_manager: ^0.3.7
+  win32: ^5.5.0
+  ffi: ^2.1.0
+
+  # Utilities
+  intl: ^0.20.2
+  uuid: ^4.2.1
+  collection: ^1.18.0
+  path: ^1.9.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+
+flutter:
+  uses-material-design: true
