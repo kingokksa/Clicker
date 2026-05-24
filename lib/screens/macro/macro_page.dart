@@ -6,6 +6,7 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'package:provider/provider.dart';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
 import '../../services/app_state.dart';
@@ -366,7 +367,7 @@ class MacroPage extends StatelessWidget {
   // ─── Import / Export ──────────────────────────────────────
 
   Future<void> _importMacro(BuildContext context, AppState state) async {
-    final result = await FilePicker.platform.pickFiles(
+    final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['json', 'ahk', 'txt'],
       dialogTitle: '导入宏',
@@ -420,40 +421,37 @@ class MacroPage extends StatelessWidget {
   }
 
   Future<void> _exportMacroJson(MacroModel macro) async {
-    final path = await FilePicker.platform.saveFile(
+    final json = const JsonEncoder.withIndent('  ').convert(macro.toJson());
+    await FilePicker.saveFile(
       dialogTitle: '导出 JSON',
       fileName: '${macro.name}.json',
       type: FileType.custom,
       allowedExtensions: ['json'],
+      bytes: Uint8List.fromList(utf8.encode(json)),
     );
-    if (path == null) return;
-    final json = const JsonEncoder.withIndent('  ').convert(macro.toJson());
-    await File(path).writeAsString(json);
   }
 
   Future<void> _exportMacroAhk(MacroModel macro) async {
-    final path = await FilePicker.platform.saveFile(
+    final ahk = _macroToAhk(macro);
+    await FilePicker.saveFile(
       dialogTitle: '导出 AHK',
       fileName: '${macro.name}.ahk',
       type: FileType.custom,
       allowedExtensions: ['ahk'],
+      bytes: Uint8List.fromList(utf8.encode(ahk)),
     );
-    if (path == null) return;
-    final ahk = _macroToAhk(macro);
-    await File(path).writeAsString(ahk);
   }
 
   Future<void> _exportAllMacros(BuildContext context, AppState state) async {
-    final path = await FilePicker.platform.saveFile(
+    final list = state.macros.map((m) => m.toJson()).toList();
+    final json = const JsonEncoder.withIndent('  ').convert(list);
+    await FilePicker.saveFile(
       dialogTitle: '导出全部宏',
       fileName: 'clicker_macros.json',
       type: FileType.custom,
       allowedExtensions: ['json'],
+      bytes: Uint8List.fromList(utf8.encode(json)),
     );
-    if (path == null) return;
-    final list = state.macros.map((m) => m.toJson()).toList();
-    final json = const JsonEncoder.withIndent('  ').convert(list);
-    await File(path).writeAsString(json);
   }
 
   /// Convert macro to AutoHotKey v1 script

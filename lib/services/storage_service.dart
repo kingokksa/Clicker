@@ -3,6 +3,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
@@ -225,12 +226,12 @@ class StorageService {
         themeMode: themeMode,
         alwaysOnTop: alwaysOnTop,
       );
-      final path = await FilePicker.platform.saveFile(
+      final path = await FilePicker.saveFile(
         dialogTitle: '导出配置',
         fileName: 'clicker_config.json',
         type: FileType.custom,
         allowedExtensions: ['json'],
-        bytes: utf8.encode(json),
+        bytes: Uint8List.fromList(utf8.encode(json)),
       );
       return path != null;
     } catch (_) {
@@ -288,7 +289,7 @@ class StorageService {
   /// Import config from a file chosen by the user.
   Future<ImportResult> importConfigFromFile() async {
     try {
-      final result = await FilePicker.platform.pickFiles(
+      final result = await FilePicker.pickFiles(
         dialogTitle: '导入配置',
         type: FileType.custom,
         allowedExtensions: ['json'],

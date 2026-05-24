@@ -139,29 +139,29 @@ class WindowsInput extends PlatformInput {
   Future<void> mouseScroll({double dx = 0, double dy = 0}) async {
     if (dy != 0) {
       final p = calloc<INPUT>();
-      p.ref.type = INPUT_TYPE.INPUT_MOUSE;
-      p.ref.mi.dwFlags = MOUSE_EVENT_FLAGS.MOUSEEVENTF_WHEEL;
+      p.ref.type = INPUT_MOUSE;
+      p.ref.mi.dwFlags = MOUSEEVENTF_WHEEL;
       p.ref.mi.mouseData = (dy * 120).round();
       SendInput(1, p, sizeOf<INPUT>());
       calloc.free(p);
     }
   }
 
-  int _down(String b) => switch (b) {
-        'right' => MOUSE_EVENT_FLAGS.MOUSEEVENTF_RIGHTDOWN,
-        'middle' => MOUSE_EVENT_FLAGS.MOUSEEVENTF_MIDDLEDOWN,
-        _ => MOUSE_EVENT_FLAGS.MOUSEEVENTF_LEFTDOWN,
+  MOUSE_EVENT_FLAGS _down(String b) => switch (b) {
+        'right' => MOUSEEVENTF_RIGHTDOWN,
+        'middle' => MOUSEEVENTF_MIDDLEDOWN,
+        _ => MOUSEEVENTF_LEFTDOWN,
       };
 
-  int _up(String b) => switch (b) {
-        'right' => MOUSE_EVENT_FLAGS.MOUSEEVENTF_RIGHTUP,
-        'middle' => MOUSE_EVENT_FLAGS.MOUSEEVENTF_MIDDLEUP,
-        _ => MOUSE_EVENT_FLAGS.MOUSEEVENTF_LEFTUP,
+  MOUSE_EVENT_FLAGS _up(String b) => switch (b) {
+        'right' => MOUSEEVENTF_RIGHTUP,
+        'middle' => MOUSEEVENTF_MIDDLEUP,
+        _ => MOUSEEVENTF_LEFTUP,
       };
 
-  void _sendMouseInput(int flags) {
+  void _sendMouseInput(MOUSE_EVENT_FLAGS flags) {
     final p = calloc<INPUT>();
-    p.ref.type = INPUT_TYPE.INPUT_MOUSE;
+    p.ref.type = INPUT_MOUSE;
     p.ref.mi.dwFlags = flags;
     SendInput(1, p, sizeOf<INPUT>());
     calloc.free(p);
@@ -229,7 +229,7 @@ class WindowsInput extends PlatformInput {
     final vk = _vk[key.toLowerCase()] ??
         (key.length == 1 ? key.toUpperCase().codeUnitAt(0) : null);
     if (vk == null) return;
-    _sendKey(vk, 0);
+    _sendKey(vk, KEYBD_EVENT_FLAGS(0));
   }
 
   @override
@@ -237,28 +237,28 @@ class WindowsInput extends PlatformInput {
     final vk = _vk[key.toLowerCase()] ??
         (key.length == 1 ? key.toUpperCase().codeUnitAt(0) : null);
     if (vk == null) return;
-    _sendKey(vk, KEYBD_EVENT_FLAGS.KEYEVENTF_KEYUP);
+    _sendKey(vk, KEYEVENTF_KEYUP);
   }
 
   @override
   Future<void> keyType(String text, {int delayMs = 30}) async {
     for (final c in text.split('')) {
       final p = calloc<INPUT>();
-      p.ref.type = INPUT_TYPE.INPUT_KEYBOARD;
+      p.ref.type = INPUT_KEYBOARD;
       p.ref.ki.wScan = c.codeUnitAt(0);
-      p.ref.ki.dwFlags = KEYBD_EVENT_FLAGS.KEYEVENTF_UNICODE;
+      p.ref.ki.dwFlags = KEYEVENTF_UNICODE;
       SendInput(1, p, sizeOf<INPUT>());
-      p.ref.ki.dwFlags = KEYBD_EVENT_FLAGS.KEYEVENTF_UNICODE | KEYBD_EVENT_FLAGS.KEYEVENTF_KEYUP;
+      p.ref.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
       SendInput(1, p, sizeOf<INPUT>());
       calloc.free(p);
       await Future.delayed(Duration(milliseconds: delayMs));
     }
   }
 
-  void _sendKey(int vk, int flags) {
+  void _sendKey(int vk, KEYBD_EVENT_FLAGS flags) {
     final p = calloc<INPUT>();
-    p.ref.type = INPUT_TYPE.INPUT_KEYBOARD;
-    p.ref.ki.wVk = vk;
+    p.ref.type = INPUT_KEYBOARD;
+    p.ref.ki.wVk = VIRTUAL_KEY(vk);
     p.ref.ki.dwFlags = flags;
     SendInput(1, p, sizeOf<INPUT>());
     calloc.free(p);
@@ -374,8 +374,8 @@ class WindowsInput extends PlatformInput {
 
   @override
   Future<({int height, int width})> getScreenSize() {
-    final w = GetSystemMetrics(0); // SM_CXSCREEN
-    final h = GetSystemMetrics(1); // SM_CYSCREEN
+    final w = GetSystemMetrics(SM_CXSCREEN);
+    final h = GetSystemMetrics(SM_CYSCREEN);
     return Future.value((width: w, height: h));
   }
 
