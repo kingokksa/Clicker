@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "updated": "2025-01-01",
+  "plugins": [
+    {
+      "id": "hold_trigger",
+      "name": "按住触发",
+      "version": "1.0.0",
+      "author": "Clicker",
+      "description": "配置按键按住时自动重复触发",
+      "category": "click",
+      "platforms": ["windows", "linux", "macos"],
+      "type": "dart",
+      "dartPluginId": "hold_trigger",
+      "icon": "keyboard_classic",
+      "size": 0,
+      "minAppVersion": 1
+    },
+    {
+      "id": "image_recognition",
+      "name": "图像识别",
+      "version": "1.0.0",
+      "author": "Clicker",
+      "description": "图像模板匹配、OCR文字识别、条件触发",
+      "category": "vision",
+      "platforms": ["windows"],
+      "type": "dart",
+      "dartPluginId": "image_recognition",
+      "icon": "image_pixel",
+      "size": 0,
+      "minAppVersion": 1
+    },
+    {
+      "id": "macro",
+      "name": "宏录制与回放",
+      "version": "1.0.0",
+      "author": "Clicker",
+      "description": "录制鼠标键盘操作并回放",
+      "category": "automation",
+      "platforms": ["windows", "linux", "macos"],
+      "type": "dart",
+      "dartPluginId": "macro",
+      "icon": "record2",
+      "size": 0,
+      "minAppVersion": 1
+    },
+    {
+      "id": "theme_center",
+      "name": "主题中心",
+      "version": "1.0.0",
+      "author": "Clicker",
+      "description": "主题预设、强调色、视觉效果",
+      "category": "ui",
+      "platforms": ["windows", "linux", "macos"],
+      "type": "dart",
+      "dartPluginId": "theme_center",
+      "icon": "color",
+      "size": 0,
+      "minAppVersion": 1
+    },
+    {
+      "id": "background_execution",
+      "name": "后台执行",
+      "version": "1.0.0",
+      "author": "Clicker",
+      "description": "向后台窗口发送点击指令",
+      "category": "automation",
+      "platforms": ["windows"],
+      "type": "dart",
+      "dartPluginId": "background_execution",
+      "icon": "remote",
+      "size": 0,
+      "minAppVersion": 1
+    }
+  ]
+}

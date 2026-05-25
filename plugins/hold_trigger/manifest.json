@@ -1,0 +1,13 @@
+{
+  "id": "hold_trigger",
+  "name": "按住触发",
+  "version": "1.0.0",
+  "author": "Clicker",
+  "description": "配置按键按住时自动重复触发",
+  "category": "click",
+  "platforms": ["windows", "linux", "macos"],
+  "type": "dart",
+  "dartPluginId": "hold_trigger",
+  "icon": "keyboard_classic",
+  "minAppVersion": 1
+}

@@ -1,0 +1,13 @@
+{
+  "id": "theme_center",
+  "name": "主题中心",
+  "version": "1.0.0",
+  "author": "Clicker",
+  "description": "主题预设、强调色、视觉效果",
+  "category": "ui",
+  "platforms": ["windows", "linux", "macos"],
+  "type": "dart",
+  "dartPluginId": "theme_center",
+  "icon": "color",
+  "minAppVersion": 1
+}

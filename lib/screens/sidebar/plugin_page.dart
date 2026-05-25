@@ -1,5 +1,6 @@
-/// Plugin center — install external plugins, manage built-in plugins,
-/// create new plugin projects, and browse by platform/category.
+/// Plugin center — two tabs: "已安装" and "商店".
+/// The store fetches a remote index from GitHub; Dart plugins are
+/// compiled into the app but start disabled until "installed" from the store.
 library;
 
 import 'dart:convert';
@@ -11,6 +12,7 @@ import '../../services/app_state.dart';
 import '../../services/plugin_system.dart';
 import '../../services/plugin_registry.dart';
 import '../../services/native_plugin_loader.dart';
+import '../../services/plugin_store.dart';
 
 class PluginPage extends StatefulWidget {
   const PluginPage({super.key});
@@ -21,6 +23,17 @@ class PluginPage extends StatefulWidget {
 
 class _PluginPageState extends State<PluginPage> {
   bool _isInstalling = false;
+  int _tabIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // Auto-fetch store index on first build
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      await PluginStore.instance.fetchIndex();
+      if (mounted) setState(() {});
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -77,37 +90,281 @@ class _PluginPageState extends State<PluginPage> {
             accent: state.accentColor,
             onPressed: () async {
               await registry.discoverExternalPlugins();
+              await PluginStore.instance.fetchIndex();
               setState(() {});
             },
           ),
         ]),
         const SizedBox(height: 20),
 
-        // Core settings (always available, not plugins)
-        _buildGroup('核心设置', isDark, [
-          _buildCoreToggle(context, icon: FluentIcons.accounts, name: '拟人模式',
-            enabled: config.humanLikeEnabled,
-            onChanged: (v) => state.setClickerConfig(config.copyWith(
-              humanLikeEnabled: v, smartDelayEnabled: v, randomOffsetEnabled: v))),
-          _buildCoreToggle(context, icon: FluentIcons.volume2, name: '声音反馈',
-            enabled: config.soundFeedbackEnabled,
-            onChanged: (v) => state.setClickerConfig(config.copyWith(soundFeedbackEnabled: v))),
-          _buildCoreToggle(context, icon: FluentIcons.chart, name: '统计追踪',
-            enabled: config.statsEnabled,
-            onChanged: (v) => state.setClickerConfig(config.copyWith(statsEnabled: v))),
+        // Tab switcher
+        Row(children: [
+          _tabButton('已安装', FluentIcons.download, 0, isDark, state.accentColor),
+          const SizedBox(width: 4),
+          _tabButton('商店', FluentIcons.shop, 1, isDark, state.accentColor),
         ]),
+        const SizedBox(height: 16),
 
-        // Built-in plugins
-        ..._buildCategoryGroups(
-          allPlugins.where((p) => p.manifest.source == PluginSource.builtin).toList(), isDark),
-
-        // External plugins
-        ..._buildCategoryGroups(
-          allPlugins.where((p) => p.manifest.source != PluginSource.builtin).toList(), isDark,
-          groupTitle: '外部插件'),
+        // Tab content
+        if (_tabIndex == 0) ..._buildInstalledTab(allPlugins, config, isDark, state),
+        if (_tabIndex == 1) ..._buildStoreTab(isDark, state),
       ],
     );
   }
+
+  // ──── Installed Tab ────
+
+  List<Widget> _buildInstalledTab(
+    List<ClickerPlugin> allPlugins, dynamic config, bool isDark, AppState state,
+  ) {
+    return [
+      // Core settings (always available)
+      _buildGroup('核心设置', isDark, [
+        _buildCoreToggle(context, icon: FluentIcons.accounts, name: '拟人模式',
+          enabled: config.humanLikeEnabled,
+          onChanged: (v) => state.setClickerConfig(config.copyWith(
+            humanLikeEnabled: v, smartDelayEnabled: v, randomOffsetEnabled: v))),
+        _buildCoreToggle(context, icon: FluentIcons.volume2, name: '声音反馈',
+          enabled: config.soundFeedbackEnabled,
+          onChanged: (v) => state.setClickerConfig(config.copyWith(soundFeedbackEnabled: v))),
+        _buildCoreToggle(context, icon: FluentIcons.chart, name: '统计追踪',
+          enabled: config.statsEnabled,
+          onChanged: (v) => state.setClickerConfig(config.copyWith(statsEnabled: v))),
+      ]),
+
+      // Installed plugins grouped by category
+      ..._buildCategoryGroups(
+        allPlugins.where((p) => p.installed).toList(), isDark),
+
+      if (allPlugins.where((p) => p.installed).isEmpty)
+        Center(child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 40),
+          child: Column(children: [
+            Icon(FluentIcons.puzzle, size: 48, color: isDark ? const Color(0xFF404060) : const Color(0xFFC0C0D0)),
+            const SizedBox(height: 12),
+            Text('还没有安装插件', style: TextStyle(fontSize: 14, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
+            const SizedBox(height: 6),
+            Text('前往「商店」标签页安装官方插件', style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF707090) : const Color(0xFFA0A0B0))),
+          ]),
+        )),
+    ];
+  }
+
+  // ──── Store Tab ────
+
+  List<Widget> _buildStoreTab(bool isDark, AppState state) {
+    final store = PluginStore.instance;
+    final accent = FluentTheme.of(context).accentColor;
+
+    if (store.isLoading) {
+      return [
+        Center(child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 40),
+          child: Column(children: [
+            const ProgressRing(),
+            const SizedBox(height: 12),
+            Text('正在获取插件列表...', style: TextStyle(fontSize: 13, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
+          ]),
+        )),
+      ];
+    }
+
+    if (store.error != null && store.plugins.isEmpty) {
+      return [
+        Center(child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 40),
+          child: Column(children: [
+            Icon(FluentIcons.warning, size: 48, color: Colors.orange),
+            const SizedBox(height: 12),
+            Text('无法连接到插件商店', style: TextStyle(fontSize: 14, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
+            const SizedBox(height: 6),
+            Text(store.error!, style: TextStyle(fontSize: 11, color: isDark ? const Color(0xFF707090) : const Color(0xFFA0A0B0))),
+            const SizedBox(height: 12),
+            FilledButton(
+              onPressed: () => store.fetchIndex(),
+              child: const Text('重试'),
+            ),
+          ]),
+        )),
+      ];
+    }
+
+    if (store.plugins.isEmpty) {
+      return [
+        Center(child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 40),
+          child: Text('暂无可用插件', style: TextStyle(fontSize: 14, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
+        )),
+      ];
+    }
+
+    return [
+      // Store header
+      Row(children: [
+        Icon(FluentIcons.shop, size: 16, color: accent),
+        const SizedBox(width: 8),
+        Text('官方插件', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700,
+          color: isDark ? const Color(0xFFC0C0E8) : const Color(0xFF5A5A80))),
+        const Spacer(),
+        Text('从远程仓库获取 · ${store.plugins.length} 个插件',
+          style: TextStyle(fontSize: 11, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
+      ]),
+      const SizedBox(height: 12),
+
+      // Plugin list
+      ...store.plugins.map((entry) => _buildStoreCard(entry, isDark, accent)),
+    ];
+  }
+
+  Widget _buildStoreCard(StorePluginEntry entry, bool isDark, Color accent) {
+    final currentPlatform = LoadedNativePlugin.currentPlatform;
+    final isSupported = entry.supportsCurrentPlatform;
+    final isInstalled = entry.isInstalled;
+    final isEnabled = entry.isEnabled;
+
+    final cardBg = isDark ? const Color(0xFF252540).withValues(alpha: 0.5) : const Color(0xFFF0F0FA).withValues(alpha: 0.5);
+    final disabledColor = isDark ? const Color(0xFF606080) : const Color(0xFFB0B0C0);
+    final activeColor = isSupported ? accent : disabledColor;
+
+    // Icon mapping
+    final iconMap = {
+      'keyboard_classic': FluentIcons.keyboard_classic,
+      'image_pixel': FluentIcons.image_pixel,
+      'record2': FluentIcons.record2,
+      'color': FluentIcons.color,
+      'remote': FluentIcons.remote,
+    };
+    final icon = iconMap[entry.icon] ?? FluentIcons.puzzle;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: cardBg,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)),
+        ),
+        child: Row(children: [
+          // Icon
+          Container(
+            width: 36, height: 36,
+            decoration: BoxDecoration(
+              color: activeColor.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Icon(icon, size: 16, color: activeColor),
+          ),
+          const SizedBox(width: 12),
+          // Info
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Text(entry.name, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13,
+                color: isSupported ? null : disabledColor)),
+              const SizedBox(width: 6),
+              // Type badge
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                decoration: BoxDecoration(
+                  color: entry.type == 'dart'
+                    ? const Color(0xFF00E676).withValues(alpha: 0.12)
+                    : const Color(0xFF42A5F5).withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+                child: Text(entry.type == 'dart' ? 'Dart' : '原生',
+                  style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600,
+                    color: entry.type == 'dart' ? const Color(0xFF00E676) : const Color(0xFF42A5F5))),
+              ),
+              const SizedBox(width: 4),
+              // Platform badges
+              ...entry.platforms.map((p) => Padding(
+                padding: const EdgeInsets.only(right: 3),
+                child: _platformBadge(p, p == currentPlatform, isDark),
+              )),
+              if (!isSupported) ...[
+                const SizedBox(width: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                  child: Text('不支持', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: Colors.red)),
+                ),
+              ],
+            ]),
+            const SizedBox(height: 2),
+            Text(entry.description,
+              style: TextStyle(fontSize: 11, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
+            const SizedBox(height: 1),
+            Text('v${entry.version}${entry.author.isNotEmpty ? " · ${entry.author}" : ""}',
+              style: TextStyle(fontSize: 10, color: isDark ? const Color(0xFF707090) : const Color(0xFFA0A0B0))),
+          ])),
+          // Action button
+          if (!isSupported)
+            Button(
+              onPressed: null,
+              style: ButtonStyle(
+                padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
+              ),
+              child: const Text('不兼容', style: TextStyle(fontSize: 12)),
+            )
+          else if (isEnabled)
+            Button(
+              onPressed: () async {
+                await PluginStore.instance.uninstallPlugin(entry);
+                setState(() {});
+              },
+              style: ButtonStyle(
+                padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
+              ),
+              child: const Text('卸载', style: TextStyle(fontSize: 12)),
+            )
+          else if (isInstalled)
+            FilledButton(
+              onPressed: () async {
+                final registry = PluginRegistry.instance;
+                await registry.enablePlugin(entry.dartPluginId ?? entry.id);
+                setState(() {});
+              },
+              style: ButtonStyle(
+                backgroundColor: WidgetStatePropertyAll(accent.withValues(alpha: 0.15)),
+                padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(FluentIcons.play, size: 12, color: accent),
+                const SizedBox(width: 4),
+                Text('启用', style: TextStyle(color: accent, fontSize: 12)),
+              ]),
+            )
+          else
+            FilledButton(
+              onPressed: _isInstalling ? null : () async {
+                setState(() => _isInstalling = true);
+                final success = await PluginStore.instance.installPlugin(entry);
+                if (mounted) {
+                  setState(() => _isInstalling = false);
+                  if (!success) {
+                    await _showInstallResult(false);
+                  }
+                }
+              },
+              style: ButtonStyle(
+                backgroundColor: WidgetStatePropertyAll(accent.withValues(alpha: 0.15)),
+                padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(FluentIcons.download, size: 12, color: accent),
+                const SizedBox(width: 4),
+                Text('安装', style: TextStyle(color: accent, fontSize: 12)),
+              ]),
+            ),
+        ]),
+      ),
+    );
+  }
+
+  // ──── Shared helpers ────
 
   List<Widget> _buildCategoryGroups(List<ClickerPlugin> plugins, bool isDark, {String? groupTitle}) {
     if (plugins.isEmpty) return [];
@@ -120,6 +377,29 @@ class _PluginPageState extends State<PluginPage> {
           isDark, catPlugins.map((p) => _buildPluginCard(p, isDark)).toList()),
       ];
     }).toList();
+  }
+
+  Widget _tabButton(String label, IconData icon, int index, bool isDark, Color accent) {
+    final isActive = _tabIndex == index;
+    return GestureDetector(
+      onTap: () => setState(() => _tabIndex = index),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: isActive ? accent.withValues(alpha: 0.12) : Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
+          border: isActive ? Border.all(color: accent.withValues(alpha: 0.3)) : null,
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 14, color: isActive ? accent : (isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
+          const SizedBox(width: 6),
+          Text(label, style: TextStyle(
+            fontSize: 13, fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
+            color: isActive ? accent : (isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A)),
+          )),
+        ]),
+      ),
+    );
   }
 
   Widget _actionButton({
@@ -286,9 +566,6 @@ class _PluginPageState extends State<PluginPage> {
     final srcDir = Directory('${pluginDir.path}${Platform.pathSeparator}src');
     await srcDir.create(recursive: true);
 
-    // Copy SDK header
-    final sdkHeader = File('${pluginDir.path}${Platform.pathSeparator}src${Platform.pathSeparator}clicker_plugin.h');
-    // We'll reference the SDK header, but also create a template main.c
     final libName = id.replaceAll('.', '_');
     await File('${srcDir.path}${Platform.pathSeparator}main.c').writeAsString('''
 /**
@@ -324,34 +601,6 @@ PLUGIN_EXPORT int32_t PLUGIN_CALL plugin_initialize(void) {
 PLUGIN_EXPORT void PLUGIN_CALL plugin_dispose(void) {
     /* Cleanup resources here */
 }
-
-/* Uncomment to implement template matching:
-PLUGIN_EXPORT int32_t PLUGIN_CALL plugin_template_match(
-    const uint8_t* region_data, int32_t region_w, int32_t region_h,
-    const uint8_t* tpl_data,    int32_t tpl_w,    int32_t tpl_h,
-    double threshold,
-    PluginMatchResult* out_results, int32_t max_results) {
-    return 0;
-}
-*/
-
-/* Uncomment to implement OCR:
-PLUGIN_EXPORT int32_t PLUGIN_CALL plugin_ocr(
-    const uint8_t* image_data, int32_t w, int32_t h,
-    const char* language,
-    PluginOcrResult* out_result) {
-    return 1;
-}
-*/
-
-/* Uncomment to implement custom actions:
-PLUGIN_EXPORT int32_t PLUGIN_CALL plugin_execute_action(
-    const char* action_id,
-    const char* params,
-    char* out_buf, int32_t out_size) {
-    return 1;
-}
-*/
 ''');
 
     // Copy SDK header to src dir
@@ -445,7 +694,6 @@ PLUGIN_EXPORT int32_t PLUGIN_CALL plugin_execute_action(
           border: Border.all(color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)),
         ),
         child: Row(children: [
-          // Icon
           Container(
             width: 32, height: 32,
             decoration: BoxDecoration(
@@ -455,13 +703,11 @@ PLUGIN_EXPORT int32_t PLUGIN_CALL plugin_execute_action(
             child: Icon(manifest.icon, size: 14, color: activeColor),
           ),
           const SizedBox(width: 10),
-          // Info
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
               Text(manifest.name, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13,
                 color: plugin.enabled ? null : disabledColor)),
               const SizedBox(width: 6),
-              // Source badge
               if (manifest.source == PluginSource.builtin)
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
@@ -481,7 +727,6 @@ PLUGIN_EXPORT int32_t PLUGIN_CALL plugin_execute_action(
                   child: const Text('外部', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: Color(0xFF42A5F5))),
                 ),
               const SizedBox(width: 4),
-              // Platform badges
               ...manifest.platforms.map((p) => Padding(
                 padding: const EdgeInsets.only(right: 3),
                 child: _platformBadge(p, p == currentPlatform, isDark),
@@ -491,65 +736,27 @@ PLUGIN_EXPORT int32_t PLUGIN_CALL plugin_execute_action(
             Text('v${manifest.version}${manifest.author.isNotEmpty ? ' · ${manifest.author}' : ''}',
               style: TextStyle(fontSize: 11, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
           ])),
-          // Controls
-          if (!plugin.installed && manifest.source != PluginSource.builtin) ...[
-            FilledButton(
-              onPressed: () async {
-                await PluginRegistry.instance.installPlugin(manifest.id);
-                setState(() {});
-              },
-              style: ButtonStyle(
-                backgroundColor: WidgetStatePropertyAll(accent.withValues(alpha: 0.15)),
-                padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
-              ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(FluentIcons.download, size: 12, color: accent),
-                const SizedBox(width: 4),
-                Text('安装', style: TextStyle(color: accent, fontSize: 12)),
-              ]),
-            ),
-          ] else if (plugin.installed && !plugin.enabled) ...[
-            Button(
-              onPressed: () async {
+          // Toggle
+          ToggleSwitch(
+            checked: plugin.enabled,
+            onChanged: plugin.installed ? (v) async {
+              if (v) {
                 await PluginRegistry.instance.enablePlugin(manifest.id);
-                setState(() {});
-              },
-              style: ButtonStyle(
-                padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
-              ),
-              child: const Text('启用', style: TextStyle(fontSize: 12)),
-            ),
-            const SizedBox(width: 6),
-            if (manifest.source != PluginSource.builtin)
-              IconButton(
-                icon: Icon(FluentIcons.delete, size: 12, color: Colors.red.withValues(alpha: 0.7)),
-                onPressed: () async {
-                  await PluginRegistry.instance.uninstallPlugin(manifest.id);
-                  setState(() {});
-                },
-              ),
-          ] else ...[
-            ToggleSwitch(
-              checked: plugin.enabled,
-              onChanged: (v) async {
-                if (v) {
-                  await PluginRegistry.instance.enablePlugin(manifest.id);
-                } else {
-                  await PluginRegistry.instance.disablePlugin(manifest.id);
-                }
+              } else {
+                await PluginRegistry.instance.disablePlugin(manifest.id);
+              }
+              setState(() {});
+            } : null,
+          ),
+          const SizedBox(width: 6),
+          if (manifest.source != PluginSource.builtin)
+            IconButton(
+              icon: Icon(FluentIcons.delete, size: 12, color: Colors.red.withValues(alpha: 0.7)),
+              onPressed: () async {
+                await PluginRegistry.instance.uninstallPlugin(manifest.id);
                 setState(() {});
               },
             ),
-            const SizedBox(width: 6),
-            if (manifest.source != PluginSource.builtin)
-              IconButton(
-                icon: Icon(FluentIcons.delete, size: 12, color: Colors.red.withValues(alpha: 0.7)),
-                onPressed: () async {
-                  await PluginRegistry.instance.uninstallPlugin(manifest.id);
-                  setState(() {});
-                },
-              ),
-          ],
         ]),
       ),
     );

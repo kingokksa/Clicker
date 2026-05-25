@@ -40,10 +40,7 @@ class PluginRegistry extends ChangeNotifier {
     final id = plugin.manifest.id;
     _plugins[id] = plugin;
     plugin.onStateChanged = () => notifyListeners();
-    if (plugin.manifest.source == PluginSource.builtin) {
-      _installedIds.add(id);
-      plugin.installed = true;
-    }
+    // Don't auto-install; user installs from the store
     notifyListeners();
   }
 
@@ -117,8 +114,7 @@ class PluginRegistry extends ChangeNotifier {
     if (plugin == null || plugin.installed) return;
     _installedIds.add(id);
     plugin.installed = true;
-    await plugin.initialize();
-    _saveState();
+    saveState();
     notifyListeners();
   }
 
@@ -138,7 +134,7 @@ class PluginRegistry extends ChangeNotifier {
       _plugins.remove(id);
     }
 
-    _saveState();
+    saveState();
     notifyListeners();
   }
 
@@ -149,7 +145,7 @@ class PluginRegistry extends ChangeNotifier {
     _enabledIds.add(id);
     plugin.enabled = true;
     await plugin.initialize();
-    _saveState();
+    saveState();
     notifyListeners();
   }
 
@@ -160,7 +156,7 @@ class PluginRegistry extends ChangeNotifier {
     plugin.enabled = false;
     _enabledIds.remove(id);
     await plugin.dispose();
-    _saveState();
+    saveState();
     notifyListeners();
   }
 
@@ -178,7 +174,6 @@ class PluginRegistry extends ChangeNotifier {
 
   /// Load persisted state
   Future<void> loadState() async {
-    bool firstRun = false;
     try {
       final dir = await _getPluginDir();
       final file = File('${dir.path}${Platform.pathSeparator}plugin_state.json');
@@ -191,28 +186,21 @@ class PluginRegistry extends ChangeNotifier {
         _installedIds.addAll(installed);
         _enabledIds.addAll(enabled);
       } else {
-        firstRun = true;
+        // First run — save empty state
+        await saveState();
       }
     } catch (_) {
-      firstRun = true;
+      // First run or corrupt state — save empty state
+      await saveState();
     }
 
     // Apply state to registered plugins
     for (final plugin in _plugins.values) {
       final id = plugin.manifest.id;
-      if (plugin.manifest.source == PluginSource.builtin) {
-        plugin.installed = true;
-        _installedIds.add(id);
-        if (firstRun) {
-          plugin.enabled = true;
-          _enabledIds.add(id);
-        } else {
-          plugin.enabled = _enabledIds.contains(id);
-        }
-      } else {
-        plugin.installed = _installedIds.contains(id);
-        plugin.enabled = _enabledIds.contains(id);
-      }
+      // Built-in Dart plugins: code is compiled in, but start
+      // as "not installed" until user installs from the store.
+      plugin.installed = _installedIds.contains(id);
+      plugin.enabled = _enabledIds.contains(id);
       if (plugin.enabled && plugin.installed) {
         await plugin.initialize();
       }
@@ -221,12 +209,11 @@ class PluginRegistry extends ChangeNotifier {
     // Discover external plugins
     await discoverExternalPlugins();
 
-    if (firstRun) await _saveState();
     notifyListeners();
   }
 
   /// Save state to disk
-  Future<void> _saveState() async {
+  Future<void> saveState() async {
     try {
       final dir = await _getPluginDir();
       final file = File('${dir.path}${Platform.pathSeparator}plugin_state.json');

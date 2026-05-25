@@ -1,0 +1,13 @@
+{
+  "id": "background_execution",
+  "name": "后台执行",
+  "version": "1.0.0",
+  "author": "Clicker",
+  "description": "向后台窗口发送点击指令",
+  "category": "automation",
+  "platforms": ["windows"],
+  "type": "dart",
+  "dartPluginId": "background_execution",
+  "icon": "remote",
+  "minAppVersion": 1
+}

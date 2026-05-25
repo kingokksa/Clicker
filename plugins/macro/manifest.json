@@ -1,0 +1,13 @@
+{
+  "id": "macro",
+  "name": "宏录制与回放",
+  "version": "1.0.0",
+  "author": "Clicker",
+  "description": "录制鼠标键盘操作并回放",
+  "category": "automation",
+  "platforms": ["windows", "linux", "macos"],
+  "type": "dart",
+  "dartPluginId": "macro",
+  "icon": "record2",
+  "minAppVersion": 1
+}
