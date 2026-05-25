@@ -7,6 +7,7 @@
 #include <shellapi.h>
 
 #include <memory>
+#include <vector>
 
 #include "win32_window.h"
 
@@ -71,7 +72,9 @@ class FlutterWindow : public Win32Window {
   bool clicker_stop_requested_ = false;
 
   void StartFastClicker(int intervalUs, int x, int y, int button, int targetCount,
-      bool bgMode = false, HWND targetHwnd = nullptr, int clientX = 0, int clientY = 0);
+      bool bgMode = false, HWND targetHwnd = nullptr, int clientX = 0, int clientY = 0,
+      bool isKeyboard = false, int keyVk = 0, int keyActionMode = 0,
+      const std::vector<int>& comboKeys = {});
   void StopFastClicker();
 };
 
@@ -80,7 +83,7 @@ class FlutterWindow : public Win32Window {
 // Uses color-key transparency: magenta background is transparent,
 // crosshair and selection rectangle are drawn in visible colors.
 
-enum class OverlayMode { None, Crosshair, AreaSelect };
+enum class OverlayMode { None, Crosshair, AreaSelect, WindowPick };
 
 struct OverlayState {
   HWND hwnd = nullptr;
@@ -89,6 +92,7 @@ struct OverlayState {
   POINT dragStart = {};
   POINT dragCurrent = {};
   flutter::MethodChannel<flutter::EncodableValue>* channel = nullptr;
+  HWND target_window = nullptr;  // For WindowPick mode: the window to pick coordinates from
 };
 
 // Global overlay state (needed for WndProc)

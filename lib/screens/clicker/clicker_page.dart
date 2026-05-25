@@ -550,8 +550,6 @@ class ClickerPage extends StatelessWidget {
     String label;
     if (ms >= 1000) {
       label = '${(ms / 1000).toStringAsFixed(1)}s';
-    } else if (ms < 1) {
-      label = '${(ms * 1000).toStringAsFixed(0)}μs';
     } else if (ms != ms.roundToDouble()) {
       label = '${ms.toStringAsFixed(2)}ms';
     } else {
@@ -561,7 +559,7 @@ class ClickerPage extends StatelessWidget {
       Row(children: [
         Text(label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
         const SizedBox(width: 12),
-        ...<double>[1, 10, 50, 100, 500, 1000, 5000].map((v) => Padding(padding: const EdgeInsets.only(left: 4),
+        ...<double>[10, 50, 100, 500, 1000].map((v) => Padding(padding: const EdgeInsets.only(left: 4),
           child: _selectChip(
             v >= 1000 ? '${(v / 1000).toStringAsFixed(0)}s' : '${v.toInt()}ms',
             (ms - v).abs() < 0.005,
@@ -570,13 +568,13 @@ class ClickerPage extends StatelessWidget {
       const SizedBox(height: 4),
       Row(children: [
         Expanded(child: Slider(
-          value: ms.clamp(0.01, 300000),
-          min: 0.01, max: 300000,
-          onChanged: (v) => state.setClickerConfig(config.copyWith(intervalMs: (v * 100).roundToDouble() / 100)),
+          value: ms.clamp(10, 300000),
+          min: 10, max: 300000,
+          onChanged: (v) => state.setClickerConfig(config.copyWith(intervalMs: v.roundToDouble())),
         )),
       ]),
       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Text('0.01ms', style: TextStyle(fontSize: 11, color: theme.brightness == Brightness.dark ? const Color(0xFF707090) : const Color(0xFF9A9AAA))),
+        Text('10ms', style: TextStyle(fontSize: 11, color: theme.brightness == Brightness.dark ? const Color(0xFF707090) : const Color(0xFF9A9AAA))),
         Text('5min', style: TextStyle(fontSize: 11, color: theme.brightness == Brightness.dark ? const Color(0xFF707090) : const Color(0xFF9A9AAA))),
       ]),
       const SizedBox(height: 6),
@@ -584,7 +582,7 @@ class ClickerPage extends StatelessWidget {
         placeholder: '自定义(ms)',
         textAlign: TextAlign.center,
         controller: TextEditingController(text: ms == ms.roundToDouble() ? ms.toInt().toString() : ms.toStringAsFixed(2)),
-        onChanged: (v) { final p = double.tryParse(v); if (p != null && p >= 0.01) state.setClickerConfig(config.copyWith(intervalMs: p)); },
+        onChanged: (v) { final p = double.tryParse(v); if (p != null && p >= 10) state.setClickerConfig(config.copyWith(intervalMs: p)); },
       )),
     ]);
   }
@@ -693,7 +691,7 @@ class ClickerPage extends StatelessWidget {
           onChanged(HotkeyConfig.buildHotkey(n, selectedKey));
         }),
       const SizedBox(width: 4),
-      ComboBox<String>(value: selectedKey, items: HotkeyConfig.keys.map((k) => ComboBoxItem(value: k, child: Text(k, style: const TextStyle(fontSize: 12)))).toList(),
+      ComboBox<String>(value: HotkeyConfig.keys.contains(selectedKey) ? selectedKey : null, items: HotkeyConfig.keys.map((k) => ComboBoxItem(value: k, child: Text(k, style: const TextStyle(fontSize: 12)))).toList(),
         onChanged: (v) { if (v != null) onChanged(HotkeyConfig.buildHotkey(selectedMods, v)); },
         isExpanded: false,
       ),

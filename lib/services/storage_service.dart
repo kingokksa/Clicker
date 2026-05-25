@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
 import '../models/clicker_config.dart';
+import '../models/hold_trigger_key.dart';
 import '../models/hotkey_config.dart';
 import '../models/macro_model.dart';
 
@@ -22,6 +23,7 @@ class StorageService {
   static const _keyAccentColor = 'accent_color';
   static const _keyProfiles = 'profiles';
   static const _keyMacroList = 'macro_list';
+  static const _keyHoldTriggerKeys = 'hold_trigger_keys';
 
   late SharedPreferences _prefs;
   late String _macrosDir;
@@ -59,6 +61,22 @@ class StorageService {
 
   Future<void> saveHotkeyConfig(HotkeyConfig config) async {
     await _prefs.setString(_keyHotkeys, jsonEncode(config.toJson()));
+  }
+
+  // ─── Hold Trigger Keys ──────────────────────────────────
+
+  List<HoldTriggerKey> loadHoldTriggerKeys() {
+    final json = _prefs.getString(_keyHoldTriggerKeys);
+    if (json != null) {
+      final list = jsonDecode(json) as List<dynamic>;
+      return list.map((e) => HoldTriggerKey.fromJson(e as Map<String, dynamic>)).toList();
+    }
+    return [];
+  }
+
+  Future<void> saveHoldTriggerKeys(List<HoldTriggerKey> keys) async {
+    final list = keys.map((k) => k.toJson()).toList();
+    await _prefs.setString(_keyHoldTriggerKeys, jsonEncode(list));
   }
 
   // ─── Theme ────────────────────────────────────────────────

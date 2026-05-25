@@ -152,4 +152,10 @@ class AndroidInput extends PlatformInput {
     stopListening();
     _keyController.close();
   }
+
+  @override
+  Future<dynamic> invokeMethod(String method, [dynamic arguments]) async {
+    // Not supported on Android
+    return null;
+  }
 }

@@ -225,7 +225,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
             const Text('频率: ', style: TextStyle(fontSize: 13)),
             ComboBox<String>(
               items: ['100ms', '200ms', '500ms', '1000ms', '2000ms'].map((l) => ComboBoxItem(value: l, child: Text(l))).toList(),
-              value: '${_checkIntervalMs}ms',
+              value: ['100ms', '200ms', '500ms', '1000ms', '2000ms'].contains('${_checkIntervalMs}ms') ? '${_checkIntervalMs}ms' : '500ms',
               onChanged: (v) {
                 if (v != null) {
                   final ms = int.parse(v.replaceAll('ms', ''));
@@ -1183,14 +1183,13 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
         // Condition type
         const Text('条件类型:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
         const SizedBox(height: 6),
-        RadioGroup<_TriggerConditionType>(
-          groupValue: _conditionType,
+        ComboBox<_TriggerConditionType>(
+          value: _conditionType,
+          items: _TriggerConditionType.values.map((t) => ComboBoxItem<_TriggerConditionType>(
+            value: t,
+            child: Text(t.label),
+          )).toList(),
           onChanged: (v) { if (v != null) setState(() => _conditionType = v); },
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            ..._TriggerConditionType.values.map((t) => RadioButton<_TriggerConditionType>(
-              value: t, content: Text(t.label),
-            )),
-          ]),
         ),
 
         const SizedBox(height: 8),
@@ -1252,14 +1251,13 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
         // Action type
         const Text('执行动作:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
         const SizedBox(height: 6),
-        RadioGroup<_TriggerActionType>(
-          groupValue: _actionType,
+        ComboBox<_TriggerActionType>(
+          value: _actionType,
+          items: _TriggerActionType.values.map((t) => ComboBoxItem<_TriggerActionType>(
+            value: t,
+            child: Text(t.label),
+          )).toList(),
           onChanged: (v) { if (v != null) setState(() => _actionType = v); },
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            ..._TriggerActionType.values.map((t) => RadioButton<_TriggerActionType>(
-              value: t, content: Text(t.label),
-            )),
-          ]),
         ),
 
         // Action params

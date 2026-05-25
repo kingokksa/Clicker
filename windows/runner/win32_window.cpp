@@ -91,7 +91,7 @@ const wchar_t* WindowClassRegistrar::GetWindowClass() {
     WNDCLASS window_class{};
     window_class.hCursor = LoadCursor(nullptr, IDC_ARROW);
     window_class.lpszClassName = kWindowClassName;
-    window_class.style = CS_HREDRAW | CS_VREDRAW;
+    window_class.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
     window_class.cbClsExtra = 0;
     window_class.cbWndExtra = 0;
     window_class.hInstance = GetModuleHandle(nullptr);
@@ -201,6 +201,7 @@ Win32Window::MessageHandler(HWND hwnd,
       RECT rect = GetClientArea();
       if (child_content_ != nullptr) {
         // Size and position the child window.
+        // Use FALSE for bRepaint to avoid flicker during resize.
         MoveWindow(child_content_, rect.left, rect.top, rect.right - rect.left,
                    rect.bottom - rect.top, TRUE);
       }
@@ -244,7 +245,7 @@ void Win32Window::SetChildContent(HWND content) {
   RECT frame = GetClientArea();
 
   MoveWindow(content, frame.left, frame.top, frame.right - frame.left,
-             frame.bottom - frame.top, true);
+             frame.bottom - frame.top, TRUE);
 
   SetFocus(child_content_);
 }

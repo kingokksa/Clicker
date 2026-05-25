@@ -2,10 +2,13 @@
 /// Single ChangeNotifier for Provider-based state management.
 library;
 
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show Color;
+import 'package:flutter/services.dart';
 import '../models/clicker_config.dart';
+import '../models/hold_trigger_key.dart';
 import '../models/hotkey_config.dart';
 import '../models/macro_model.dart';
 import '../services/click_service.dart';
@@ -61,6 +64,9 @@ class AppState extends ChangeNotifier {
   // Window detect rules
   final List<WindowRule> _windowRules = [];
 
+  // Hold trigger keys
+  List<HoldTriggerKey> _holdTriggerKeys = [];
+
   // Remote control port
   int _remoteControlPort = 9876;
 
@@ -92,169 +98,192 @@ class AppState extends ChangeNotifier {
   RemoteControlService get remoteControlService => _remoteControlService;
   List<ScriptModel> get scripts => List.unmodifiable(_scripts);
   List<WindowRule> get windowRules => List.unmodifiable(_windowRules);
+  List<HoldTriggerKey> get holdTriggerKeys => List.unmodifiable(_holdTriggerKeys);
   int get remoteControlPort => _remoteControlPort;
   bool get isRemoteControlRunning => _remoteControlService.isRunning;
   bool get isWindowDetectRunning => _windowDetectService.isRunning;
   ScriptStatus get scriptStatus => _scriptEngine.status;
 
   Future<void> init() async {
-    _storage = StorageService();
-    await _storage.init();
+    try {
+      _storage = StorageService();
+      await _storage.init();
 
-    // Platform-specific input
-    if (Platform.isWindows) {
-      _platformInput = WindowsInput();
-    } else if (Platform.isLinux) {
-      _platformInput = LinuxInput();
-    } else if (Platform.isAndroid) {
-      _platformInput = AndroidInput();
-    } else {
-      _platformInput = WindowsInput(); // fallback
-    }
-
-    // Load configs
-    _clickerConfig = _storage.loadClickerConfig();
-    _hotkeyConfig = _storage.loadHotkeyConfig();
-    _themeMode = _storage.themeMode;
-    _accentColor = Color(_storage.accentColorValue);
-    _alwaysOnTop = _storage.alwaysOnTop;
-    _minimizeToTray = _storage.minimizeToTray;
-    _floatingAlwaysOnTop = _storage.floatingAlwaysOnTop;
-    _profiles = _storage.listProfiles();
-
-    // Apply always-on-top setting on startup
-    if (_alwaysOnTop) {
-      windowManager.setAlwaysOnTop(true);
-    }
-
-    // Init services
-    _clickService = ClickService(_platformInput);
-    _clickService.updateConfig(_clickerConfig);
-
-    _macroService = MacroService(_platformInput);
-
-    _hotkeyService = HotkeyService(_platformInput);
-    _hotkeyService.updateConfig(_hotkeyConfig);
-
-    // Init extension services
-    _windowDetectService = WindowDetectService();
-    _windowDetectService.onRuleMatched = (rule) {
-      // Auto-load profile when window rule matches
-      loadProfile(rule.profileName);
-      notifyListeners();
-    };
-    _windowDetectService.onWindowChanged = (_) {
-      notifyListeners();
-    };
-
-    _scriptEngine = ScriptEngine();
-    _scriptEngine.doClick = (x, y, button) => _platformInput.mouseClick(x: x, y: y, button: button);
-    _scriptEngine.doMove = (x, y) => _platformInput.mouseMove(x, y);
-    _scriptEngine.doKeyPress = (key) => _platformInput.keyPress(key);
-    _scriptEngine.doKeyRelease = (key) => _platformInput.keyRelease(key);
-    _scriptEngine.doScroll = (dx, dy) => _platformInput.mouseScroll(dx: dx, dy: dy);
-    _scriptEngine.doType = (text, delayMs) => _platformInput.keyType(text, delayMs: delayMs);
-    _scriptEngine.doStartClicker = () async => _clickService.start();
-    _scriptEngine.doStopClicker = () async => _clickService.stop();
-    _scriptEngine.onStatusChanged = (_) => notifyListeners();
-    _scriptEngine.onLog = (_) {};
-    _scriptEngine.onError = (_) {};
-
-    _remoteControlService = RemoteControlService();
-    _remoteControlService.onStartClicker = () => _clickService.start();
-    _remoteControlService.onStopClicker = () => _clickService.stop();
-    _remoteControlService.onToggleClicker = () => _clickService.toggle();
-    _remoteControlService.onPlayMacro = () {
-      if (_macros.isNotEmpty && !_macroService.isPlaying) {
-        _macroService.playMacro(_macros.first);
-      }
-    };
-    _remoteControlService.onStopMacro = () => _macroService.stopPlayback();
-    _remoteControlService.onGetStatus = () => {
-      'clickerRunning': _clickerStatus == ClickerStatus.running,
-      'macroStatus': _macroStatus.name,
-      'clickCount': _clickCount,
-    };
-    _remoteControlService.onLog = (_) {};
-    _remoteControlService.onError = (_) {};
-
-    // Wire callbacks
-    _clickService.onStatusChanged = (status, count) {
-      _clickerStatus = status;
-      _clickCount = count;
-      notifyListeners();
-    };
-
-    // Native fast clicker stop callback
-    _platformInput.onFastClickerStopped = (count) {
-      _clickService.handleNativeClickerStopped(count);
-    };
-
-    // Wire platform input reference to system tray service for callback forwarding
-    SystemTrayService().platformInput = _platformInput;
-
-    _macroService.onStatusChanged = (status) {
-      _macroStatus = status;
-      notifyListeners();
-    };
-
-    _macroService.onRecordingUpdate = (count) {
-      _recordingEventCount = count;
-      notifyListeners();
-    };
-
-    _macroService.onPlaybackProgress = (index, total) {
-      _playbackEventIndex = index;
-      _playbackTotalEvents = total;
-      notifyListeners();
-    };
-
-    _macroService.onError = (message) {
-      // Propagate error — UI can listen to this
-      notifyListeners();
-    };
-
-    // Hotkey actions
-    _hotkeyService.onStartStopClicker = () {
-      _clickService.toggle();
-    };
-    _hotkeyService.onStartStopRecording = () async {
-      if (_macroService.isRecording) {
-        _macroService.stopRecording();
+      // Platform-specific input
+      if (Platform.isWindows) {
+        _platformInput = WindowsInput();
+      } else if (Platform.isLinux) {
+        _platformInput = LinuxInput();
+      } else if (Platform.isAndroid) {
+        _platformInput = AndroidInput();
       } else {
-        await _macroService.startRecording();
+        _platformInput = WindowsInput(); // fallback
       }
-      notifyListeners();
-    };
-    _hotkeyService.onEmergencyStop = () {
-      _clickService.stop();
-      _macroService.stopPlayback();
-      _macroService.cancelRecording();
-      notifyListeners();
-    };
-    _hotkeyService.onPlayMacro = () {
-      if (_macros.isNotEmpty && !_macroService.isPlaying) {
-        _macroService.playMacro(_macros.first);
+
+      // Load configs
+      _clickerConfig = _storage.loadClickerConfig();
+      _hotkeyConfig = _storage.loadHotkeyConfig();
+      _themeMode = _storage.themeMode;
+      _accentColor = Color(_storage.accentColorValue);
+      _alwaysOnTop = _storage.alwaysOnTop;
+      _minimizeToTray = _storage.minimizeToTray;
+      _floatingAlwaysOnTop = _storage.floatingAlwaysOnTop;
+      _profiles = _storage.listProfiles();
+
+      // Apply always-on-top setting on startup
+      if (_alwaysOnTop) {
+        windowManager.setAlwaysOnTop(true);
       }
-    };
-    _hotkeyService.onHoldTriggerStart = () {
-      if (_clickerConfig.holdTriggerEnabled && !_clickService.isRunning) {
-        _clickService.start();
-      }
-    };
-    _hotkeyService.onHoldTriggerStop = () {
-      if (_clickerConfig.holdTriggerEnabled && _clickService.isRunning) {
+
+      // Init services
+      _clickService = ClickService(_platformInput);
+      _clickService.updateConfig(_clickerConfig);
+
+      _macroService = MacroService(_platformInput);
+
+      _hotkeyService = HotkeyService(_platformInput);
+      _hotkeyService.updateConfig(_hotkeyConfig);
+
+      // Init extension services
+      _windowDetectService = WindowDetectService();
+      _windowDetectService.onRuleMatched = (rule) {
+        // Auto-load profile when window rule matches
+        loadProfile(rule.profileName);
+        notifyListeners();
+      };
+      _windowDetectService.onWindowChanged = (_) {
+        notifyListeners();
+      };
+
+      _scriptEngine = ScriptEngine();
+      _scriptEngine.doClick = (x, y, button) => _platformInput.mouseClick(x: x, y: y, button: button);
+      _scriptEngine.doMove = (x, y) => _platformInput.mouseMove(x, y);
+      _scriptEngine.doKeyPress = (key) => _platformInput.keyPress(key);
+      _scriptEngine.doKeyRelease = (key) => _platformInput.keyRelease(key);
+      _scriptEngine.doScroll = (dx, dy) => _platformInput.mouseScroll(dx: dx, dy: dy);
+      _scriptEngine.doType = (text, delayMs) => _platformInput.keyType(text, delayMs: delayMs);
+      _scriptEngine.doStartClicker = () async => _clickService.start();
+      _scriptEngine.doStopClicker = () async => _clickService.stop();
+      _scriptEngine.onStatusChanged = (_) => notifyListeners();
+      _scriptEngine.onLog = (_) {};
+      _scriptEngine.onError = (_) {};
+
+      _remoteControlService = RemoteControlService();
+      _remoteControlService.onStartClicker = () => _clickService.start();
+      _remoteControlService.onStopClicker = () => _clickService.stop();
+      _remoteControlService.onToggleClicker = () => _clickService.toggle();
+      _remoteControlService.onPlayMacro = () {
+        if (_macros.isNotEmpty && !_macroService.isPlaying) {
+          _macroService.playMacro(_macros.first);
+        }
+      };
+      _remoteControlService.onStopMacro = () => _macroService.stopPlayback();
+      _remoteControlService.onGetStatus = () => {
+        'clickerRunning': _clickerStatus == ClickerStatus.running,
+        'macroStatus': _macroStatus.name,
+        'clickCount': _clickCount,
+      };
+      _remoteControlService.onLog = (_) {};
+      _remoteControlService.onError = (_) {};
+
+      // Wire callbacks
+      _clickService.onStatusChanged = (status, count) {
+        _clickerStatus = status;
+        _clickCount = count;
+        notifyListeners();
+      };
+
+      // Native fast clicker stop callback
+      _platformInput.onFastClickerStopped = (count) {
+        _clickService.handleNativeClickerStopped(count);
+      };
+
+      // Wire platform input reference to system tray service for callback forwarding
+      SystemTrayService().platformInput = _platformInput;
+
+      _macroService.onStatusChanged = (status) {
+        _macroStatus = status;
+        notifyListeners();
+      };
+
+      _macroService.onRecordingUpdate = (count) {
+        _recordingEventCount = count;
+        notifyListeners();
+      };
+
+      _macroService.onPlaybackProgress = (index, total) {
+        _playbackEventIndex = index;
+        _playbackTotalEvents = total;
+        notifyListeners();
+      };
+
+      _macroService.onError = (message) {
+        // Propagate error — UI can listen to this
+        notifyListeners();
+      };
+
+      // Hotkey actions
+      _hotkeyService.onStartStopClicker = () {
+        _clickService.toggle();
+      };
+      _hotkeyService.onStopImmediate = () {
+        // Called directly from C++ for instant stop — no toggle, just stop
+        _clickService.stopImmediate();
+        notifyListeners();
+      };
+      _hotkeyService.onStartStopRecording = () async {
+        if (_macroService.isRecording) {
+          _macroService.stopRecording();
+        } else {
+          await _macroService.startRecording();
+        }
+        notifyListeners();
+      };
+      _hotkeyService.onEmergencyStop = () {
         _clickService.stop();
-      }
-    };
+        _macroService.stopPlayback();
+        _macroService.cancelRecording();
+        notifyListeners();
+      };
+      _hotkeyService.onPlayMacro = () {
+        if (_macros.isNotEmpty && !_macroService.isPlaying) {
+          _macroService.playMacro(_macros.first);
+        }
+      };
+      _hotkeyService.onHoldTriggerStart = () {
+        if (_clickerConfig.holdTriggerEnabled && !_clickService.isRunning) {
+          _clickService.start();
+        }
+      };
+      _hotkeyService.onHoldTriggerStop = () {
+        if (_clickerConfig.holdTriggerEnabled && _clickService.isRunning) {
+          _clickService.stop();
+        }
+      };
 
-    _hotkeyService.start();
+      _hotkeyService.start();
 
-    // Load macros
-    _macros = await _storage.loadAllMacros();
+      // Load hold trigger keys
+      _holdTriggerKeys = _storage.loadHoldTriggerKeys();
+      _registerHoldTriggerKeys();
 
-    _isInitialized = true;
-    notifyListeners();
+      // Key capture callback
+      _platformInput.onKeyCaptured = (keyName) {
+        // Forward to any active listener
+        _keyCaptureCompleter?.complete(keyName);
+        _keyCaptureCompleter = null;
+      };
+
+      // Load macros
+      _macros = await _storage.loadAllMacros();
+
+      _isInitialized = true;
+      notifyListeners();
+    } catch (e) {
+      // If initialization fails, still mark as initialized so the UI renders
+      _isInitialized = true;
+      notifyListeners();
+    }
   }
 
   // ─── Clicker Actions ──────────────────────────────────────
@@ -511,6 +540,108 @@ class AppState extends ChangeNotifier {
     _windowDetectService.dispose();
     _scriptEngine.dispose();
     _remoteControlService.dispose();
+    _unregisterHoldTriggerKeys();
     super.dispose();
+  }
+
+  // ─── Hold Trigger ──────────────────────────────────────
+
+  Completer<String?>? _keyCaptureCompleter;
+
+  /// Start capturing a key press. Returns the key name when captured.
+  Future<String?> captureKey() async {
+    if (_keyCaptureCompleter != null && !_keyCaptureCompleter!.isCompleted) {
+      _keyCaptureCompleter!.completeError('Cancelled');
+    }
+    _keyCaptureCompleter = Completer<String?>();
+    try {
+      await _platformInput.invokeMethod('captureKey');
+      // Wait for onKeyCaptured callback with 10s timeout
+      return await _keyCaptureCompleter!.future.timeout(
+        const Duration(seconds: 10),
+        onTimeout: () => null,
+      );
+    } on PlatformException {
+      return null;
+    }
+  }
+
+  void setHoldTriggerKeys(List<HoldTriggerKey> keys) {
+    _holdTriggerKeys = keys;
+    _storage.saveHoldTriggerKeys(keys);
+    _registerHoldTriggerKeys();
+    notifyListeners();
+  }
+
+  void addHoldTriggerKey(HoldTriggerKey key) {
+    _holdTriggerKeys = [..._holdTriggerKeys, key];
+    _storage.saveHoldTriggerKeys(_holdTriggerKeys);
+    _registerHoldTriggerKeys();
+    notifyListeners();
+  }
+
+  void updateHoldTriggerKey(String id, HoldTriggerKey key) {
+    _holdTriggerKeys = [
+      for (final k in _holdTriggerKeys)
+        if (k.id == id) key else k,
+    ];
+    _storage.saveHoldTriggerKeys(_holdTriggerKeys);
+    _registerHoldTriggerKeys();
+    notifyListeners();
+  }
+
+  void removeHoldTriggerKey(String id) {
+    _holdTriggerKeys = _holdTriggerKeys.where((k) => k.id != id).toList();
+    _storage.saveHoldTriggerKeys(_holdTriggerKeys);
+    _registerHoldTriggerKeys();
+    notifyListeners();
+  }
+
+  void _registerHoldTriggerKeys() {
+    final enabledKeys = _holdTriggerKeys.where((k) => k.enabled).toList();
+    if (enabledKeys.isEmpty) {
+      _unregisterHoldTriggerKeys();
+      return;
+    }
+
+    final configs = enabledKeys.map((k) {
+      // action: 0=mouseClick, 1=keyRepeat, 2=keyCombo
+      int action;
+      dynamic actionParam;
+      switch (k.action) {
+        case HoldTriggerAction.mouseClick:
+          action = 0;
+          int mb = 0;
+          if (k.mouseButton == 'right') mb = 1;
+          else if (k.mouseButton == 'middle') mb = 2;
+          actionParam = mb;
+          break;
+        case HoldTriggerAction.keyRepeat:
+          action = 1;
+          actionParam = k.keyToRepeat;
+          break;
+        case HoldTriggerAction.keyCombo:
+          action = 2;
+          actionParam = k.comboKeys;
+          break;
+      }
+
+      return [
+        k.triggerKey,       // trigger key name
+        action,             // action type
+        k.intervalMs.toInt(), // interval ms
+        actionParam,        // action-specific param
+        k.backgroundMode,   // background mode
+        k.targetHwnd,       // target hwnd
+        k.targetX,          // client x
+        k.targetY,          // client y
+      ];
+    }).toList();
+
+    _platformInput.invokeMethod('registerHoldTriggerKeys', configs);
+  }
+
+  void _unregisterHoldTriggerKeys() {
+    _platformInput.invokeMethod('unregisterHoldTriggerKeys');
   }
 }

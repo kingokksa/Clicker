@@ -39,6 +39,10 @@ class WindowsInput extends PlatformInput {
       if (field.isNotEmpty) {
         _keyController.add(field);
       }
+    } else if (call.method == 'onStopClickerImmediate') {
+      // C++ requests immediate stop (for keyboard mode which uses Dart Timers).
+      // Emit a special event that the click service listens to.
+      _keyController.add('__stop_immediate__');
     }
   }
 
@@ -383,5 +387,10 @@ class WindowsInput extends PlatformInput {
   void dispose() {
     stopListening();
     _keyController.close();
+  }
+
+  @override
+  Future<dynamic> invokeMethod(String method, [dynamic arguments]) {
+    return _platformChannel.invokeMethod(method, arguments);
   }
 }

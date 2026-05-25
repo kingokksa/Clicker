@@ -25,6 +25,7 @@ class HotkeyService {
   void Function()? onPlayMacro;
   void Function()? onHoldTriggerStart;
   void Function()? onHoldTriggerStop;
+  void Function()? onStopImmediate; // Called from C++ for instant stop
 
   HotkeyService(this._input);
 
@@ -57,6 +58,10 @@ class HotkeyService {
 
   void _handleKeyEvent(String field) {
     switch (field) {
+      case '__stop_immediate__':
+        // C++ requested immediate stop — bypass toggle, just stop
+        onStopImmediate?.call();
+        break;
       case 'startStopClicker':
         onStartStopClicker?.call();
         break;

@@ -4,11 +4,21 @@ library;
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_acrylic/flutter_acrylic.dart' as acrylic;
+import 'package:flutter/services.dart';
 import 'services/app_state.dart';
 import 'screens/home_screen.dart';
 
-class ClickerApp extends StatelessWidget {
+class ClickerApp extends StatefulWidget {
   const ClickerApp({super.key});
+
+  @override
+  State<ClickerApp> createState() => _ClickerAppState();
+}
+
+class _ClickerAppState extends State<ClickerApp> {
+  String? _lastThemeMode;
+  Color? _lastAccentColor;
+  static const _platformChannel = MethodChannel('com.clicker.pro/platform');
 
   @override
   Widget build(BuildContext context) {
@@ -16,7 +26,13 @@ class ClickerApp extends StatelessWidget {
       create: (_) => AppState()..init(),
       child: Consumer<AppState>(
         builder: (context, state, _) {
-          _updateAcrylic(state.themeMode, state.accentColor);
+          // Only update acrylic when theme or accent actually changes
+          // to avoid constant DWM reconfiguration causing lag/flicker
+          if (_lastThemeMode != state.themeMode || _lastAccentColor != state.accentColor) {
+            _lastThemeMode = state.themeMode;
+            _lastAccentColor = state.accentColor;
+            _updateAcrylic(state.themeMode, state.accentColor);
+          }
 
           if (!state.isInitialized) {
             return FluentApp(
@@ -73,11 +89,21 @@ class ClickerApp extends StatelessWidget {
 
   void _updateAcrylic(String themeMode, Color accent) {
     final isDark = themeMode == 'dark';
-    acrylic.Window.setEffect(
-      effect: acrylic.WindowEffect.acrylic,
-      color: isDark ? const Color(0xFF16162A) : const Color(0xFFF8F8FC),
-      dark: isDark,
-    );
+    try {
+      acrylic.Window.setEffect(
+        effect: acrylic.WindowEffect.acrylic,
+        color: isDark ? const Color(0xFF16162A) : const Color(0xFFF8F8FC),
+        dark: isDark,
+      );
+    } catch (_) {
+      // Acrylic may fail on older Windows — continue without it
+    }
+    // Re-apply DWM fixes immediately after flutter_acrylic overrides them.
+    try {
+      _platformChannel.invokeMethod('reapplyDwmFixes');
+    } catch (_) {
+      // DWM fixes are non-critical
+    }
   }
 }
 

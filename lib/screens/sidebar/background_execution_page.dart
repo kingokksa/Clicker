@@ -24,15 +24,46 @@ class BackgroundExecutionPage extends StatefulWidget {
 }
 
 class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
+  static const _platformChannel = MethodChannel('com.clicker.pro/platform');
   List<WindowInfo> _windows = [];
   bool _loading = false;
+  bool _pickingCoords = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _platformChannel.setMethodCallHandler(_handleMethodCall);
+  }
+
+  @override
+  void dispose() {
+    _platformChannel.setMethodCallHandler(null);
+    super.dispose();
+  }
+
+  Future<dynamic> _handleMethodCall(MethodCall call) async {
+    if (!mounted) return;
+    switch (call.method) {
+      case 'onOverlayWindowPick':
+        final args = call.arguments as Map;
+        final x = args['x'] as int;
+        final y = args['y'] as int;
+        final state = context.read<AppState>();
+        final config = state.clickerConfig;
+        state.setClickerConfig(config.copyWith(targetClientX: x, targetClientY: y));
+        if (mounted) setState(() => _pickingCoords = false);
+        break;
+      case 'onOverlayCancelled':
+        if (mounted) setState(() => _pickingCoords = false);
+        break;
+    }
+  }
 
   Future<void> _refreshWindows() async {
     if (!Platform.isWindows) return;
     setState(() => _loading = true);
     try {
-      final channel = MethodChannel('com.clicker.pro/platform');
-      final result = await channel.invokeMethod('enumerateWindows');
+      final result = await _platformChannel.invokeMethod('enumerateWindows');
       final list = <WindowInfo>[];
       if (result is List) {
         for (final item in result) {
@@ -51,6 +82,17 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
     }
   }
 
+  Future<void> _pickCoordinates(BuildContext context, AppState state) async {
+    final config = state.clickerConfig;
+    if (config.targetHwnd == 0) return;
+    setState(() => _pickingCoords = true);
+    try {
+      await _platformChannel.invokeMethod('startWindowPickOverlay', [config.targetHwnd]);
+    } catch (_) {
+      if (mounted) setState(() => _pickingCoords = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
@@ -63,7 +105,7 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
       children: [
         // Header
         Row(children: [
-          Icon(FluentIcons.settings, size: 20, color: accent),
+          Icon(FluentIcons.remote, size: 20, color: accent),
           const SizedBox(width: 10),
           const Text('后台执行', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
         ]),
@@ -91,29 +133,26 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
           // Target window selection
           _labelRow('目标窗口', isDark),
           const SizedBox(height: 6),
-          Row(children: [
+          Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
             Expanded(
-              child: InfoLabel(
-                label: config.targetWindowTitle.isEmpty ? '未选择' : config.targetWindowTitle,
-                child: ComboBox<int>(
-                  isExpanded: true,
-                  placeholder: const Text('选择目标窗口'),
-                  items: _windows.map((w) => ComboBoxItem<int>(
-                    value: w.hwnd,
-                    child: Text(w.title.length > 40 ? '${w.title.substring(0, 40)}...' : w.title,
-                      style: const TextStyle(fontSize: 12)),
-                  )).toList(),
-                  value: _windows.any((w) => w.hwnd == config.targetHwnd) ? config.targetHwnd : null,
-                  onChanged: (hwnd) {
-                    if (hwnd != null) {
-                      final win = _windows.firstWhere((w) => w.hwnd == hwnd);
-                      state.setClickerConfig(config.copyWith(
-                        targetHwnd: hwnd,
-                        targetWindowTitle: win.title,
-                      ));
-                    }
-                  },
-                ),
+              child: ComboBox<int>(
+                isExpanded: true,
+                placeholder: Text(config.targetWindowTitle.isEmpty ? '选择目标窗口' : config.targetWindowTitle),
+                items: _windows.map((w) => ComboBoxItem<int>(
+                  value: w.hwnd,
+                  child: Text(w.title.length > 40 ? '${w.title.substring(0, 40)}...' : w.title,
+                    style: const TextStyle(fontSize: 12)),
+                )).toList(),
+                value: _windows.any((w) => w.hwnd == config.targetHwnd) ? config.targetHwnd : null,
+                onChanged: (hwnd) {
+                  if (hwnd != null) {
+                    final win = _windows.firstWhere((w) => w.hwnd == hwnd);
+                    state.setClickerConfig(config.copyWith(
+                      targetHwnd: hwnd,
+                      targetWindowTitle: win.title,
+                    ));
+                  }
+                },
               ),
             ),
             const SizedBox(width: 8),
@@ -131,7 +170,7 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
           const SizedBox(height: 6),
           Row(children: [
             SizedBox(
-              width: 120,
+              width: 100,
               child: TextBox(
                 placeholder: 'X',
                 controller: TextEditingController(text: config.targetClientX.toString()),
@@ -141,9 +180,9 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
                 },
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
             SizedBox(
-              width: 120,
+              width: 100,
               child: TextBox(
                 placeholder: 'Y',
                 controller: TextEditingController(text: config.targetClientY.toString()),
@@ -153,68 +192,23 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
                 },
               ),
             ),
+            const SizedBox(width: 10),
+            Button(
+              onPressed: (config.targetHwnd != 0 && !_pickingCoords) ? () => _pickCoordinates(context, state) : null,
+              child: _pickingCoords
+                ? const SizedBox(width: 14, height: 14, child: ProgressRing(strokeWidth: 2))
+                : Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(FluentIcons.map_pin, size: 14),
+                    const SizedBox(width: 4),
+                    Text('选取', style: TextStyle(fontSize: 12, color: config.targetHwnd != 0 ? null : (isDark ? const Color(0xFF606080) : const Color(0xFFB0B0C0)))),
+                  ]),
+            ),
           ]),
         ]),
 
         const SizedBox(height: 20),
-
-        // ─── Auto Start ───────────────────────────────────────
-        _sectionTitle('开机自启', isDark),
-        const SizedBox(height: 8),
-
-        _card(isDark, children: [
-          _toggleRow(
-            icon: FluentIcons.brightness,
-            name: '开机自动启动',
-            desc: '系统启动时自动运行 Clicker',
-            enabled: config.autoStartEnabled,
-            onChanged: (v) {
-              state.setClickerConfig(config.copyWith(autoStartEnabled: v));
-              _setAutoStart(v);
-            },
-            isDark: isDark,
-            accent: accent,
-          ),
-          const Divider(style: DividerThemeData(horizontalMargin: EdgeInsets.zero)),
-          _toggleRow(
-            icon: FluentIcons.play_resume,
-            name: '自启后静默运行',
-            desc: '开机自启时直接最小化到托盘',
-            enabled: config.autoStartSilent,
-            onChanged: (v) => state.setClickerConfig(config.copyWith(autoStartSilent: v)),
-            isDark: isDark,
-            accent: accent,
-          ),
-        ]),
-
-        const SizedBox(height: 20),
-
-        // ─── Status ───────────────────────────────────────────
-        _sectionTitle('当前状态', isDark),
-        const SizedBox(height: 8),
-
-        _card(isDark, children: [
-          _statusRow('连点器', state.isClickerRunning ? '运行中' : '空闲',
-            state.isClickerRunning, isDark, accent),
-          const Divider(style: DividerThemeData(horizontalMargin: EdgeInsets.zero)),
-          _statusRow('点击模式', config.backgroundExecutionEnabled ? '后台点击' : '前台点击',
-            config.backgroundExecutionEnabled, isDark, accent),
-          const Divider(style: DividerThemeData(horizontalMargin: EdgeInsets.zero)),
-          _statusRow('目标窗口', config.backgroundExecutionEnabled
-            ? (config.targetWindowTitle.isEmpty ? '未选择' : config.targetWindowTitle)
-            : '不适用',
-            config.backgroundExecutionEnabled && config.targetHwnd != 0, isDark, accent),
-        ]),
       ],
     );
-  }
-
-  Future<void> _setAutoStart(bool enabled) async {
-    if (!Platform.isWindows) return;
-    try {
-      final channel = MethodChannel('com.clicker.pro/platform');
-      await channel.invokeMethod(enabled ? 'enableAutoStart' : 'disableAutoStart');
-    } catch (_) {}
   }
 
   Widget _sectionTitle(String title, bool isDark) {
@@ -265,24 +259,6 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
         Text(desc, style: TextStyle(fontSize: 11, color: isDark ? const Color(0xFF707090) : const Color(0xFF9A9AAA))),
       ])),
       ToggleSwitch(checked: enabled, onChanged: onChanged),
-    ]);
-  }
-
-  Widget _statusRow(String label, String value, bool active, bool isDark, Color accent) {
-    return Row(children: [
-      Container(
-        width: 8, height: 8,
-        decoration: BoxDecoration(
-          color: active ? const Color(0xFF00E676) : (isDark ? const Color(0xFF606080) : const Color(0xFFB0B0C0)),
-          shape: BoxShape.circle,
-        ),
-      ),
-      const SizedBox(width: 10),
-      Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-      const Spacer(),
-      Flexible(child: Text(value, overflow: TextOverflow.ellipsis,
-        style: TextStyle(fontSize: 13,
-          color: active ? accent : (isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))))),
     ]);
   }
 }

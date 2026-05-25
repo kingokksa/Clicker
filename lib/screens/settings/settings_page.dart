@@ -2,7 +2,9 @@
 library;
 
 import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'dart:io';
 import 'package:window_manager/window_manager.dart';
 import '../../services/app_state.dart';
 import '../../models/hotkey_config.dart';
@@ -31,6 +33,8 @@ class SettingsPage extends StatelessWidget {
 
     final rightSections = <Widget>[
       _sectionCard(title: '窗口', icon: FluentIcons.stack, child: _buildWindowOptions(state)),
+      const SizedBox(height: 12),
+      _sectionCard(title: '开机自启', icon: FluentIcons.brightness, child: _buildAutoStartSection(state)),
       const SizedBox(height: 12),
       _sectionCard(title: '配置管理', icon: FluentIcons.save, child: _buildProfileSection(context, state)),
     ];
@@ -149,6 +153,42 @@ class SettingsPage extends StatelessWidget {
         }),
       ]),
     ]);
+  }
+
+  // ─── Auto Start ───────────────────────────────────────────
+
+  Widget _buildAutoStartSection(AppState state) {
+    final config = state.clickerConfig;
+    return Column(children: [
+      Row(children: [
+        const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('开机自动启动', style: TextStyle(fontSize: 13)),
+          Text('系统启动时自动运行 Clicker', style: TextStyle(fontSize: 11)),
+        ])),
+        ToggleSwitch(checked: config.autoStartEnabled, onChanged: (v) {
+          state.setClickerConfig(config.copyWith(autoStartEnabled: v));
+          _setAutoStart(v);
+        }),
+      ]),
+      const Divider(style: DividerThemeData(horizontalMargin: EdgeInsets.zero)),
+      Row(children: [
+        const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('自启后静默运行', style: TextStyle(fontSize: 13)),
+          Text('开机自启时直接最小化到托盘', style: TextStyle(fontSize: 11)),
+        ])),
+        ToggleSwitch(checked: config.autoStartSilent, onChanged: (v) {
+          state.setClickerConfig(config.copyWith(autoStartSilent: v));
+        }),
+      ]),
+    ]);
+  }
+
+  Future<void> _setAutoStart(bool enabled) async {
+    if (!Platform.isWindows) return;
+    try {
+      final channel = MethodChannel('com.clicker.pro/platform');
+      await channel.invokeMethod(enabled ? 'enableAutoStart' : 'disableAutoStart');
+    } catch (_) {}
   }
 
   // ─── Profiles ─────────────────────────────────────────────

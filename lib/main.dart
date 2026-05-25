@@ -4,6 +4,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:flutter_acrylic/flutter_acrylic.dart';
+import 'package:flutter/services.dart';
 import 'app.dart';
 
 void main() async {
@@ -16,18 +17,28 @@ void main() async {
   await windowManager.setTitle('Clicker');
   await windowManager.center();
   await windowManager.setPreventClose(true);
-  // Do NOT use setAsFrameless() -- it conflicts with WM_NCCALCSIZE in C++.
-  // The WM_NCCALCSIZE handler in flutter_window.cpp removes the native title bar
-  // while keeping the window frame for proper resize behavior.
-  // Using both causes duplicate window buttons overlapping.
 
   // Enable acrylic / mica effect
-  await Window.initialize();
-  await Window.setEffect(
-    effect: WindowEffect.acrylic,
-    color: const Color(0xFF1A1A2E),
-    dark: true,
-  );
+  try {
+    await Window.initialize();
+    await Window.setEffect(
+      effect: WindowEffect.acrylic,
+      color: const Color(0xFF1A1A2E),
+      dark: true,
+    );
+  } catch (_) {
+    // Acrylic may fail on older Windows versions — continue without it
+  }
+
+  // Re-apply DWM fixes immediately after flutter_acrylic overrides them.
+  // flutter_acrylic's setEffect() resets DwmExtendFrameIntoClientArea margins,
+  // which causes white border flash to return.
+  try {
+    const platformChannel = MethodChannel('com.clicker.pro/platform');
+    await platformChannel.invokeMethod('reapplyDwmFixes');
+  } catch (_) {
+    // DWM fixes are non-critical — continue without them
+  }
 
   runApp(const ClickerApp());
 }

@@ -32,8 +32,8 @@ class SystemTrayService {
   Future<dynamic> _handleMethodCall(MethodCall call) async {
     switch (call.method) {
       case 'onTrayIconClick':
-        await windowManager.show();
-        await windowManager.focus();
+        windowManager.show();
+        windowManager.focus();
         break;
       case 'onTrayShowMain':
         onShowMainWindow?.call();
@@ -42,24 +42,27 @@ class SystemTrayService {
         onShowFloatingWindow?.call();
         break;
       case 'onTrayExit':
-        // Stop all services before destroying window
-        await _cleanupAndExit();
+        _cleanupAndExit();
         break;
       case 'onFastClickerStopped':
         final args = call.arguments as Map<dynamic, dynamic>;
         final count = args['count'] as int? ?? 0;
         platformInput?.onFastClickerStopped?.call(count);
         break;
+      case 'onKeyCaptured':
+        final keyName = call.arguments as String? ?? '';
+        platformInput?.onKeyCaptured?.call(keyName);
+        break;
     }
   }
 
-  Future<void> hideToTray() async {
-    await windowManager.hide();
+  void hideToTray() {
+    windowManager.hide();
   }
 
-  Future<void> showFromTray() async {
-    await windowManager.show();
-    await windowManager.focus();
+  void showFromTray() {
+    windowManager.show();
+    windowManager.focus();
   }
 
   void dispose() {
@@ -67,20 +70,13 @@ class SystemTrayService {
     _initialized = false;
   }
 
-  Future<void> _cleanupAndExit() async {
+  void _cleanupAndExit() {
     // Stop native fast clicker immediately
-    try {
-      await _channel.invokeMethod<bool>('stopFastClicker');
-    } catch (_) {}
-
+    _channel.invokeMethod('stopFastClicker');
     // Destroy tray icon
-    try {
-      await _channel.invokeMethod('destroySystemTray');
-    } catch (_) {}
-
+    _channel.invokeMethod('destroySystemTray');
     _initialized = false;
-
-    // Now destroy the window
-    await windowManager.destroy();
+    // Immediately destroy window and quit
+    _channel.invokeMethod('destroyWindow');
   }
 }

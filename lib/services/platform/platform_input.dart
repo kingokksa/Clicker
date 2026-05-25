@@ -50,5 +50,11 @@ abstract class PlatformInput {
   /// Callback for native fast clicker stopped event.
   void Function(int count)? onFastClickerStopped;
 
+  /// Callback for key capture result (from C++ captureKey).
+  void Function(String keyName)? onKeyCaptured;
+
+  /// Invoke a platform channel method.
+  Future<dynamic> invokeMethod(String method, [dynamic arguments]);
+
   void dispose();
 }

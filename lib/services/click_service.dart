@@ -45,8 +45,13 @@ class ClickService {
     _usingNativeClicker = false;
     _timer?.cancel();
     _timer = null;
-    _status = ClickerStatus.idle;
-    onStatusChanged?.call(_status, _clickCount);
+    // Update status to idle. This is safe even if Dart's stop() was already
+    // called — setting idle twice is harmless. If a new session started
+    // (status is running from a new start()), we don't overwrite it.
+    if (_status == ClickerStatus.running) {
+      _status = ClickerStatus.idle;
+      onStatusChanged?.call(_status, _clickCount);
+    }
   }
 
   void updateConfig(ClickerConfig config) {
@@ -79,25 +84,6 @@ class ClickService {
     _status = ClickerStatus.running;
     onStatusChanged?.call(_status, _clickCount);
 
-    // Keyboard hold mode: press and hold the key
-    if (_config.clickMode == ClickMode.keyboard &&
-        _config.keyActionMode == KeyActionMode.hold) {
-      await _input.keyPress(_config.keyToRepeat);
-      _timer = Timer.periodic(const Duration(milliseconds: 100), (_) {
-        if (_shouldStop()) {
-          stop();
-        }
-      });
-      return;
-    }
-
-    // Keyboard combo mode: press all combo keys together
-    if (_config.clickMode == ClickMode.keyboard &&
-        _config.keyActionMode == KeyActionMode.combo) {
-      _scheduleCombo();
-      return;
-    }
-
     _scheduleClick();
   }
 
@@ -108,62 +94,40 @@ class ClickService {
 
     final delayUs = _getDelayUs();
 
-    // Fast mouse clicking: use native Win32 thread for maximum speed
-    // This avoids blocking the Dart event loop, so hotkeys remain responsive.
-    if (delayUs < 50000 && _config.clickMode == ClickMode.mouse) {
+    // Fast clicking (mouse or keyboard): use native Win32 thread for maximum
+    // speed and instant stop. Minimum interval is 10ms.
+    if (delayUs < 50000) {
       _startNativeFastClicker();
       return;
     }
 
-    if (delayUs >= 50000) {
-      // Slow mode (>= 50ms): one-shot timer, await each action
-      _timer = Timer(Duration(microseconds: delayUs), () async {
-        if (_status != ClickerStatus.running) return;
-        await _performAction();
-        _clickCount++;
-        onStatusChanged?.call(_status, _clickCount);
-        if (_shouldStop()) { stop(); return; }
-        _scheduleClick();
-      });
-    } else {
-      // Fast keyboard mode: batch clicks per 1ms timer tick
-      final clicksPerTick = (1000.0 / _config.intervalMs).ceil();
-      final batch = clicksPerTick.clamp(1, 200);
-
-      _timer = Timer.periodic(const Duration(milliseconds: 1), (_) {
-        if (_status != ClickerStatus.running) return;
-        for (int i = 0; i < batch; i++) {
-          if (_shouldStop()) break;
-          _performFastKeyAction();
-          _clickCount++;
-        }
-        _uiUpdateCounter++;
-        if (_uiUpdateCounter >= 10) {
-          _uiUpdateCounter = 0;
-          onStatusChanged?.call(_status, _clickCount);
-        }
-        if (_shouldStop()) {
-          onStatusChanged?.call(_status, _clickCount);
-          stop();
-        }
-      });
-    }
+    // Slow mode (>= 50ms): one-shot timer, await each action
+    _timer = Timer(Duration(microseconds: delayUs), () async {
+      if (_status != ClickerStatus.running) return;
+      await _performAction();
+      _clickCount++;
+      onStatusChanged?.call(_status, _clickCount);
+      if (_shouldStop()) { stop(); return; }
+      _scheduleClick();
+    });
   }
 
   /// Start native fast clicker via platform channel.
-  /// Runs on a separate Win32 thread with multimedia timer —
-  /// does NOT block Dart event loop, so hotkeys remain responsive.
-  Future<void> _startNativeFastClicker() async {
+  /// Runs on a separate Win32 thread — does NOT block Dart event loop.
+  /// Supports both mouse and keyboard modes. Minimum interval: 10ms.
+  void _startNativeFastClicker() {
     _usingNativeClicker = true;
     int x = _config.positionMode == PositionMode.fixed ? _config.fixedX : -1;
     int y = _config.positionMode == PositionMode.fixed ? _config.fixedY : -1;
     int button = _config.mouseButton == MouseButton.right ? 1
         : (_config.mouseButton == MouseButton.middle ? 2 : 0);
     int targetCount = _targetCount > 0 ? _targetCount : -1;
+    // Enforce minimum 10ms interval
     int intervalUs = (_config.intervalMs * 1000).round();
+    if (intervalUs < 10000) intervalUs = 10000;
 
-    // UI update timer for count display
-    _timer = Timer.periodic(const Duration(milliseconds: 200), (_) {
+    // UI update timer — poll count every 500ms to avoid UI lag
+    _timer = Timer.periodic(const Duration(milliseconds: 500), (_) {
       if (_status == ClickerStatus.running) {
         onStatusChanged?.call(_status, _clickCount);
       }
@@ -174,15 +138,73 @@ class ClickService {
       final hwnd = _config.targetHwnd;
       final cx = _config.targetClientX;
       final cy = _config.targetClientY;
-      await _platformChannel.invokeMethod<bool>('startFastClicker', [
+
+      // Keyboard mode parameters
+      final isKeyboard = _config.clickMode == ClickMode.keyboard;
+      int keyVk = 0;
+      int keyActionMode = 0;
+      List<int> comboKeys = [];
+
+      if (isKeyboard) {
+        keyVk = _keyToVk(_config.keyToRepeat);
+        switch (_config.keyActionMode) {
+          case KeyActionMode.repeat:
+            keyActionMode = 0;
+            break;
+          case KeyActionMode.hold:
+            keyActionMode = 1;
+            break;
+          case KeyActionMode.combo:
+            keyActionMode = 2;
+            comboKeys = _config.comboKeys.map((k) => _keyToVk(k)).toList();
+            break;
+          default:
+            keyActionMode = 0;
+        }
+      }
+
+      _platformChannel.invokeMethod<bool>('startFastClicker', [
         intervalUs, x, y, button, targetCount,
         bgMode, hwnd, cx, cy,
+        isKeyboard, keyVk, keyActionMode,
+        ...comboKeys,
       ]);
     } on PlatformException catch (e) {
       _usingNativeClicker = false;
       onError?.call('原生点击器启动失败: ${e.message}');
       stop();
     }
+  }
+
+  /// Convert a key name string to a Windows virtual key code.
+  static int _keyToVk(String key) {
+    const vkMap = <String, int>{
+      'enter': 0x0D, 'tab': 0x09, 'escape': 0x1B, 'backspace': 0x08,
+      'space': 0x20, 'left': 0x25, 'right': 0x27, 'up': 0x26, 'down': 0x28,
+      'shift': 0x10, 'ctrl': 0x11, 'alt': 0x12, 'delete': 0x2E, 'insert': 0x2D,
+      'home': 0x24, 'end': 0x23, 'pageup': 0x21, 'pagedown': 0x22,
+      'printscreen': 0x2C, 'scrolllock': 0x91, 'pause': 0x13,
+      'capslock': 0x14, 'numlock': 0x90, 'win': 0x5B, 'apps': 0x5D,
+      'f1': 0x70, 'f2': 0x71, 'f3': 0x72, 'f4': 0x73, 'f5': 0x74,
+      'f6': 0x75, 'f7': 0x76, 'f8': 0x77, 'f9': 0x78, 'f10': 0x79,
+      'f11': 0x7A, 'f12': 0x7B, 'f13': 0x7C, 'f14': 0x7D, 'f15': 0x7E,
+      'f16': 0x7F, 'f17': 0x80, 'f18': 0x81, 'f19': 0x82, 'f20': 0x83,
+      'f21': 0x84, 'f22': 0x85, 'f23': 0x86, 'f24': 0x87,
+      '0': 0x30, '1': 0x31, '2': 0x32, '3': 0x33, '4': 0x34,
+      '5': 0x35, '6': 0x36, '7': 0x37, '8': 0x38, '9': 0x39,
+      'a': 0x41, 'b': 0x42, 'c': 0x43, 'd': 0x44, 'e': 0x45,
+      'f': 0x46, 'g': 0x47, 'h': 0x48, 'i': 0x49, 'j': 0x4A,
+      'k': 0x4B, 'l': 0x4C, 'm': 0x4D, 'n': 0x4E, 'o': 0x4F,
+      'p': 0x50, 'q': 0x51, 'r': 0x52, 's': 0x53, 't': 0x54,
+      'u': 0x55, 'v': 0x56, 'w': 0x57, 'x': 0x58, 'y': 0x59, 'z': 0x5A,
+      'multiply': 0x6A, 'add': 0x6B, 'subtract': 0x6D,
+      'decimal': 0x6E, 'divide': 0x6F,
+    };
+    final lower = key.toLowerCase();
+    if (vkMap.containsKey(lower)) return vkMap[lower]!;
+    // Single character: use its uppercase code point as VK
+    if (key.length == 1) return key.toUpperCase().codeUnitAt(0);
+    return 0;
   }
 
   /// Synchronous fast keyboard action — bypasses all async/await overhead.
@@ -298,7 +320,11 @@ class ClickService {
         await _performKeyRepeat();
         break;
       case KeyActionMode.hold:
-        // Handled in start()
+        // Hold mode is handled by native thread for fast intervals.
+        // For slow intervals, press once and the stop() will release it.
+        if (!_usingNativeClicker) {
+          await _input.keyPress(_config.keyToRepeat);
+        }
         break;
       case KeyActionMode.sequence:
         await _performKeySequence();
@@ -420,7 +446,22 @@ class ClickService {
     return _clickCount / (elapsed / 1000);
   }
 
+  DateTime? _lastImmediateStop;
+
+  /// Called from C++ via hotkey service for instant stop.
+  void stopImmediate() {
+    stop();
+    _lastImmediateStop = DateTime.now();
+  }
+
   void toggle() {
+    // If an immediate stop happened very recently (< 200ms), don't restart.
+    // This prevents the normal onHotkey → toggle() from re-starting
+    // the clicker after C++ just stopped it.
+    if (_lastImmediateStop != null &&
+        DateTime.now().difference(_lastImmediateStop!) < const Duration(milliseconds: 200)) {
+      return;
+    }
     if (_status == ClickerStatus.running) {
       stop();
     } else {

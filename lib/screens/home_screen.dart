@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:flutter/services.dart';
 import '../services/app_state.dart';
 import '../services/system_tray_service.dart';
 import 'clicker/clicker_page.dart';
@@ -15,6 +16,7 @@ import 'sidebar/plugin_page.dart';
 import 'sidebar/image_recognition_page.dart';
 import 'sidebar/theme_center_page.dart';
 import 'sidebar/background_execution_page.dart';
+import 'sidebar/hold_trigger_page.dart';
 import 'floating_window.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -27,13 +29,29 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with WindowListener {
   int _currentIndex = 0;
   bool _isFloatingMode = false;
+  bool _isMaximized = false;
+  bool _isClosing = false;
+
+  static const _platformChannel = MethodChannel('com.clicker.pro/platform');
 
   @override
   void initState() {
     super.initState();
     windowManager.addListener(this);
     _initSystemTray();
+    _checkMaximized();
   }
+
+  void _checkMaximized() {
+    windowManager.isMaximized().then((m) {
+      if (mounted) setState(() => _isMaximized = m);
+    });
+  }
+
+  @override
+  void onWindowMaximize() => setState(() => _isMaximized = true);
+  @override
+  void onWindowUnmaximize() => setState(() => _isMaximized = false);
 
   Future<void> _initSystemTray() async {
     if (!Platform.isWindows) return;
@@ -50,33 +68,36 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
   }
 
   @override
-  void onWindowClose() async {
+  void onWindowClose() {
+    if (_isClosing) return;
     final state = context.read<AppState>();
     if (Platform.isWindows) {
       if (state.hasAskedMinimizeToTray) {
-        // User already made a choice before
         if (state.minimizeToTray) {
-          await SystemTrayService().hideToTray();
+          SystemTrayService().hideToTray();
         } else {
-          await _cleanupAndExit();
+          _cleanupAndExit();
         }
       } else {
-        // First time: show prompt
         _showCloseDialog(state);
       }
     } else {
-      await windowManager.destroy();
+      _cleanupAndExit();
     }
   }
 
-  Future<void> _cleanupAndExit() async {
+  void _cleanupAndExit() {
+    if (_isClosing) return;
+    _isClosing = true;
     final state = context.read<AppState>();
-    // Stop all running services before exit
     state.clickService.stop();
     state.stopMacro();
     state.cancelRecording();
     state.platformInput.stopListening();
-    await windowManager.destroy();
+    // Use native PostQuitMessage for instant exit.
+    // windowManager.destroy() uses PostQuitMessage(0) which is correct,
+    // but we also need to destroy the window immediately.
+    _platformChannel.invokeMethod('destroyWindow');
   }
 
   Future<void> _showCloseDialog(AppState state) async {
@@ -114,36 +135,27 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
 
     if (result == 'tray') {
       if (remember) state.setMinimizeToTray(true);
-      await SystemTrayService().hideToTray();
+      SystemTrayService().hideToTray();
     } else if (result == 'close') {
       if (remember) state.setMinimizeToTray(false);
-      await _cleanupAndExit();
+      _cleanupAndExit();
     }
   }
 
   Future<void> _switchToFloating() async {
     final state = context.read<AppState>();
     setState(() => _isFloatingMode = true);
-    await windowManager.setMinimumSize(const Size(180, 60));
-    await windowManager.setSize(const Size(280, 95));
-    await windowManager.setAlwaysOnTop(state.floatingAlwaysOnTop);
-    await windowManager.show();
-    await windowManager.focus();
+    // Use native batch method — single platform channel call instead of 5+
+    windowManager.setMinimumSize(const Size(180, 60));
+    _platformChannel.invokeMethod('switchToFloatingWindow', [state.floatingAlwaysOnTop]);
   }
 
   Future<void> _switchToMain() async {
     setState(() => _isFloatingMode = false);
-    await windowManager.setAlwaysOnTop(false);
-    await windowManager.setMinimumSize(const Size(500, 680));
-    await windowManager.setSize(const Size(920, 720));
-    await windowManager.center();
-    await windowManager.show();
-    await windowManager.focus();
-    // Re-apply always-on-top setting from app state
     final state = context.read<AppState>();
-    if (state.alwaysOnTop) {
-      await windowManager.setAlwaysOnTop(true);
-    }
+    // Use native batch method — single platform channel call instead of 6+
+    windowManager.setMinimumSize(const Size(500, 680));
+    _platformChannel.invokeMethod('switchToMainWindow', [state.alwaysOnTop]);
   }
 
   @override
@@ -157,7 +169,7 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
     return DragToResizeArea(
       resizeEdgeSize: 6,
       child: Column(children: [
-        _GlassTitleBar(isDark: isDark, onFloatingMode: _switchToFloating),
+        _GlassTitleBar(isDark: isDark, isMaximized: _isMaximized, onFloatingMode: _switchToFloating),
         Expanded(child: NavigationView(
             pane: NavigationPane(
               selected: _currentIndex,
@@ -174,9 +186,10 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
               items: [
                 PaneItem(icon: const Icon(FluentIcons.touch), title: const Text('连点'), body: const ClickerPage()),
                 PaneItem(icon: const Icon(FluentIcons.record2), title: const Text('宏'), body: const MacroPage()),
+                PaneItem(icon: const Icon(FluentIcons.keyboard_classic), title: const Text('按住触发'), body: const HoldTriggerPage()),
                 PaneItemSeparator(),
                 PaneItem(icon: const Icon(FluentIcons.puzzle), title: const Text('功能管理'), body: const PluginPage()),
-                PaneItem(icon: const Icon(FluentIcons.settings), title: const Text('后台执行'), body: const BackgroundExecutionPage()),
+                PaneItem(icon: const Icon(FluentIcons.remote), title: const Text('后台执行'), body: const BackgroundExecutionPage()),
                 PaneItem(icon: const Icon(FluentIcons.image_pixel), title: const Text('图像识别'), body: const ImageRecognitionPage()),
                 PaneItem(icon: const Icon(FluentIcons.color), title: const Text('主题中心'), body: const ThemeCenterPage()),
               ],
@@ -195,18 +208,20 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
 
 class _GlassTitleBar extends StatelessWidget {
   final bool isDark;
+  final bool isMaximized;
   final VoidCallback onFloatingMode;
-  const _GlassTitleBar({required this.isDark, required this.onFloatingMode});
+  static const _platformChannel = MethodChannel('com.clicker.pro/platform');
+  const _GlassTitleBar({required this.isDark, required this.isMaximized, required this.onFloatingMode});
 
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
     return GestureDetector(
-      onDoubleTap: () async {
-        if (await windowManager.isMaximized()) {
-          windowManager.unmaximize();
+      onDoubleTap: () {
+        if (isMaximized) {
+          _platformChannel.invokeMethod('unmaximizeWindow');
         } else {
-          windowManager.maximize();
+          _platformChannel.invokeMethod('maximizeWindow');
         }
       },
       onPanStart: (_) => windowManager.startDragging(),
@@ -246,8 +261,8 @@ class _GlassTitleBar extends StatelessWidget {
             tooltip: '悬浮窗',
             onPressed: onFloatingMode,
           ),
-          _WindowButton(icon: FluentIcons.chrome_minimize, isDark: isDark, onPressed: () => windowManager.minimize()),
-          _MaximizeButton(isDark: isDark),
+          _WindowButton(icon: FluentIcons.chrome_minimize, isDark: isDark, onPressed: () => _platformChannel.invokeMethod('minimizeWindow')),
+          _MaximizeButton(isDark: isDark, isMaximized: isMaximized),
           _WindowButton(icon: FluentIcons.chrome_close, isDark: isDark, isClose: true, onPressed: () => windowManager.close()),
         ]),
       ),
@@ -334,32 +349,26 @@ class _WindowButtonState extends State<_WindowButton> {
 
 class _MaximizeButton extends StatefulWidget {
   final bool isDark;
-  const _MaximizeButton({required this.isDark});
+  final bool isMaximized;
+  const _MaximizeButton({required this.isDark, required this.isMaximized});
   @override
   State<_MaximizeButton> createState() => _MaximizeButtonState();
 }
 
 class _MaximizeButtonState extends State<_MaximizeButton> {
   bool _hovering = false;
-  bool _isMaximized = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _checkMaximized();
-  }
-
-  Future<void> _checkMaximized() async {
-    final m = await windowManager.isMaximized();
-    if (mounted && _isMaximized != m) setState(() => _isMaximized = m);
-  }
+  static const _platformChannel = MethodChannel('com.clicker.pro/platform');
 
   @override
   Widget build(BuildContext context) {
+    final color = widget.isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80);
     return GestureDetector(
-      onTap: () async {
-        if (await windowManager.isMaximized()) { await windowManager.unmaximize(); } else { await windowManager.maximize(); }
-        _checkMaximized();
+      onTap: () {
+        if (widget.isMaximized) {
+          _platformChannel.invokeMethod('unmaximizeWindow');
+        } else {
+          _platformChannel.invokeMethod('maximizeWindow');
+        }
       },
       child: MouseRegion(
         onEnter: (_) => setState(() => _hovering = true),
@@ -368,9 +377,9 @@ class _MaximizeButtonState extends State<_MaximizeButton> {
           width: 46, height: 36,
           color: _hovering ? (widget.isDark ? const Color(0xFF404060) : const Color(0xFFE0E0F0)) : Colors.transparent,
           child: Center(
-            child: _isMaximized
-              ? _RestoreIcon(color: widget.isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80))
-              : _MaximizeIcon(color: widget.isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80)),
+            child: widget.isMaximized
+              ? _RestoreIcon(color: color)
+              : _MaximizeIcon(color: color),
           ),
         ),
       ),

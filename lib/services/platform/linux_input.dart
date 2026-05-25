@@ -167,6 +167,12 @@ class LinuxInput extends PlatformInput {
     _keyController.close();
   }
 
+  @override
+  Future<dynamic> invokeMethod(String method, [dynamic arguments]) async {
+    // Not supported on Linux
+    return null;
+  }
+
   // ─── Helpers ───────────────────────────────────────────────
 
   String _linuxButton(String button) {

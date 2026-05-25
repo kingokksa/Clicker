@@ -1,20 +1,204 @@
-#include "flutter_window.h"
-
 #pragma warning(disable: 4819)
+#include "flutter_window.h"
 
 #include <dwmapi.h>
 #include <mmsystem.h>
 #include <optional>
-#include <atomic>
 #include <algorithm>
+#include <vector>
 
 #pragma comment(lib, "winmm.lib")
+#pragma comment(lib, "dwmapi.lib")
 
 #include "flutter/generated_plugin_registrant.h"
 #include "flutter/standard_method_codec.h"
 
+// Safe integer extraction from EncodableValue.
+// Flutter StandardMethodCodec may encode Dart int as int32_t or int64_t.
+static int GetInt(const flutter::EncodableValue& val) {
+  if (const auto* p = std::get_if<int32_t>(&val)) return *p;
+  if (const auto* p = std::get_if<int64_t>(&val)) return static_cast<int>(*p);
+  return 0;
+}
+
+static int64_t GetInt64(const flutter::EncodableValue& val) {
+  if (const auto* p = std::get_if<int64_t>(&val)) return *p;
+  if (const auto* p = std::get_if<int32_t>(&val)) return static_cast<int64_t>(*p);
+  return 0;
+}
+
+// Ensure DWMWA_TRANSITIONS_FORCEDISABLED is defined (older SDKs may not have it)
+#ifndef DWMWA_TRANSITIONS_FORCEDISABLED
+#define DWMWA_TRANSITIONS_FORCEDISABLED 3
+#endif
+
 // Global pointer for low-level hooks (must be global for SetWindowsHookEx).
 static FlutterWindow* g_flutter_window_for_hooks = nullptr;
+
+// ─── VK ↔ Key Name Conversion ─────────────────────────────────────────────
+
+static std::string VkToKeyName(int vk) {
+  static const struct { int vk; const char* name; } map[] = {
+    {0x0D, "enter"}, {0x09, "tab"}, {0x1B, "escape"}, {0x08, "backspace"},
+    {0x20, "space"}, {0x25, "left"}, {0x27, "right"}, {0x26, "up"}, {0x28, "down"},
+    {0x10, "shift"}, {0x11, "ctrl"}, {0x12, "alt"}, {0x2E, "delete"}, {0x2D, "insert"},
+    {0x24, "home"}, {0x23, "end"}, {0x21, "pageup"}, {0x22, "pagedown"},
+    {0x2C, "printscreen"}, {0x91, "scrolllock"}, {0x13, "pause"},
+    {0x14, "capslock"}, {0x90, "numlock"}, {0x5B, "win"}, {0x5D, "apps"},
+    {0x70, "f1"}, {0x71, "f2"}, {0x72, "f3"}, {0x73, "f4"}, {0x74, "f5"},
+    {0x75, "f6"}, {0x76, "f7"}, {0x77, "f8"}, {0x78, "f9"}, {0x79, "f10"},
+    {0x7A, "f11"}, {0x7B, "f12"},
+  };
+  for (const auto& m : map) {
+    if (m.vk == vk) return m.name;
+  }
+  if (vk >= 0x30 && vk <= 0x39) return std::string(1, static_cast<char>(vk));
+  if (vk >= 0x41 && vk <= 0x5A) return std::string(1, static_cast<char>(vk + 32));
+  return "unknown";
+}
+
+static int KeyNameToVk(const std::string& name) {
+  std::string lower = name;
+  for (auto& c : lower) c = static_cast<char>(tolower(c));
+  static const struct { const char* name; int vk; } map[] = {
+    {"enter", 0x0D}, {"tab", 0x09}, {"escape", 0x1B}, {"backspace", 0x08},
+    {"space", 0x20}, {"left", 0x25}, {"right", 0x27}, {"up", 0x26}, {"down", 0x28},
+    {"shift", 0x10}, {"ctrl", 0x11}, {"alt", 0x12}, {"delete", 0x2E}, {"insert", 0x2D},
+    {"home", 0x24}, {"end", 0x23}, {"pageup", 0x21}, {"pagedown", 0x22},
+    {"printscreen", 0x2C}, {"scrolllock", 0x91}, {"pause", 0x13},
+    {"capslock", 0x14}, {"numlock", 0x90}, {"win", 0x5B}, {"apps", 0x5D},
+    {"f1", 0x70}, {"f2", 0x71}, {"f3", 0x72}, {"f4", 0x73}, {"f5", 0x74},
+    {"f6", 0x75}, {"f7", 0x76}, {"f8", 0x77}, {"f9", 0x78}, {"f10", 0x79},
+    {"f11", 0x7A}, {"f12", 0x7B},
+  };
+  for (const auto& m : map) {
+    if (lower == m.name) return m.vk;
+  }
+  if (lower.length() == 1) {
+    char c = lower[0];
+    if (c >= '0' && c <= '9') return static_cast<int>(c);
+    if (c >= 'a' && c <= 'z') return static_cast<int>(c - 32);
+  }
+  return 0;
+}
+
+// ─── Hold Trigger (Per-Key Auto-Repeat) ──────────────────────────────────
+
+struct HoldTriggerEntry {
+  int trigger_vk = 0;
+  bool is_keyboard = false;
+  int key_vk = 0;
+  int key_action_mode = 0;
+  int combo_keys[8] = {};
+  int combo_key_count = 0;
+  int mouse_button = 0;
+  int interval_ms = 50;
+  bool background_mode = false;
+  HWND target_hwnd = nullptr;
+  int client_x = 0;
+  int client_y = 0;
+  HANDLE thread = nullptr;
+  volatile bool stop_requested = false;
+  volatile uint64_t generation = 0;
+  bool active = false;
+};
+
+static const int kMaxHoldTriggers = 32;
+static HoldTriggerEntry g_hold_triggers[kMaxHoldTriggers];
+static int g_hold_trigger_count = 0;
+static CRITICAL_SECTION g_hold_trigger_cs;
+static bool g_hold_trigger_cs_initialized = false;
+
+static DWORD WINAPI HoldTriggerThreadFunc(LPVOID param);
+
+static void SendHoldTriggerAction(HoldTriggerEntry* entry) {
+  if (entry->is_keyboard) {
+    if (entry->key_action_mode == 0) {
+      INPUT inputs[2] = {};
+      inputs[0].type = INPUT_KEYBOARD;
+      inputs[0].ki.wVk = static_cast<WORD>(entry->key_vk);
+      inputs[1].type = INPUT_KEYBOARD;
+      inputs[1].ki.wVk = static_cast<WORD>(entry->key_vk);
+      inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
+      SendInput(2, inputs, sizeof(INPUT));
+    } else if (entry->key_action_mode == 2) {
+      int n = entry->combo_key_count;
+      if (n > 8) n = 8;
+      INPUT inputs[16] = {};
+      for (int i = 0; i < n; i++) {
+        inputs[i].type = INPUT_KEYBOARD;
+        inputs[i].ki.wVk = static_cast<WORD>(entry->combo_keys[i]);
+      }
+      for (int i = 0; i < n; i++) {
+        inputs[n + i].type = INPUT_KEYBOARD;
+        inputs[n + i].ki.wVk = static_cast<WORD>(entry->combo_keys[i]);
+        inputs[n + i].ki.dwFlags = KEYEVENTF_KEYUP;
+      }
+      SendInput(n * 2, inputs, sizeof(INPUT));
+    }
+  } else {
+    if (entry->background_mode && entry->target_hwnd) {
+      LPARAM lp = MAKELPARAM(static_cast<WORD>(entry->client_x),
+                              static_cast<WORD>(entry->client_y));
+      UINT msg_down = WM_LBUTTONDOWN, msg_up = WM_LBUTTONUP;
+      if (entry->mouse_button == 1) { msg_down = WM_RBUTTONDOWN; msg_up = WM_RBUTTONUP; }
+      else if (entry->mouse_button == 2) { msg_down = WM_MBUTTONDOWN; msg_up = WM_MBUTTONUP; }
+      PostMessage(entry->target_hwnd, msg_down, MK_LBUTTON, lp);
+      PostMessage(entry->target_hwnd, msg_up, 0, lp);
+    } else {
+      INPUT inputs[2] = {};
+      DWORD flags_down = MOUSEEVENTF_LEFTDOWN, flags_up = MOUSEEVENTF_LEFTUP;
+      if (entry->mouse_button == 1) { flags_down = MOUSEEVENTF_RIGHTDOWN; flags_up = MOUSEEVENTF_RIGHTUP; }
+      else if (entry->mouse_button == 2) { flags_down = MOUSEEVENTF_MIDDLEDOWN; flags_up = MOUSEEVENTF_MIDDLEUP; }
+      inputs[0].type = INPUT_MOUSE;
+      inputs[0].mi.dwFlags = flags_down;
+      inputs[1].type = INPUT_MOUSE;
+      inputs[1].mi.dwFlags = flags_up;
+      SendInput(2, inputs, sizeof(INPUT));
+    }
+  }
+}
+
+static void StartHoldTrigger(HoldTriggerEntry* entry) {
+  if (entry->active) return;
+  // Clean up previous thread handle if any
+  if (entry->thread) {
+    WaitForSingleObject(entry->thread, 100);
+    CloseHandle(entry->thread);
+    entry->thread = nullptr;
+  }
+  entry->active = true;
+  entry->stop_requested = false;
+  entry->generation++;
+  entry->thread = CreateThread(nullptr, 0, HoldTriggerThreadFunc, entry, 0, nullptr);
+}
+
+static void StopHoldTrigger(HoldTriggerEntry* entry) {
+  if (!entry->active) return;
+  entry->stop_requested = true;
+  entry->active = false;
+  // Don't wait for thread in hook proc — it exits within one sleep cycle.
+  // Handle is closed on next start or unregister.
+}
+
+static DWORD WINAPI HoldTriggerThreadFunc(LPVOID param) {
+  auto* entry = reinterpret_cast<HoldTriggerEntry*>(param);
+  uint64_t my_gen = entry->generation;
+  SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+  timeBeginPeriod(1);
+  int sleep_ms = entry->interval_ms;
+  if (sleep_ms < 10) sleep_ms = 10;
+  while (entry->generation == my_gen && !entry->stop_requested) {
+    SendHoldTriggerAction(entry);
+    Sleep(sleep_ms);
+  }
+  timeEndPeriod(1);
+  return 0;
+}
+
+// Key capture mode for UI key selection
+static bool g_capturing_key = false;
+static flutter::MethodChannel<flutter::EncodableValue>* g_capture_channel = nullptr;
 
 // -- Overlay Window Implementation -------------------------------------------
 
@@ -72,6 +256,14 @@ static void DrawOverlayContent(HDC hdc, int w, int h) {
   POINT pt;
   GetCursorPos(&pt);
 
+  // For WindowPick mode, convert screen coordinates to overlay-local coordinates
+  if (g_overlay.mode == OverlayMode::WindowPick && g_overlay.hwnd) {
+    POINT origin = {0, 0};
+    ClientToScreen(g_overlay.hwnd, &origin);
+    pt.x -= origin.x;
+    pt.y -= origin.y;
+  }
+
   if (g_overlay.mode == OverlayMode::Crosshair) {
     // Draw crosshair lines
     HPEN hPen = CreatePen(PS_SOLID, 1, CROSSHAIR_COLOR);
@@ -98,6 +290,37 @@ static void DrawOverlayContent(HDC hdc, int w, int h) {
     wchar_t coordText[64];
     swprintf_s(coordText, L"(%d, %d)", pt.x, pt.y);
     TextOutW(hdc, pt.x + 12, pt.y + 12, coordText, (int)wcslen(coordText));
+
+  } else if (g_overlay.mode == OverlayMode::WindowPick) {
+    // Draw crosshair relative to the overlay (which covers the target window)
+    HPEN hPen = CreatePen(PS_SOLID, 1, CROSSHAIR_COLOR);
+    HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);
+    MoveToEx(hdc, 0, pt.y, nullptr);
+    LineTo(hdc, w, pt.y);
+    MoveToEx(hdc, pt.x, 0, nullptr);
+    LineTo(hdc, pt.x, h);
+    SelectObject(hdc, hOldPen);
+    DeleteObject(hPen);
+
+    // Draw center circle
+    HBRUSH circleBrush = CreateSolidBrush(CROSSHAIR_COLOR);
+    HBRUSH oldBrush = (HBRUSH)SelectObject(hdc, circleBrush);
+    HPEN oldPen2 = (HPEN)SelectObject(hdc, GetStockObject(NULL_PEN));
+    Ellipse(hdc, pt.x - 6, pt.y - 6, pt.x + 6, pt.y + 6);
+    SelectObject(hdc, oldPen2);
+    SelectObject(hdc, oldBrush);
+    DeleteObject(circleBrush);
+
+    // Draw client-area coordinates
+    SetBkColor(hdc, OVERLAY_BG_COLOR);
+    SetTextColor(hdc, CROSSHAIR_COLOR);
+    wchar_t coordText[64];
+    swprintf_s(coordText, L"(%d, %d)", pt.x, pt.y);
+    TextOutW(hdc, pt.x + 12, pt.y + 12, coordText, (int)wcslen(coordText));
+
+    // Draw hint text
+    SetTextColor(hdc, RGB(255, 255, 255));
+    TextOutW(hdc, 8, 8, L"Click to pick coordinates (ESC to cancel)", 41);
 
   } else if (g_overlay.mode == OverlayMode::AreaSelect) {
     if (g_overlay.dragging) {
@@ -175,6 +398,20 @@ static LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
               {flutter::EncodableValue("y"), flutter::EncodableValue(static_cast<int>(pt.y))},
             }));
         }
+      } else if (g_overlay.mode == OverlayMode::WindowPick) {
+        // Convert screen coordinates to client-area coordinates of the target window
+        POINT clientPt = pt;
+        if (g_overlay.target_window) {
+          ScreenToClient(g_overlay.target_window, &clientPt);
+        }
+        if (g_overlay.channel) {
+          g_overlay.channel->InvokeMethod("onOverlayWindowPick",
+            std::make_unique<flutter::EncodableValue>(flutter::EncodableMap{
+              {flutter::EncodableValue("x"), flutter::EncodableValue(static_cast<int>(clientPt.x))},
+              {flutter::EncodableValue("y"), flutter::EncodableValue(static_cast<int>(clientPt.y))},
+            }));
+        }
+        DestroyOverlayWindow();
       } else if (g_overlay.mode == OverlayMode::AreaSelect) {
         g_overlay.dragging = true;
         g_overlay.dragStart = pt;
@@ -250,19 +487,41 @@ void CreateOverlayWindow(flutter::MethodChannel<flutter::EncodableValue>* channe
     registered = true;
   }
 
-  int screenW = GetSystemMetrics(SM_CXSCREEN);
-  int screenH = GetSystemMetrics(SM_CYSCREEN);
-
   g_overlay.channel = channel;
   g_overlay.dragging = false;
   g_overlay.dragStart = {};
   g_overlay.dragCurrent = {};
 
+  int x = 0, y = 0, w = 0, h = 0;
+
+  if (g_overlay.mode == OverlayMode::WindowPick && g_overlay.target_window) {
+    // For WindowPick mode: overlay only covers the target window's client area
+    RECT clientRect;
+    if (GetClientRect(g_overlay.target_window, &clientRect)) {
+      POINT pt = {clientRect.left, clientRect.top};
+      ClientToScreen(g_overlay.target_window, &pt);
+      x = pt.x;
+      y = pt.y;
+      w = clientRect.right - clientRect.left;
+      h = clientRect.bottom - clientRect.top;
+    }
+    // Bring target window to foreground first
+    SetForegroundWindow(g_overlay.target_window);
+  }
+
+  if (w == 0 || h == 0) {
+    // Fullscreen fallback (Crosshair, AreaSelect, or failed WindowPick)
+    x = 0;
+    y = 0;
+    w = GetSystemMetrics(SM_CXSCREEN);
+    h = GetSystemMetrics(SM_CYSCREEN);
+  }
+
   g_overlay.hwnd = CreateWindowExW(
     WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TOOLWINDOW,
     kOverlayClassName, L"",
     WS_POPUP | WS_VISIBLE,
-    0, 0, screenW, screenH,
+    x, y, w, h,
     nullptr, nullptr, GetModuleHandle(nullptr), nullptr);
 
   // Make magenta background transparent
@@ -286,6 +545,7 @@ void DestroyOverlayWindow() {
   g_overlay.mode = OverlayMode::None;
   g_overlay.dragging = false;
   g_overlay.channel = nullptr;
+  g_overlay.target_window = nullptr;
   CleanupOverlayBuffer();
 }
 
@@ -304,6 +564,17 @@ bool FlutterWindow::OnCreate() {
   if (!Win32Window::OnCreate()) {
     return false;
   }
+
+  // Initialize hold trigger critical section
+  InitializeCriticalSection(&g_hold_trigger_cs);
+  g_hold_trigger_cs_initialized = true;
+
+  HWND hwnd = GetHandle();
+
+  // Extend DWM frame slightly to keep window shadow and rounded corners.
+  // Do NOT use {-1,-1,-1,-1} — it breaks rendering with acrylic.
+  MARGINS margins = { 0, 0, 0, 1 };
+  DwmExtendFrameIntoClientArea(hwnd, &margins);
 
   RECT frame = GetClientArea();
 
@@ -332,9 +603,9 @@ bool FlutterWindow::OnCreate() {
             result->Error("INVALID_ARGS", "Expected [id, modifiers, vk]");
             return;
           }
-          int id = std::get<int>(args->at(0));
-          int modifiers = std::get<int>(args->at(1));
-          int vk = std::get<int>(args->at(2));
+          int id = GetInt(args->at(0));
+          int modifiers = GetInt(args->at(1));
+          int vk = GetInt(args->at(2));
           BOOL success = RegisterHotKey(GetHandle(), id, modifiers, vk);
           if (success) {
             registered_hotkey_ids_.push_back(id);
@@ -345,7 +616,7 @@ bool FlutterWindow::OnCreate() {
             result->Error("INVALID_ARGS", "Expected [id]");
             return;
           }
-          int id = std::get<int>(args->at(0));
+          int id = GetInt(args->at(0));
           BOOL success = UnregisterHotKey(GetHandle(), id);
           registered_hotkey_ids_.erase(
               std::remove(registered_hotkey_ids_.begin(),
@@ -389,8 +660,8 @@ bool FlutterWindow::OnCreate() {
             result->Error("INVALID_ARGS", "Expected [x, y]");
             return;
           }
-          int x = std::get<int>(args->at(0));
-          int y = std::get<int>(args->at(1));
+          int x = GetInt(args->at(0));
+          int y = GetInt(args->at(1));
           HDC hdc = GetDC(nullptr);
           COLORREF color = GetPixel(hdc, x, y);
           ReleaseDC(nullptr, hdc);
@@ -409,10 +680,10 @@ bool FlutterWindow::OnCreate() {
             result->Error("INVALID_ARGS", "Expected [x, y, w, h]");
             return;
           }
-          int x = std::get<int>(args->at(0));
-          int y = std::get<int>(args->at(1));
-          int w = std::get<int>(args->at(2));
-          int h = std::get<int>(args->at(3));
+          int x = GetInt(args->at(0));
+          int y = GetInt(args->at(1));
+          int w = GetInt(args->at(2));
+          int h = GetInt(args->at(3));
           if (w <= 0 || h <= 0 || w > 1920 || h > 1080) {
             result->Error("INVALID_SIZE", "Capture size out of range");
             return;
@@ -468,6 +739,17 @@ bool FlutterWindow::OnCreate() {
           g_overlay.mode = OverlayMode::Crosshair;
           CreateOverlayWindow(platform_channel_.get());
           result->Success(flutter::EncodableValue(true));
+        } else if (call.method_name() == "startWindowPickOverlay") {
+          // Start window coordinate picking overlay over the target window
+          g_overlay.mode = OverlayMode::WindowPick;
+          // Get target hwnd from arguments
+          const auto* args = std::get_if<flutter::EncodableList>(call.arguments());
+          if (args && args->size() >= 1) {
+            g_overlay.target_window = reinterpret_cast<HWND>(static_cast<intptr_t>(
+              GetInt64(args->operator[](0))));
+          }
+          CreateOverlayWindow(platform_channel_.get());
+          result->Success(flutter::EncodableValue(true));
         } else if (call.method_name() == "startAreaSelectOverlay") {
           // Start area selection overlay
           g_overlay.mode = OverlayMode::AreaSelect;
@@ -494,23 +776,40 @@ bool FlutterWindow::OnCreate() {
             result->Error("INVALID_ARGS", "Expected [intervalUs, x, y, button, targetCount]");
             return;
           }
-          int intervalUs = std::get<int>(args->at(0));
-          int x = std::get<int>(args->at(1));
-          int y = std::get<int>(args->at(2));
-          int button = std::get<int>(args->at(3));
-          int targetCount = std::get<int>(args->at(4));
+          int intervalUs = GetInt(args->at(0));
+          int x = GetInt(args->at(1));
+          int y = GetInt(args->at(2));
+          int button = GetInt(args->at(3));
+          int targetCount = GetInt(args->at(4));
           // Optional background mode params: [backgroundMode, hwnd, clientX, clientY]
           bool bgMode = false;
           HWND targetHwnd = nullptr;
           int clientX = 0, clientY = 0;
           if (args->size() >= 9) {
-            bgMode = std::get<bool>(args->at(5));
-            int64_t hwndVal = std::get<int>(args->at(6));
+            const auto* bgPtr = std::get_if<bool>(&args->at(5));
+            bgMode = bgPtr ? *bgPtr : false;
+            int64_t hwndVal = GetInt64(args->at(6));
             targetHwnd = reinterpret_cast<HWND>(static_cast<intptr_t>(hwndVal));
-            clientX = std::get<int>(args->at(7));
-            clientY = std::get<int>(args->at(8));
+            clientX = GetInt(args->at(7));
+            clientY = GetInt(args->at(8));
           }
-          StartFastClicker(intervalUs, x, y, button, targetCount, bgMode, targetHwnd, clientX, clientY);
+          // Optional keyboard mode params: [isKeyboard, keyVk, keyActionMode, comboKeys...]
+          bool isKeyboard = false;
+          int keyVk = 0;
+          int keyActionMode = 0;
+          std::vector<int> comboKeys;
+          if (args->size() >= 12) {
+            const auto* kbPtr = std::get_if<bool>(&args->at(9));
+            isKeyboard = kbPtr ? *kbPtr : false;
+            keyVk = GetInt(args->at(10));
+            keyActionMode = GetInt(args->at(11));
+            // combo keys start at index 12
+            for (size_t i = 12; i < args->size(); i++) {
+              comboKeys.push_back(GetInt(args->at(i)));
+            }
+          }
+          StartFastClicker(intervalUs, x, y, button, targetCount, bgMode, targetHwnd, clientX, clientY,
+              isKeyboard, keyVk, keyActionMode, comboKeys);
           result->Success(flutter::EncodableValue(true));
         } else if (call.method_name() == "stopFastClicker") {
           StopFastClicker();
@@ -537,6 +836,109 @@ bool FlutterWindow::OnCreate() {
             RegDeleteValueW(hKey, L"Clicker");
             RegCloseKey(hKey);
           }
+          result->Success(flutter::EncodableValue(true));
+        } else if (call.method_name() == "captureKey") {
+          // Start capturing next key press for UI key selection
+          g_capturing_key = true;
+          g_capture_channel = platform_channel_.get();
+          result->Success(flutter::EncodableValue(true));
+        } else if (call.method_name() == "registerHoldTriggerKeys") {
+          // Args: list of [triggerKey, action, mouseButton/keyVk/keyActionMode/comboKeys, intervalMs, bgMode, hwnd, cx, cy]
+          const auto* args = std::get_if<flutter::EncodableList>(call.arguments());
+          if (!args) {
+            result->Error("INVALID_ARGS", "Expected list of trigger key configs");
+            return;
+          }
+          // Stop all existing triggers first
+          EnterCriticalSection(&g_hold_trigger_cs);
+          for (int i = 0; i < g_hold_trigger_count; i++) {
+            StopHoldTrigger(&g_hold_triggers[i]);
+            if (g_hold_triggers[i].thread) {
+              WaitForSingleObject(g_hold_triggers[i].thread, 100);
+              CloseHandle(g_hold_triggers[i].thread);
+              g_hold_triggers[i].thread = nullptr;
+            }
+          }
+          g_hold_trigger_count = 0;
+
+          for (const auto& item : *args) {
+            const auto* cfgPtr = std::get_if<flutter::EncodableList>(&item);
+            if (!cfgPtr || cfgPtr->size() < 4 || g_hold_trigger_count >= kMaxHoldTriggers) continue;
+            const auto& cfg = *cfgPtr;
+
+            auto& entry = g_hold_triggers[g_hold_trigger_count++];
+            entry.trigger_vk = 0;
+            entry.is_keyboard = false;
+            entry.key_vk = 0;
+            entry.key_action_mode = 0;
+            for (int& k : entry.combo_keys) k = 0;
+            entry.combo_key_count = 0;
+            entry.mouse_button = 0;
+            entry.interval_ms = 50;
+            entry.background_mode = false;
+            entry.target_hwnd = nullptr;
+            entry.client_x = 0;
+            entry.client_y = 0;
+            entry.thread = nullptr;
+            entry.stop_requested = false;
+            entry.generation++;
+            entry.active = false;
+            const auto* triggerNamePtr = std::get_if<std::string>(&cfg[0]);
+            if (triggerNamePtr) entry.trigger_vk = KeyNameToVk(*triggerNamePtr);
+            int actionType = GetInt(cfg[1]);
+            entry.interval_ms = GetInt(cfg[2]);
+            if (entry.interval_ms < 10) entry.interval_ms = 10;
+
+            if (actionType == 0) {
+              // Mouse click
+              entry.is_keyboard = false;
+              entry.mouse_button = GetInt(cfg[3]);
+            } else if (actionType == 1) {
+              // Key repeat
+              entry.is_keyboard = true;
+              entry.key_action_mode = 0;
+              const auto* keyNamePtr = std::get_if<std::string>(&cfg[3]);
+              if (keyNamePtr) entry.key_vk = KeyNameToVk(*keyNamePtr);
+            } else if (actionType == 2) {
+              // Key combo
+              entry.is_keyboard = true;
+              entry.key_action_mode = 2;
+              const auto* comboListPtr = std::get_if<flutter::EncodableList>(&cfg[3]);
+              entry.combo_key_count = 0;
+              if (comboListPtr) {
+                for (const auto& k : *comboListPtr) {
+                  if (entry.combo_key_count >= 8) break;
+                  const auto* knPtr = std::get_if<std::string>(&k);
+                  if (knPtr) entry.combo_keys[entry.combo_key_count++] = KeyNameToVk(*knPtr);
+                }
+              }
+            }
+
+            // Optional background mode params
+            if (cfg.size() >= 8) {
+              const auto* bgPtr = std::get_if<bool>(&cfg[4]);
+              entry.background_mode = bgPtr ? *bgPtr : false;
+              int64_t hwndVal = GetInt64(cfg[5]);
+              entry.target_hwnd = reinterpret_cast<HWND>(static_cast<intptr_t>(hwndVal));
+              entry.client_x = GetInt(cfg[6]);
+              entry.client_y = GetInt(cfg[7]);
+            }
+          }
+          LeaveCriticalSection(&g_hold_trigger_cs);
+          result->Success(flutter::EncodableValue(true));
+        } else if (call.method_name() == "unregisterHoldTriggerKeys") {
+          EnterCriticalSection(&g_hold_trigger_cs);
+          for (int i = 0; i < g_hold_trigger_count; i++) {
+            StopHoldTrigger(&g_hold_triggers[i]);
+            // Wait for thread and close handle
+            if (g_hold_triggers[i].thread) {
+              WaitForSingleObject(g_hold_triggers[i].thread, 100);
+              CloseHandle(g_hold_triggers[i].thread);
+              g_hold_triggers[i].thread = nullptr;
+            }
+          }
+          g_hold_trigger_count = 0;
+          LeaveCriticalSection(&g_hold_trigger_cs);
           result->Success(flutter::EncodableValue(true));
         } else if (call.method_name() == "enumerateWindows") {
           // Return list of visible windows: [{hwnd, title, className}]
@@ -565,6 +967,87 @@ bool FlutterWindow::OnCreate() {
             return TRUE;
           }, reinterpret_cast<LPARAM>(&windowList));
           result->Success(flutter::EncodableValue(windowList));
+        } else if (call.method_name() == "switchToFloatingWindow") {
+          // Batch window operations for floating mode switch — single platform call
+          const auto* args = std::get_if<flutter::EncodableList>(call.arguments());
+          if (!args || args->size() < 1) {
+            result->Error("INVALID_ARGS", "Expected [alwaysOnTop]");
+            return;
+          }
+          const auto* aotPtr = std::get_if<bool>(&args->at(0));
+          bool alwaysOnTop = aotPtr ? *aotPtr : false;
+          HWND hw = GetHandle();
+
+          // Get DPI for scaling logical pixels to physical
+          UINT dpi = GetDpiForWindow(hw);
+          double scale = dpi / 96.0;
+          int w = static_cast<int>(280 * scale);
+          int h = static_cast<int>(95 * scale);
+
+          // Set minimum size via WM_GETMINMAXINFO handling
+          // (window_manager handles this, but we set size directly)
+          SetWindowPos(hw, alwaysOnTop ? HWND_TOPMOST : HWND_NOTOPMOST,
+                       0, 0, w, h, SWP_NOMOVE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+          ShowWindow(hw, SW_SHOWNOACTIVATE);
+          SetForegroundWindow(hw);
+
+          result->Success(flutter::EncodableValue(true));
+        } else if (call.method_name() == "switchToMainWindow") {
+          // Batch window operations for main mode switch — single platform call
+          const auto* args = std::get_if<flutter::EncodableList>(call.arguments());
+          if (!args || args->size() < 1) {
+            result->Error("INVALID_ARGS", "Expected [alwaysOnTop]");
+            return;
+          }
+          const auto* aotPtr = std::get_if<bool>(&args->at(0));
+          bool alwaysOnTop = aotPtr ? *aotPtr : false;
+          HWND hw = GetHandle();
+
+          UINT dpi = GetDpiForWindow(hw);
+          double scale = dpi / 96.0;
+          int w = static_cast<int>(920 * scale);
+          int h = static_cast<int>(720 * scale);
+
+          // Center on screen
+          int screenW = GetSystemMetrics(SM_CXSCREEN);
+          int screenH = GetSystemMetrics(SM_CYSCREEN);
+          int x = (screenW - w) / 2;
+          int y = (screenH - h) / 2;
+
+          // Remove topmost first, then reposition and optionally re-apply
+          SetWindowPos(hw, HWND_NOTOPMOST, x, y, w, h, SWP_NOACTIVATE | SWP_FRAMECHANGED);
+          if (alwaysOnTop) {
+            SetWindowPos(hw, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+          }
+          ShowWindow(hw, SW_SHOWNOACTIVATE);
+          SetForegroundWindow(hw);
+
+          result->Success(flutter::EncodableValue(true));
+        } else if (call.method_name() == "reapplyDwmFixes") {
+          // Re-apply DWM frame extension after flutter_acrylic overrides it.
+          HWND hw = GetHandle();
+          MARGINS margins = { 0, 0, 0, 1 };
+          DwmExtendFrameIntoClientArea(hw, &margins);
+          result->Success(flutter::EncodableValue(true));
+        } else if (call.method_name() == "destroyWindow") {
+          // Immediately destroy the window and quit the application.
+          // This is faster than windowManager.destroy() which only calls PostQuitMessage.
+          HWND hw = GetHandle();
+          DestroyWindow(hw);
+          PostQuitMessage(0);
+          result->Success(flutter::EncodableValue(true));
+        } else if (call.method_name() == "maximizeWindow") {
+          // Use PostMessage to avoid blocking the platform thread.
+          // ShowWindow(SW_MAXIMIZE) is synchronous and waits for WM_SIZE
+          // handling to complete, causing ~1s delay.
+          PostMessage(GetHandle(), WM_SYSCOMMAND, SC_MAXIMIZE, 0);
+          result->Success(flutter::EncodableValue(true));
+        } else if (call.method_name() == "unmaximizeWindow") {
+          PostMessage(GetHandle(), WM_SYSCOMMAND, SC_RESTORE, 0);
+          result->Success(flutter::EncodableValue(true));
+        } else if (call.method_name() == "minimizeWindow") {
+          PostMessage(GetHandle(), WM_SYSCOMMAND, SC_MINIMIZE, 0);
+          result->Success(flutter::EncodableValue(true));
         } else {
           result->NotImplemented();
         }
@@ -635,14 +1118,9 @@ bool FlutterWindow::OnCreate() {
   // caption buttons that would overlap with our custom title bar.
   // We keep WS_THICKFRAME for resize and WS_MAXIMIZEBOX/WS_MINIMIZEBOX
   // for window state transitions.
-  HWND hwnd = GetHandle();
   LONG style = GetWindowLong(hwnd, GWL_STYLE);
   style &= ~(WS_CAPTION | WS_SYSMENU);  // Remove caption and system menu
   SetWindowLong(hwnd, GWL_STYLE, style);
-
-  // Extend frame into client area to keep window shadow and rounded corners
-  MARGINS margins = {0, 0, 0, 1};  // 1px bottom margin to keep shadow
-  DwmExtendFrameIntoClientArea(hwnd, &margins);
 
   return true;
 }
@@ -650,6 +1128,12 @@ bool FlutterWindow::OnCreate() {
 void FlutterWindow::OnDestroy() {
   // Stop fast clicker if running.
   StopFastClicker();
+  // Wait for clicker thread to fully exit before destroying window
+  if (clicker_thread_) {
+    WaitForSingleObject(clicker_thread_, 2000);
+    CloseHandle(clicker_thread_);
+    clicker_thread_ = nullptr;
+  }
 
   // Destroy overlay if active.
   DestroyOverlayWindow();
@@ -675,6 +1159,23 @@ void FlutterWindow::OnDestroy() {
   }
   registered_hotkey_ids_.clear();
 
+  // Stop all hold trigger threads.
+  if (g_hold_trigger_cs_initialized) {
+    EnterCriticalSection(&g_hold_trigger_cs);
+    for (int i = 0; i < g_hold_trigger_count; i++) {
+      StopHoldTrigger(&g_hold_triggers[i]);
+      if (g_hold_triggers[i].thread) {
+        WaitForSingleObject(g_hold_triggers[i].thread, 200);
+        CloseHandle(g_hold_triggers[i].thread);
+        g_hold_triggers[i].thread = nullptr;
+      }
+    }
+    g_hold_trigger_count = 0;
+    LeaveCriticalSection(&g_hold_trigger_cs);
+    DeleteCriticalSection(&g_hold_trigger_cs);
+    g_hold_trigger_cs_initialized = false;
+  }
+
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -685,16 +1186,50 @@ void FlutterWindow::OnDestroy() {
 // -- Low-Level Keyboard Hook ------------------------------------------------
 
 LRESULT CALLBACK FlutterWindow::KeyboardHookProc(int code, WPARAM wparam, LPARAM lparam) {
-  if (code == HC_ACTION && g_flutter_window_for_hooks) {
+  if (code == HC_ACTION) {
     auto* kb = reinterpret_cast<KBDLLHOOKSTRUCT*>(lparam);
+    int vk = static_cast<int>(kb->vkCode);
+
+    // Key capture mode (for UI key selection)
+    if (g_capturing_key && g_capture_channel) {
+      if (wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN) {
+        // Convert VK code to key name string
+        std::string keyName = VkToKeyName(vk);
+        g_capturing_key = false;
+        g_capture_channel->InvokeMethod(
+            "onKeyCaptured",
+            std::make_unique<flutter::EncodableValue>(keyName));
+        g_capture_channel = nullptr;
+        return 1; // Suppress the key
+      }
+    }
+
+    // Hold trigger: detect key down/up for registered trigger keys
+    bool key_down = (wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN);
+    bool key_up = (wparam == WM_KEYUP || wparam == WM_SYSKEYUP);
+
+    if ((key_down || key_up) && g_hold_trigger_count > 0) {
+      EnterCriticalSection(&g_hold_trigger_cs);
+      for (int i = 0; i < g_hold_trigger_count; i++) {
+        if (g_hold_triggers[i].trigger_vk == vk) {
+          if (key_down && !g_hold_triggers[i].active) {
+            StartHoldTrigger(&g_hold_triggers[i]);
+          } else if (key_up && g_hold_triggers[i].active) {
+            StopHoldTrigger(&g_hold_triggers[i]);
+          }
+          break;
+        }
+      }
+      LeaveCriticalSection(&g_hold_trigger_cs);
+    }
+
+    // Macro recording
     auto* self = g_flutter_window_for_hooks;
     if (self && self->record_channel_ && self->is_recording_) {
-      // Only forward key down and key up events (ignore syskey for now)
       if (wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN ||
           wparam == WM_KEYUP || wparam == WM_SYSKEYUP) {
         DWORD elapsed = GetTickCount() - self->record_start_tick_;
         int message = static_cast<int>(wparam);
-        int vk = static_cast<int>(kb->vkCode);
         int scan = static_cast<int>(kb->scanCode);
         int flags = static_cast<int>(kb->flags);
 
@@ -761,6 +1296,24 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   // Handle system-level hotkey messages.
   if (message == WM_HOTKEY) {
     int id = static_cast<int>(wparam);
+
+    // Stop the clicker IMMEDIATELY in C++ for start/stop and emergency stop
+    // hotkeys, without waiting for the Dart round-trip. This eliminates
+    // 20-50ms of latency that makes 1ms clicking feel unresponsive.
+    if (id == 1 || id == 3) {  // startStopClicker or emergencyStop
+      StopFastClicker();
+
+      // Also notify Dart to stop immediately (for keyboard mode which uses
+      // Dart Timers, not the native clicker thread). This bypasses the normal
+      // onHotkey → toggle() path which has extra latency.
+      if (hotkey_channel_) {
+        hotkey_channel_->InvokeMethod(
+            "onStopClickerImmediate",
+            std::make_unique<flutter::EncodableValue>(id));
+      }
+    }
+
+    // Notify Dart for normal hotkey handling (toggle, UI updates, etc.)
     if (hotkey_channel_) {
       hotkey_channel_->InvokeMethod(
           "onHotkey",
@@ -808,6 +1361,18 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   // and prevent native caption buttons from being drawn.
   if (message == WM_NCCALCSIZE && wparam == TRUE) {
     return 0;
+  }
+
+  // Prevent the system from redrawing the non-client area when the window
+  // activation state changes (focus in/out). Without this, Windows draws
+  // a white active/inactive border on every focus change.
+  if (message == WM_NCACTIVATE) {
+    return TRUE;
+  }
+
+  // Prevent background erase to avoid white flash during window state changes.
+  if (message == WM_ERASEBKGND) {
+    return 1;
   }
 
   // Handle WM_NCHITTEST to control hit-testing for custom title bar.
@@ -959,30 +1524,71 @@ void FlutterWindow::ShowTrayMenu() {
   PostMessage(GetHandle(), WM_NULL, 0, 0);
 }
 
-// ─── Fast Clicker (Native Thread + Multimedia Timer) ──────────────────────
+// ─── Fast Clicker (Native Thread) ────────────────────────────────────────
+//
+// Design:
+// - Uses a generation counter to invalidate old threads without blocking.
+// - StopFastClicker never blocks the platform thread (no WaitForSingleObject,
+//   no timeKillEvent with TIME_KILL_SYNCHRONOUS).
+// - Simple Sleep loop with timeBeginPeriod(1) for 1ms precision.
+// - Minimum interval: 1ms. Sub-ms is physically impossible with SendInput.
 
-// Global clicker state (shared between thread and callbacks)
 static struct {
-  bool running = false;
-  std::atomic<bool> stop_requested{false};
-  int interval_us = 10000;        // microseconds per click
-  int x = -1;                     // target x (-1 = current)
-  int y = -1;                     // target y
-  int button = 0;                 // 0=left, 1=right, 2=middle
-  int click_count = 0;
-  int target_count = -1;          // -1 = infinite
-  MMRESULT timer_id = 0;
+  volatile bool running = false;
+  volatile bool stop_requested = false;
+  volatile uint64_t generation = 0;
+  int interval_ms = 10;           // milliseconds per click (min 1)
+  int x = -1;
+  int y = -1;
+  int button = 0;                 // 0=left, 1=right, 2=middle (mouse only)
+  volatile int click_count = 0;
+  int target_count = -1;
   flutter::MethodChannel<flutter::EncodableValue>* channel = nullptr;
-  // Background mode
-  bool background_mode = false;   // use PostMessage instead of SendInput
-  HWND target_hwnd = nullptr;     // target window handle
-  int client_x = 0;              // click position relative to client area
+  bool background_mode = false;
+  HWND target_hwnd = nullptr;
+  int client_x = 0;
   int client_y = 0;
+  // Keyboard mode fields
+  bool is_keyboard = false;       // true = keyboard mode, false = mouse mode
+  int key_vk = 0;                 // Virtual key code for keyboard repeat
+  int key_action_mode = 0;        // 0=repeat, 1=hold, 2=combo
+  int combo_keys[8] = {};         // VK codes for combo mode
+  int combo_key_count = 0;
 } g_clicker;
 
 static void SendOneClick() {
+  if (g_clicker.is_keyboard) {
+    // Keyboard repeat mode: press and release the key
+    if (g_clicker.key_action_mode == 0) {
+      INPUT inputs[2] = {};
+      inputs[0].type = INPUT_KEYBOARD;
+      inputs[0].ki.wVk = static_cast<WORD>(g_clicker.key_vk);
+      inputs[1].type = INPUT_KEYBOARD;
+      inputs[1].ki.wVk = static_cast<WORD>(g_clicker.key_vk);
+      inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
+      SendInput(2, inputs, sizeof(INPUT));
+    } else if (g_clicker.key_action_mode == 2) {
+      // Combo mode: press all keys down, then release all
+      int n = g_clicker.combo_key_count;
+      if (n > 8) n = 8;
+      INPUT inputs[16] = {};
+      for (int i = 0; i < n; i++) {
+        inputs[i].type = INPUT_KEYBOARD;
+        inputs[i].ki.wVk = static_cast<WORD>(g_clicker.combo_keys[i]);
+      }
+      for (int i = 0; i < n; i++) {
+        inputs[n + i].type = INPUT_KEYBOARD;
+        inputs[n + i].ki.wVk = static_cast<WORD>(g_clicker.combo_keys[i]);
+        inputs[n + i].ki.dwFlags = KEYEVENTF_KEYUP;
+      }
+      SendInput(n * 2, inputs, sizeof(INPUT));
+    }
+    g_clicker.click_count++;
+    return;
+  }
+
+  // Mouse mode
   if (g_clicker.background_mode && g_clicker.target_hwnd) {
-    // Background mode: PostMessage to target window
     LPARAM lp = MAKELPARAM(static_cast<WORD>(g_clicker.client_x),
                             static_cast<WORD>(g_clicker.client_y));
     WPARAM wp = MK_LBUTTON;
@@ -997,7 +1603,6 @@ static void SendOneClick() {
     PostMessage(g_clicker.target_hwnd, msg_up, 0, lp);
     g_clicker.click_count++;
   } else {
-    // Foreground mode: SendInput
     if (g_clicker.x >= 0 && g_clicker.y >= 0) {
       SetCursorPos(g_clicker.x, g_clicker.y);
     }
@@ -1016,67 +1621,60 @@ static void SendOneClick() {
   }
 }
 
-static void CALLBACK ClickerTimerProc(UINT uID, UINT uMsg, DWORD_PTR dwUser, DWORD_PTR dw1, DWORD_PTR dw2) {
-  if (!g_clicker.running || g_clicker.stop_requested) return;
-
-  // Check count limit
-  if (g_clicker.target_count > 0 && g_clicker.click_count >= g_clicker.target_count) {
-    g_clicker.stop_requested = true;
-    return;
-  }
-
-  // Double-check stop flag right before sending to reduce overshoot
-  if (!g_clicker.stop_requested) {
-    SendOneClick();
-  }
+static bool IsCurrentGeneration(uint64_t gen) {
+  return g_clicker.generation == gen;
 }
 
 static DWORD WINAPI ClickerThreadFunc(LPVOID param) {
-  // Calculate timer resolution in ms (minimum 1ms)
-  int timer_ms = (g_clicker.interval_us / 1000);
-  if (timer_ms < 1) timer_ms = 1;
+  uint64_t my_generation = g_clicker.generation;
+  SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
 
-  // Start multimedia timer — runs in this thread's context with high precision
-  g_clicker.timer_id = timeSetEvent(
-    timer_ms, 1,          // period=ms, resolution=1ms
-    (LPTIMECALLBACK)ClickerTimerProc,
-    (DWORD_PTR)nullptr,
-    TIME_PERIODIC | TIME_KILL_SYNCHRONOUS);
+  // Request 1ms timer resolution from the OS.
+  // Without this, Sleep(1) actually sleeps ~15ms.
+  timeBeginPeriod(1);
 
-  if (g_clicker.timer_id == 0) {
-    // Fallback: use Sleep loop if timeSetEvent fails
-    while (!g_clicker.stop_requested && g_clicker.running) {
-      if (g_clicker.target_count > 0 && g_clicker.click_count >= g_clicker.target_count) break;
-      SendOneClick();
-      if (g_clicker.interval_us >= 1000) {
-        Sleep(g_clicker.interval_us / 1000);
-      } else {
-        // For sub-ms intervals, just spin (still in separate thread so UI is fine)
-        // But yield to prevent 100% CPU burn on single core
-        for (int i = 0; i < (1000 / (g_clicker.interval_us > 10 ? g_clicker.interval_us : 10)) && !g_clicker.stop_requested; i++) {
-          SendOneClick();
-          if (g_clicker.target_count > 0 && g_clicker.click_count >= g_clicker.target_count) break;
-          Sleep(0); // yield
-        }
-      }
+  int sleep_ms = g_clicker.interval_ms;
+  if (sleep_ms < 1) sleep_ms = 1;
+
+  // Keyboard hold mode: press key once, wait for stop, then release
+  if (g_clicker.is_keyboard && g_clicker.key_action_mode == 1) {
+    INPUT inputs[1] = {};
+    inputs[0].type = INPUT_KEYBOARD;
+    inputs[0].ki.wVk = static_cast<WORD>(g_clicker.key_vk);
+    SendInput(1, inputs, sizeof(INPUT));
+    g_clicker.click_count++;
+
+    // Wait until stopped
+    while (IsCurrentGeneration(my_generation) && !g_clicker.stop_requested) {
+      Sleep(sleep_ms);
     }
+
+    // Release the key
+    INPUT up = {};
+    up.type = INPUT_KEYBOARD;
+    up.ki.wVk = static_cast<WORD>(g_clicker.key_vk);
+    up.ki.dwFlags = KEYEVENTF_KEYUP;
+    SendInput(1, &up, sizeof(INPUT));
   } else {
-    // Wait until stop is requested
-    while (!g_clicker.stop_requested && g_clicker.running) {
+    // Normal repeat/combo/mouse mode
+    while (IsCurrentGeneration(my_generation) && !g_clicker.stop_requested) {
       if (g_clicker.target_count > 0 && g_clicker.click_count >= g_clicker.target_count) {
         g_clicker.stop_requested = true;
         break;
       }
-      Sleep(5);
+      SendOneClick();
+      Sleep(sleep_ms);
     }
-    timeKillEvent(g_clicker.timer_id);
-    g_clicker.timer_id = 0;
   }
+
+  timeEndPeriod(1);
 
   g_clicker.running = false;
 
-  // Notify Dart that clicking stopped
-  if (g_clicker.channel) {
+  // Notify Dart when thread exits. Only notify if our generation is still
+  // current (i.e., no new StartFastClicker was called). If generation
+  // changed, a new thread was started and will handle its own notification.
+  if (IsCurrentGeneration(my_generation) && g_clicker.channel) {
     g_clicker.channel->InvokeMethod("onFastClickerStopped",
       std::make_unique<flutter::EncodableValue>(flutter::EncodableMap{
         {flutter::EncodableValue("count"), flutter::EncodableValue(g_clicker.click_count)},
@@ -1087,15 +1685,33 @@ static DWORD WINAPI ClickerThreadFunc(LPVOID param) {
 }
 
 void FlutterWindow::StartFastClicker(int intervalUs, int x, int y, int button, int targetCount,
-    bool bgMode, HWND targetHwnd, int clientX, int clientY) {
-  StopFastClicker();
+    bool bgMode, HWND targetHwnd, int clientX, int clientY,
+    bool isKeyboard, int keyVk, int keyActionMode,
+    const std::vector<int>& comboKeys) {
+  // Invalidate any running thread by bumping generation.
+  g_clicker.generation++;
+  g_clicker.stop_requested = true;
+  g_clicker.running = false;
 
-  g_clicker.interval_us = intervalUs;
+  // Clean up old thread handle.
+  // Old thread exits quickly because it checks generation every loop.
+  if (clicker_thread_) {
+    WaitForSingleObject(clicker_thread_, 100);
+    CloseHandle(clicker_thread_);
+    clicker_thread_ = nullptr;
+  }
+
+  // Set up new clicker state
+  // Enforce minimum 10ms interval
+  int interval_ms = intervalUs / 1000;
+  if (interval_ms < 10) interval_ms = 10;
+
+  g_clicker.interval_ms = interval_ms;
   g_clicker.x = x;
   g_clicker.y = y;
   g_clicker.button = button;
-  g_clicker.target_count = targetCount;
   g_clicker.click_count = 0;
+  g_clicker.target_count = targetCount;
   g_clicker.stop_requested = false;
   g_clicker.running = true;
   g_clicker.channel = platform_channel_.get();
@@ -1103,27 +1719,34 @@ void FlutterWindow::StartFastClicker(int intervalUs, int x, int y, int button, i
   g_clicker.target_hwnd = targetHwnd;
   g_clicker.client_x = clientX;
   g_clicker.client_y = clientY;
+  // Keyboard mode
+  g_clicker.is_keyboard = isKeyboard;
+  g_clicker.key_vk = keyVk;
+  g_clicker.key_action_mode = keyActionMode;
+  g_clicker.combo_key_count = 0;
+  for (int i = 0; i < (int)comboKeys.size() && i < 8; i++) {
+    g_clicker.combo_keys[i] = comboKeys[i];
+    g_clicker.combo_key_count++;
+  }
+
+  // Bump generation for the new thread
+  g_clicker.generation++;
 
   clicker_thread_ = CreateThread(nullptr, 0, ClickerThreadFunc, this, 0, nullptr);
   clicker_running_ = true;
 }
 
 void FlutterWindow::StopFastClicker() {
-  if (clicker_running_) {
-    g_clicker.stop_requested = true;
-
-    // Kill timer FIRST to stop new callbacks immediately
-    if (g_clicker.timer_id != 0) {
-      timeKillEvent(g_clicker.timer_id);
-      g_clicker.timer_id = 0;
-    }
-
-    if (clicker_thread_) {
-      WaitForSingleObject(clicker_thread_, 100); // wait up to 100ms
-      CloseHandle(clicker_thread_);
-      clicker_thread_ = nullptr;
-    }
-    clicker_running_ = false;
-  }
+  // Signal the thread to stop. The thread checks this flag on every loop
+  // iteration and will exit within 1ms (the Sleep duration).
+  g_clicker.stop_requested = true;
   g_clicker.running = false;
+
+  // No timer to kill — we use a simple Sleep loop now.
+  // No WaitForSingleObject — that would block the platform thread.
+  clicker_running_ = false;
+
+  // The thread will send onFastClickerStopped when it exits.
+  // Do NOT bump generation here — the thread needs to see its generation
+  // is still current so it sends the notification to Dart.
 }
