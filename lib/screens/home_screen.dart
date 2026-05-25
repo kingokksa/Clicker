@@ -9,14 +9,11 @@ import 'package:window_manager/window_manager.dart';
 import 'package:flutter/services.dart';
 import '../services/app_state.dart';
 import '../services/system_tray_service.dart';
+import '../services/plugin_system.dart';
+import '../services/plugin_registry.dart';
 import 'clicker/clicker_page.dart';
-import 'macro/macro_page.dart';
 import 'settings/settings_page.dart';
 import 'sidebar/plugin_page.dart';
-import 'sidebar/image_recognition_page.dart';
-import 'sidebar/theme_center_page.dart';
-import 'sidebar/background_execution_page.dart';
-import 'sidebar/hold_trigger_page.dart';
 import 'floating_window.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -40,6 +37,26 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
     windowManager.addListener(this);
     _initSystemTray();
     _checkMaximized();
+    // Rebuild nav when plugins change
+    PluginRegistry.instance.addListener(_onPluginsChanged);
+  }
+
+  void _onPluginsChanged() {
+    if (mounted) {
+      // Reset index if it's out of bounds after plugin change
+      final totalItems = 2 + PluginRegistry.instance.enabledPlugins.length + 1; // clicker + separator + plugins + settings
+      if (_currentIndex >= totalItems) {
+        _currentIndex = 0;
+      }
+      setState(() {});
+    }
+  }
+
+  @override
+  void dispose() {
+    PluginRegistry.instance.removeListener(_onPluginsChanged);
+    windowManager.removeListener(this);
+    super.dispose();
   }
 
   void _checkMaximized() {
@@ -59,12 +76,6 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
     tray.onShowFloatingWindow = _switchToFloating;
     tray.onShowMainWindow = _switchToMain;
     await tray.init();
-  }
-
-  @override
-  void dispose() {
-    windowManager.removeListener(this);
-    super.dispose();
   }
 
   @override
@@ -185,13 +196,16 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
               ),
               items: [
                 PaneItem(icon: const Icon(FluentIcons.touch), title: const Text('连点'), body: const ClickerPage()),
-                PaneItem(icon: const Icon(FluentIcons.record2), title: const Text('宏'), body: const MacroPage()),
-                PaneItem(icon: const Icon(FluentIcons.keyboard_classic), title: const Text('按住触发'), body: const HoldTriggerPage()),
                 PaneItemSeparator(),
-                PaneItem(icon: const Icon(FluentIcons.puzzle), title: const Text('功能管理'), body: const PluginPage()),
-                PaneItem(icon: const Icon(FluentIcons.remote), title: const Text('后台执行'), body: const BackgroundExecutionPage()),
-                PaneItem(icon: const Icon(FluentIcons.image_pixel), title: const Text('图像识别'), body: const ImageRecognitionPage()),
-                PaneItem(icon: const Icon(FluentIcons.color), title: const Text('主题中心'), body: const ThemeCenterPage()),
+                PaneItem(icon: const Icon(FluentIcons.puzzle), title: const Text('插件中心'), body: const PluginPage()),
+                // Dynamic plugin nav items
+                ...PluginRegistry.instance.enabledPlugins.map((plugin) =>
+                  PaneItem(
+                    icon: Icon(plugin.manifest.icon),
+                    title: Text(plugin.manifest.name),
+                    body: plugin.buildPage(context),
+                  ),
+                ),
               ],
               footerItems: [
                 PaneItem(icon: const Icon(FluentIcons.settings), title: const Text('设置'), body: const SettingsPage()),
@@ -229,8 +243,8 @@ class _GlassTitleBar extends StatelessWidget {
         height: 36,
         decoration: BoxDecoration(
           color: isDark
-            ? const Color(0xFF16162A).withOpacity(0.88)
-            : const Color(0xFFF0F0FA).withOpacity(0.88),
+            ? const Color(0xFF16162A).withValues(alpha:0.88)
+            : const Color(0xFFF0F0FA).withValues(alpha:0.88),
           border: Border(
             bottom: BorderSide(
               color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0),

@@ -22,7 +22,6 @@ class StorageService {
   static const _keyFloatingAlwaysOnTop = 'floating_always_on_top';
   static const _keyAccentColor = 'accent_color';
   static const _keyProfiles = 'profiles';
-  static const _keyMacroList = 'macro_list';
   static const _keyHoldTriggerKeys = 'hold_trigger_keys';
 
   late SharedPreferences _prefs;
@@ -311,7 +310,6 @@ class StorageService {
         dialogTitle: '导入配置',
         type: FileType.custom,
         allowedExtensions: ['json'],
-        allowMultiple: false,
       );
       if (result == null || result.files.isEmpty) {
         return const ImportResult(success: false, error: '未选择文件');

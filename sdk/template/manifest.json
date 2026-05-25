@@ -1,0 +1,15 @@
+{
+  "id": "com.clicker.example",
+  "name": "示例插件",
+  "version": "1.0.0",
+  "author": "",
+  "description": "Clicker 示例插件",
+  "category": "extension",
+  "platforms": ["windows", "linux", "macos"],
+  "entry": {
+    "windows": "windows/example_plugin.dll",
+    "linux": "linux/example_plugin.so",
+    "darwin": "darwin/example_plugin.dylib"
+  },
+  "minAppVersion": 1
+}

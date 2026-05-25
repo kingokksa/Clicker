@@ -43,14 +43,14 @@ class ClickerPage extends StatelessWidget {
         if (config.keyActionMode == KeyActionMode.text) ...[
           _spacing, _section(title: '自动打字', icon: FluentIcons.font, child: _buildTextTypeEditor(context, config, state, theme)),
         ],
-        _spacing, _section(title: '防检测', icon: FluentIcons.shield, subtitle: '模拟人工按键抖动', child: _buildJitterSettings(config, state, theme)),
+        _spacing, _section(title: '防检测', icon: FluentIcons.shield, child: _buildJitterSettings(config, state, theme)),
       ]);
     } else {
       modeSections.addAll([
         _spacing, _section(title: '点击类型', icon: FluentIcons.touch, child: _buildClickTypeSelector(config, state, theme)),
         _spacing, _section(title: '鼠标按键', icon: FluentIcons.touch_pointer, child: _buildMouseButtonSelector(config, state, theme)),
         _spacing, _section(title: '点击位置', icon: FluentIcons.map_pin, child: _buildPositionSelector(context, config, state, theme)),
-        _spacing, _section(title: '随机偏移', icon: FluentIcons.open_in_new_tab, subtitle: '模拟人工点击偏移', child: _buildRandomOffset(config, state, theme)),
+        _spacing, _section(title: '随机偏移', icon: FluentIcons.open_in_new_tab, child: _buildRandomOffset(config, state, theme)),
       ]);
     }
 
@@ -99,21 +99,17 @@ class ClickerPage extends StatelessWidget {
 
   // ─── Section Card ─────────────────────────────────────────
 
-  Widget _section({required String title, required IconData icon, required Widget child, String? subtitle}) {
+  Widget _section({required String title, required IconData icon, required Widget child}) {
     return Builder(builder: (context) {
       final isDark = FluentTheme.of(context).brightness == Brightness.dark;
       final accent = FluentTheme.of(context).accentColor;
-      final subtitleColor = isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A);
       return Card(
         padding: const EdgeInsets.all(14),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             Icon(icon, size: 14, color: accent),
             const SizedBox(width: 8),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-              if (subtitle != null) Text(subtitle, style: TextStyle(fontSize: 10, color: subtitleColor)),
-            ])),
+            Expanded(child: Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13))),
           ]),
           const SizedBox(height: 10),
           child,
@@ -130,7 +126,7 @@ class ClickerPage extends StatelessWidget {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         decoration: BoxDecoration(
-          color: isDark ? const Color(0xFF252540).withOpacity(0.5) : const Color(0xFFF0F0FA).withOpacity(0.5),
+          color: isDark ? const Color(0xFF252540).withValues(alpha:0.5) : const Color(0xFFF0F0FA).withValues(alpha:0.5),
           borderRadius: BorderRadius.circular(8),
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -161,7 +157,7 @@ class ClickerPage extends StatelessWidget {
             duration: const Duration(milliseconds: 150),
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             decoration: BoxDecoration(
-              color: selected ? accent.withOpacity(0.15) : unselectedBg,
+              color: selected ? accent.withValues(alpha:0.15) : unselectedBg,
               borderRadius: BorderRadius.circular(6),
               border: Border.all(color: selected ? accent : unselectedBorder),
             ),
@@ -219,9 +215,9 @@ class ClickerPage extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
           decoration: BoxDecoration(
-            color: accent.withOpacity(0.1),
+            color: accent.withValues(alpha:0.1),
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: accent.withOpacity(0.4)),
+            border: Border.all(color: accent.withValues(alpha:0.4)),
           ),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             Text(config.keyToRepeat.toUpperCase(), style: TextStyle(
@@ -229,7 +225,7 @@ class ClickerPage extends StatelessWidget {
               fontFamily: 'monospace', fontSize: 22, letterSpacing: 2,
             )),
             const SizedBox(width: 10),
-            Icon(FluentIcons.edit, size: 14, color: accent.withOpacity(0.6)),
+            Icon(FluentIcons.edit, size: 14, color: accent.withValues(alpha:0.6)),
           ]),
         ),
       )),
@@ -298,7 +294,7 @@ class ClickerPage extends StatelessWidget {
       final accent = FluentTheme.of(context).accentColor;
       return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(color: accent.withOpacity(0.1), borderRadius: BorderRadius.circular(4), border: Border.all(color: accent.withOpacity(0.3))),
+      decoration: BoxDecoration(color: accent.withValues(alpha:0.1), borderRadius: BorderRadius.circular(4), border: Border.all(color: accent.withValues(alpha:0.3))),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         Text(key.toUpperCase(), style: TextStyle(color: accent, fontWeight: FontWeight.w600, fontFamily: 'monospace', fontSize: 12)),
         if (onDelete != null) ...[
@@ -719,12 +715,12 @@ class ClickerPage extends StatelessWidget {
             borderRadius: BorderRadius.circular(28),
             boxShadow: [
               BoxShadow(
-                color: fabColor.withOpacity(0.4),
+                color: fabColor.withValues(alpha:0.4),
                 blurRadius: 16,
                 offset: const Offset(0, 4),
               ),
               BoxShadow(
-                color: (isDark ? const Color(0xFF1A1A2E) : const Color(0xFFF5F5FA)).withOpacity(0.3),
+                color: (isDark ? const Color(0xFF1A1A2E) : const Color(0xFFF5F5FA)).withValues(alpha:0.3),
                 blurRadius: 8,
                 offset: const Offset(0, 2),
               ),
@@ -753,20 +749,20 @@ class ClickerPage extends StatelessWidget {
         : '';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(color: const Color(0xFF00E676).withOpacity(0.08), borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF00E676).withOpacity(0.3))),
+      decoration: BoxDecoration(color: const Color(0xFF00E676).withValues(alpha:0.08), borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF00E676).withValues(alpha:0.3))),
       child: Row(children: [
         const Icon(FluentIcons.circle_fill, size: 8, color: Color(0xFF00E676)),
         const SizedBox(width: 8),
         Text('运行中 · ${isKeyboard ? "已按键" : "已点击"} ${state.clickCount} 次', style: const TextStyle(color: Color(0xFF00E676), fontSize: 13)),
         if (showStats) ...[
           const SizedBox(width: 12),
-          Text('${cps.toStringAsFixed(1)} CPS', style: TextStyle(color: const Color(0xFF00E676).withOpacity(0.8), fontSize: 12)),
+          Text('${cps.toStringAsFixed(1)} CPS', style: TextStyle(color: const Color(0xFF00E676).withValues(alpha:0.8), fontSize: 12)),
           const SizedBox(width: 8),
-          Text(elapsedStr, style: TextStyle(color: const Color(0xFF00E676).withOpacity(0.7), fontSize: 12)),
+          Text(elapsedStr, style: TextStyle(color: const Color(0xFF00E676).withValues(alpha:0.7), fontSize: 12)),
         ],
         const Spacer(),
-        Text('${state.clickerConfig.intervalMs}ms/次', style: TextStyle(color: const Color(0xFF00E676).withOpacity(0.7), fontSize: 12)),
+        Text('${state.clickerConfig.intervalMs}ms/次', style: TextStyle(color: const Color(0xFF00E676).withValues(alpha:0.7), fontSize: 12)),
       ]),
     );
   }
@@ -807,7 +803,7 @@ class _KeyPickerDialogState extends State<_KeyPickerDialog> {
       content: SizedBox(width: 400, child: Column(mainAxisSize: MainAxisSize.min, children: [
         Center(child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-          decoration: BoxDecoration(color: accent.withOpacity(0.1), borderRadius: BorderRadius.circular(8), border: Border.all(color: accent.withOpacity(0.4))),
+          decoration: BoxDecoration(color: accent.withValues(alpha:0.1), borderRadius: BorderRadius.circular(8), border: Border.all(color: accent.withValues(alpha:0.4))),
           child: Text(_selectedKey.toUpperCase(), style: TextStyle(color: accent, fontWeight: FontWeight.w700, fontFamily: 'monospace', fontSize: 18)),
         )),
         const SizedBox(height: 12),
@@ -818,7 +814,7 @@ class _KeyPickerDialogState extends State<_KeyPickerDialog> {
             final sel = _selectedKey.toLowerCase() == key.toLowerCase();
             return GestureDetector(onTap: () => setState(() => _selectedKey = key.toLowerCase()),
               child: Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(color: sel ? accent.withOpacity(0.2) : unselectedBg,
+                decoration: BoxDecoration(color: sel ? accent.withValues(alpha:0.2) : unselectedBg,
                   borderRadius: BorderRadius.circular(4), border: Border.all(color: sel ? accent : unselectedBorder)),
                 child: Text(key, style: TextStyle(fontSize: 11, color: sel ? accent : unselectedText, fontWeight: sel ? FontWeight.w600 : FontWeight.normal)),
               ),
@@ -865,7 +861,7 @@ class _SequenceKeyPickerDialogState extends State<_SequenceKeyPickerDialog> {
       content: SizedBox(width: 400, child: Column(mainAxisSize: MainAxisSize.min, children: [
         Center(child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-          decoration: BoxDecoration(color: accent.withOpacity(0.1), borderRadius: BorderRadius.circular(8), border: Border.all(color: accent.withOpacity(0.4))),
+          decoration: BoxDecoration(color: accent.withValues(alpha:0.1), borderRadius: BorderRadius.circular(8), border: Border.all(color: accent.withValues(alpha:0.4))),
           child: Text(_selectedKey.toUpperCase(), style: TextStyle(color: accent, fontWeight: FontWeight.w700, fontFamily: 'monospace', fontSize: 18)),
         )),
         const SizedBox(height: 10),
@@ -883,7 +879,7 @@ class _SequenceKeyPickerDialogState extends State<_SequenceKeyPickerDialog> {
             final sel = _selectedKey.toLowerCase() == key.toLowerCase();
             return GestureDetector(onTap: () => setState(() => _selectedKey = key.toLowerCase()),
               child: Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(color: sel ? accent.withOpacity(0.2) : unselectedBg,
+                decoration: BoxDecoration(color: sel ? accent.withValues(alpha:0.2) : unselectedBg,
                   borderRadius: BorderRadius.circular(4), border: Border.all(color: sel ? accent : unselectedBorder)),
                 child: Text(key, style: TextStyle(fontSize: 11, color: sel ? accent : unselectedText, fontWeight: sel ? FontWeight.w600 : FontWeight.normal)),
               ),
@@ -935,7 +931,7 @@ class _ComboKeyPickerDialogState extends State<_ComboKeyPickerDialog> {
             final sel = _selectedKey.toLowerCase() == key.toLowerCase();
             return GestureDetector(onTap: () => setState(() => _selectedKey = key.toLowerCase()),
               child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(color: sel ? accent.withOpacity(0.2) : unselectedBg,
+                decoration: BoxDecoration(color: sel ? accent.withValues(alpha:0.2) : unselectedBg,
                   borderRadius: BorderRadius.circular(4), border: Border.all(color: sel ? accent : unselectedBorder)),
                 child: Text(key, style: TextStyle(fontSize: 12, color: sel ? accent : unselectedText, fontWeight: sel ? FontWeight.w600 : FontWeight.normal)),
               ),
@@ -949,7 +945,7 @@ class _ComboKeyPickerDialogState extends State<_ComboKeyPickerDialog> {
               final sel = _selectedKey.toLowerCase() == key.toLowerCase();
               return GestureDetector(onTap: () => setState(() => _selectedKey = key.toLowerCase()),
                 child: Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(color: sel ? accent.withOpacity(0.2) : unselectedBg,
+                  decoration: BoxDecoration(color: sel ? accent.withValues(alpha:0.2) : unselectedBg,
                     borderRadius: BorderRadius.circular(4), border: Border.all(color: sel ? accent : unselectedBorder)),
                   child: Text(key, style: TextStyle(fontSize: 11, color: sel ? accent : unselectedText, fontWeight: sel ? FontWeight.w600 : FontWeight.normal)),
                 ),

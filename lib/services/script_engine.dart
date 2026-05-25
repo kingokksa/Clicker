@@ -57,7 +57,6 @@ class ScriptModel {
 class ScriptEngine {
   ScriptStatus _status = ScriptStatus.idle;
   int _currentLine = 0;
-  Timer? _timer;
   Completer<void>? _pauseCompleter;
 
   void Function(ScriptStatus status)? onStatusChanged;

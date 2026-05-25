@@ -77,13 +77,13 @@ class MacroPage extends StatelessWidget {
   Widget _buildRecordingStatus(AppState state) {
     return Container(
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(color: Colors.red.withOpacity(0.08), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.red.withOpacity(0.3))),
+      decoration: BoxDecoration(color: Colors.red.withValues(alpha:0.08), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.red.withValues(alpha:0.3))),
       child: Row(children: [
         Icon(FluentIcons.record2, color: Colors.red, size: 16),
         const SizedBox(width: 8),
         Text('录制中 · ${state.recordingEventCount} 个事件', style: TextStyle(color: Colors.red, fontSize: 13)),
         const Spacer(),
-        Text('按 ${state.hotkeyConfig.startStopRecording} 停止', style: TextStyle(color: Colors.red.withOpacity(0.7), fontSize: 12)),
+        Text('按 ${state.hotkeyConfig.startStopRecording} 停止', style: TextStyle(color: Colors.red.withValues(alpha:0.7), fontSize: 12)),
       ]),
     );
   }
@@ -91,7 +91,7 @@ class MacroPage extends StatelessWidget {
   Widget _buildPlayingStatus(AppState state) {
     return Container(
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(color: const Color(0xFF00E676).withOpacity(0.08), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFF00E676).withOpacity(0.3))),
+      decoration: BoxDecoration(color: const Color(0xFF00E676).withValues(alpha:0.08), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFF00E676).withValues(alpha:0.3))),
       child: Row(children: [
         const Icon(FluentIcons.play, color: Color(0xFF00E676), size: 16),
         const SizedBox(width: 8),
@@ -176,7 +176,7 @@ class MacroPage extends StatelessWidget {
           child: Container(
             width: 38, height: 38,
             decoration: BoxDecoration(
-              color: canPlay ? accent.withOpacity(0.15) : disabledBg,
+              color: canPlay ? accent.withValues(alpha:0.15) : disabledBg,
               borderRadius: BorderRadius.circular(10),
             ),
             child: Icon(FluentIcons.play, size: 18, color: canPlay ? accent : disabledIcon),
@@ -212,7 +212,7 @@ class MacroPage extends StatelessWidget {
       final accent = FluentTheme.of(context).accentColor;
       return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(color: accent.withOpacity(0.1), borderRadius: BorderRadius.circular(4)),
+      decoration: BoxDecoration(color: accent.withValues(alpha:0.1), borderRadius: BorderRadius.circular(4)),
       child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, size: 12, color: accent), const SizedBox(width: 2), Text(count, style: TextStyle(fontSize: 11, color: accent))]),
     );
     });
@@ -596,7 +596,7 @@ Widget _chip(String label, bool selected, VoidCallback onTap, {IconData? icon}) 
         duration: const Duration(milliseconds: 150),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
-          color: selected ? accent.withOpacity(0.2) : unselectedBg,
+          color: selected ? accent.withValues(alpha:0.2) : unselectedBg,
           borderRadius: BorderRadius.circular(4),
           border: Border.all(color: selected ? accent : unselectedBorder),
         ),
@@ -791,7 +791,7 @@ class _KeySequenceBuilderDialogState extends State<_KeySequenceBuilderDialog> {
     final accent = FluentTheme.of(context).accentColor;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-      decoration: BoxDecoration(color: accent.withOpacity(0.1), borderRadius: BorderRadius.circular(4), border: Border.all(color: accent.withOpacity(0.3))),
+      decoration: BoxDecoration(color: accent.withValues(alpha:0.1), borderRadius: BorderRadius.circular(4), border: Border.all(color: accent.withValues(alpha:0.3))),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         Text(key.toUpperCase(), style: TextStyle(color: accent, fontWeight: FontWeight.w600, fontFamily: 'monospace', fontSize: 11)),
         const SizedBox(width: 3),
@@ -865,7 +865,7 @@ class _ComboBuilderDialogState extends State<_ComboBuilderDialog> {
                 for (int i = 0; i < _keys.length; i++) ...[
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(color: accent.withOpacity(0.1), borderRadius: BorderRadius.circular(6), border: Border.all(color: accent.withOpacity(0.3))),
+                    decoration: BoxDecoration(color: accent.withValues(alpha:0.1), borderRadius: BorderRadius.circular(6), border: Border.all(color: accent.withValues(alpha:0.3))),
                     child: Row(mainAxisSize: MainAxisSize.min, children: [
                       Text(_keys[i].toUpperCase(), style: TextStyle(color: accent, fontWeight: FontWeight.w600, fontFamily: 'monospace', fontSize: 12)),
                       const SizedBox(width: 3),

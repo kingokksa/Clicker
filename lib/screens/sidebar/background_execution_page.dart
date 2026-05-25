@@ -109,9 +109,6 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
           const SizedBox(width: 10),
           const Text('后台执行', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
         ]),
-        const SizedBox(height: 6),
-        Text('向后台窗口发送点击，不影响前台操作', style: TextStyle(fontSize: 13,
-          color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
         const SizedBox(height: 20),
 
         // ─── Background Click Mode ────────────────────────────
@@ -225,7 +222,7 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF252540).withOpacity(0.5) : const Color(0xFFF0F0FA).withOpacity(0.5),
+        color: isDark ? const Color(0xFF252540).withValues(alpha:0.5) : const Color(0xFFF0F0FA).withValues(alpha:0.5),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)),
       ),
@@ -247,7 +244,7 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
       Container(
         width: 32, height: 32,
         decoration: BoxDecoration(
-          color: (enabled ? accent : disabledColor).withOpacity(0.1),
+          color: (enabled ? accent : disabledColor).withValues(alpha:0.1),
           borderRadius: BorderRadius.circular(6),
         ),
         child: Icon(icon, size: 14, color: enabled ? accent : disabledColor),
@@ -255,8 +252,6 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
       const SizedBox(width: 10),
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-        const SizedBox(height: 2),
-        Text(desc, style: TextStyle(fontSize: 11, color: isDark ? const Color(0xFF707090) : const Color(0xFF9A9AAA))),
       ])),
       ToggleSwitch(checked: enabled, onChanged: onChanged),
     ]);

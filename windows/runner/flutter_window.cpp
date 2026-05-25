@@ -758,6 +758,334 @@ bool FlutterWindow::OnCreate() {
         } else if (call.method_name() == "stopOverlay") {
           DestroyOverlayWindow();
           result->Success(flutter::EncodableValue(true));
+        } else if (call.method_name() == "findImage") {
+          // Template matching: find a template image within a screen region
+          // Args: [regionX, regionY, regionW, regionH, templateBgraBytes, templateW, templateH, threshold]
+          const auto* args = std::get_if<flutter::EncodableList>(call.arguments());
+          if (!args || args->size() < 8) {
+            result->Error("INVALID_ARGS", "Expected [regionX, regionY, regionW, regionH, templateBgraBytes, templateW, templateH, threshold]");
+            return;
+          }
+          int regionX = GetInt(args->at(0));
+          int regionY = GetInt(args->at(1));
+          int regionW = GetInt(args->at(2));
+          int regionH = GetInt(args->at(3));
+          const auto* tplBytes = std::get_if<flutter::EncodableList>(&args->at(4));
+          int tplW = GetInt(args->at(5));
+          int tplH = GetInt(args->at(6));
+          double threshold = 0.8;
+          if (const auto* d = std::get_if<double>(&args->at(7))) threshold = *d;
+          else if (const auto* i32 = std::get_if<int32_t>(&args->at(7))) threshold = static_cast<double>(*i32);
+          else if (const auto* i64 = std::get_if<int64_t>(&args->at(7))) threshold = static_cast<double>(*i64);
+
+          if (!tplBytes || tplW <= 0 || tplH <= 0 || regionW <= 0 || regionH <= 0) {
+            result->Error("INVALID_ARGS", "Invalid template or region dimensions");
+            return;
+          }
+
+          // Convert EncodableList to uint8_t vector
+          std::vector<uint8_t> tplData(tplBytes->size());
+          for (size_t idx = 0; idx < tplBytes->size(); idx++) {
+            if (const auto* b32 = std::get_if<int32_t>(&tplBytes->at(idx))) tplData[idx] = static_cast<uint8_t>(*b32);
+            else if (const auto* b64 = std::get_if<int64_t>(&tplBytes->at(idx))) tplData[idx] = static_cast<uint8_t>(*b64);
+          }
+
+          // Capture the screen region
+          HDC hdcScreen = GetDC(nullptr);
+          HDC hdcMem = CreateCompatibleDC(hdcScreen);
+          HBITMAP hBitmap = CreateCompatibleBitmap(hdcScreen, regionW, regionH);
+          HBITMAP hOld = (HBITMAP)SelectObject(hdcMem, hBitmap);
+          BitBlt(hdcMem, 0, 0, regionW, regionH, hdcScreen, regionX, regionY, SRCCOPY);
+
+          BITMAPINFOHEADER bi = {};
+          bi.biSize = sizeof(BITMAPINFOHEADER);
+          bi.biWidth = regionW;
+          bi.biHeight = -regionH;
+          bi.biPlanes = 1;
+          bi.biBitCount = 32;
+          bi.biCompression = BI_RGB;
+
+          std::vector<uint8_t> regionPixels(regionW * regionH * 4);
+          GetDIBits(hdcMem, hBitmap, 0, regionH, regionPixels.data(), (BITMAPINFO*)&bi, DIB_RGB_COLORS);
+          SelectObject(hdcMem, hOld);
+          DeleteObject(hBitmap);
+          DeleteDC(hdcMem);
+          ReleaseDC(nullptr, hdcScreen);
+
+          // Template matching using normalized cross-correlation (simplified: sum of absolute differences)
+          // Search for the template in the region
+          flutter::EncodableList matches;
+          int searchW = regionW - tplW + 1;
+          int searchH = regionH - tplH + 1;
+          if (searchW <= 0 || searchH <= 0) {
+            result->Success(flutter::EncodableValue(matches));
+            return;
+          }
+
+          // Sample step for performance (skip pixels for large searches)
+          int step = 1;
+          if (searchW * searchH > 500000) step = 2;
+          if (searchW * searchH > 2000000) step = 3;
+
+          double bestScore = 0;
+          int bestX = -1, bestY = -1;
+
+          for (int sy = 0; sy < searchH; sy += step) {
+            for (int sx = 0; sx < searchW; sx += step) {
+              double totalDiff = 0;
+              int sampleCount = 0;
+              // Sample every 2nd pixel for speed
+              for (int ty = 0; ty < tplH; ty += 2) {
+                for (int tx = 0; tx < tplW; tx += 2) {
+                  int rIdx = ((sy + ty) * regionW + (sx + tx)) * 4;
+                  int tIdx = (ty * tplW + tx) * 4;
+                  if (rIdx + 3 >= (int)regionPixels.size() || tIdx + 3 >= (int)tplData.size()) continue;
+                  // BGRA comparison
+                  int db = abs((int)regionPixels[rIdx] - (int)tplData[tIdx]);
+                  int dg = abs((int)regionPixels[rIdx+1] - (int)tplData[tIdx+1]);
+                  int dr = abs((int)regionPixels[rIdx+2] - (int)tplData[tIdx+2]);
+                  totalDiff += (db + dg + dr) / (255.0 * 3.0);
+                  sampleCount++;
+                }
+              }
+              if (sampleCount == 0) continue;
+              double score = 1.0 - (totalDiff / sampleCount);
+              if (score >= threshold && score > bestScore) {
+                bestScore = score;
+                bestX = regionX + sx;
+                bestY = regionY + sy;
+              }
+            }
+          }
+
+          if (bestX >= 0 && bestY >= 0) {
+            flutter::EncodableMap match;
+            match[flutter::EncodableValue("x")] = flutter::EncodableValue(bestX);
+            match[flutter::EncodableValue("y")] = flutter::EncodableValue(bestY);
+            match[flutter::EncodableValue("width")] = flutter::EncodableValue(tplW);
+            match[flutter::EncodableValue("height")] = flutter::EncodableValue(tplH);
+            match[flutter::EncodableValue("score")] = flutter::EncodableValue(bestScore);
+            matches.push_back(flutter::EncodableValue(match));
+          }
+
+          result->Success(flutter::EncodableValue(matches));
+        } else if (call.method_name() == "ocrRegion") {
+          // OCR a screen region using Windows.Media.Ocr (WinRT)
+          // Args: [x, y, w, h, language]
+          const auto* args = std::get_if<flutter::EncodableList>(call.arguments());
+          if (!args || args->size() < 4) {
+            result->Error("INVALID_ARGS", "Expected [x, y, w, h, language?]");
+            return;
+          }
+          int ocrX = GetInt(args->at(0));
+          int ocrY = GetInt(args->at(1));
+          int ocrW = GetInt(args->at(2));
+          int ocrH = GetInt(args->at(3));
+          std::string lang = "en";
+          if (args->size() >= 5) {
+            if (const auto* s = std::get_if<std::string>(&args->at(4))) lang = *s;
+          }
+
+          if (ocrW <= 0 || ocrH <= 0 || ocrW > 3840 || ocrH > 2160) {
+            result->Error("INVALID_SIZE", "OCR region size out of range");
+            return;
+          }
+
+          // Capture the region as BGRA pixels
+          HDC hdcScreen = GetDC(nullptr);
+          HDC hdcMem = CreateCompatibleDC(hdcScreen);
+          HBITMAP hBitmap = CreateCompatibleBitmap(hdcScreen, ocrW, ocrH);
+          HBITMAP hOld = (HBITMAP)SelectObject(hdcMem, hBitmap);
+          BitBlt(hdcMem, 0, 0, ocrW, ocrH, hdcScreen, ocrX, ocrY, SRCCOPY);
+
+          BITMAPINFOHEADER bi = {};
+          bi.biSize = sizeof(BITMAPINFOHEADER);
+          bi.biWidth = ocrW;
+          bi.biHeight = -ocrH;
+          bi.biPlanes = 1;
+          bi.biBitCount = 32;
+          bi.biCompression = BI_RGB;
+
+          std::vector<uint8_t> pixels(ocrW * ocrH * 4);
+          GetDIBits(hdcMem, hBitmap, 0, ocrH, pixels.data(), (BITMAPINFO*)&bi, DIB_RGB_COLORS);
+          SelectObject(hdcMem, hOld);
+          DeleteObject(hBitmap);
+          DeleteDC(hdcMem);
+          ReleaseDC(nullptr, hdcScreen);
+
+          // Convert BGRA to RGBA for SoftwareBitmap
+          std::vector<uint8_t> rgba(ocrW * ocrH * 4);
+          for (int i = 0; i < ocrW * ocrH; i++) {
+            rgba[i*4+0] = pixels[i*4+2]; // R
+            rgba[i*4+1] = pixels[i*4+1]; // G
+            rgba[i*4+2] = pixels[i*4+0]; // B
+            rgba[i*4+3] = pixels[i*4+3]; // A
+          }
+
+          // Use WinRT OCR
+          // We need to initialize WinRT and use OcrEngine
+          // This requires C++/WinRT headers which may not be available
+          // Fallback: try to use PowerShell via command line for OCR
+          // For now, return the captured image data so Dart can process it
+          // We'll implement a proper WinRT OCR in a future update
+
+          // Save to a temp BMP file and use Windows OCR via PowerShell
+          char tempDir[MAX_PATH];
+          GetTempPathA(MAX_PATH, tempDir);
+          std::string tempPath = std::string(tempDir) + "clicker_ocr_" + std::to_string(GetCurrentProcessId()) + "_" + std::to_string(GetTickCount64()) + ".bmp";
+
+          // Write BMP file
+          FILE* f = nullptr;
+          fopen_s(&f, tempPath.c_str(), "wb");
+          if (f) {
+            BITMAPFILEHEADER bfh = {};
+            bfh.bfType = 0x4D42; // 'BM'
+            bfh.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+            bfh.bfSize = bfh.bfOffBits + (DWORD)pixels.size();
+
+            BITMAPINFOHEADER bmi = {};
+            bmi.biSize = sizeof(BITMAPINFOHEADER);
+            bmi.biWidth = ocrW;
+            bmi.biHeight = ocrH;
+            bmi.biPlanes = 1;
+            bmi.biBitCount = 32;
+            bmi.biCompression = BI_RGB;
+            bmi.biSizeImage = (DWORD)pixels.size();
+
+            // BMP stores rows bottom-up, but our pixels are top-down, so flip
+            std::vector<uint8_t> flipped(pixels.size());
+            int rowSize = ocrW * 4;
+            for (int y = 0; y < ocrH; y++) {
+              memcpy(&flipped[(ocrH - 1 - y) * rowSize], &pixels[y * rowSize], rowSize);
+            }
+
+            fwrite(&bfh, sizeof(bfh), 1, f);
+            fwrite(&bmi, sizeof(bmi), 1, f);
+            fwrite(flipped.data(), 1, flipped.size(), f);
+            fclose(f);
+
+            // Use PowerShell to call Windows.Media.Ocr
+            std::string psCmd =
+              "Add-Type -AssemblyName System.Runtime.WindowsRuntime; "
+              "[Windows.Storage.StorageFile,Windows.Storage,ContentType=WindowsRuntime] | Out-Null; "
+              "[Windows.Media.Ocr.OcrEngine,Windows.Media.Ocr,ContentType=WindowsRuntime] | Out-Null; "
+              "[Windows.Graphics.Imaging.SoftwareBitmap,Windows.Graphics.Imaging,ContentType=WindowsRuntime] | Out-Null; "
+              "[Windows.Graphics.Imaging.BitmapDecoder,Windows.Graphics.Imaging,ContentType=WindowsRuntime] | Out-Null; "
+              "$file = [Windows.Storage.StorageFile]::GetFileFromPathAsync('" + tempPath + "').AsTask().GetAwaiter().GetResult(); "
+              "$stream = $file.OpenAsync([Windows.Storage.FileAccessMode]::Read).AsTask().GetAwaiter().GetResult(); "
+              "$decoder = [Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream).AsTask().GetAwaiter().GetResult(); "
+              "$bmp = $decoder.GetSoftwareBitmapAsync().AsTask().GetAwaiter().GetResult(); "
+              "$ocrEngine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages(); "
+              "if ($ocrEngine -eq $null) { Write-Output 'OCR_NOT_AVAILABLE' } else { "
+              "$result = $ocrEngine.RecognizeAsync($bmp).AsTask().GetAwaiter().GetResult(); "
+              "Write-Output $result.Text }";
+
+            // Escape for cmd.exe
+            std::string cmd = "powershell -NoProfile -NonInteractive -Command \"" + psCmd + "\"";
+
+            // Execute PowerShell
+            std::string ocrText;
+            char buffer[256];
+            FILE* pipe = _popen(cmd.c_str(), "r");
+            if (pipe) {
+              while (fgets(buffer, sizeof(buffer), pipe)) {
+                ocrText += buffer;
+              }
+              _pclose(pipe);
+            }
+
+            // Clean up temp file
+            remove(tempPath.c_str());
+
+            // Trim whitespace
+            while (!ocrText.empty() && (ocrText.back() == '\n' || ocrText.back() == '\r' || ocrText.back() == ' '))
+              ocrText.pop_back();
+
+            if (ocrText == "OCR_NOT_AVAILABLE") {
+              result->Error("OCR_NOT_AVAILABLE", "Windows OCR engine not available. Install OCR language pack.");
+              return;
+            }
+
+            flutter::EncodableMap ocrResult;
+            ocrResult[flutter::EncodableValue("text")] = flutter::EncodableValue(ocrText);
+            ocrResult[flutter::EncodableValue("x")] = flutter::EncodableValue(ocrX);
+            ocrResult[flutter::EncodableValue("y")] = flutter::EncodableValue(ocrY);
+            ocrResult[flutter::EncodableValue("width")] = flutter::EncodableValue(ocrW);
+            ocrResult[flutter::EncodableValue("height")] = flutter::EncodableValue(ocrH);
+            result->Success(flutter::EncodableValue(ocrResult));
+          } else {
+            result->Error("FILE_ERROR", "Failed to create temp file for OCR");
+          }
+        } else if (call.method_name() == "saveScreenshot") {
+          // Save a screen region as PNG file
+          // Args: [x, y, w, h, filePath]
+          const auto* args = std::get_if<flutter::EncodableList>(call.arguments());
+          if (!args || args->size() < 5) {
+            result->Error("INVALID_ARGS", "Expected [x, y, w, h, filePath]");
+            return;
+          }
+          int ssX = GetInt(args->at(0));
+          int ssY = GetInt(args->at(1));
+          int ssW = GetInt(args->at(2));
+          int ssH = GetInt(args->at(3));
+          std::string filePath;
+          if (const auto* s = std::get_if<std::string>(&args->at(4))) filePath = *s;
+
+          if (ssW <= 0 || ssH <= 0 || filePath.empty()) {
+            result->Error("INVALID_ARGS", "Invalid screenshot parameters");
+            return;
+          }
+
+          // Capture screen region
+          HDC hdcScreen = GetDC(nullptr);
+          HDC hdcMem = CreateCompatibleDC(hdcScreen);
+          HBITMAP hBitmap = CreateCompatibleBitmap(hdcScreen, ssW, ssH);
+          HBITMAP hOld = (HBITMAP)SelectObject(hdcMem, hBitmap);
+          BitBlt(hdcMem, 0, 0, ssW, ssH, hdcScreen, ssX, ssY, SRCCOPY);
+
+          // Save as BMP (PNG requires GDI+ or WIC, BMP is simpler and sufficient for template matching)
+          BITMAPINFOHEADER bi = {};
+          bi.biSize = sizeof(BITMAPINFOHEADER);
+          bi.biWidth = ssW;
+          bi.biHeight = ssH; // bottom-up
+          bi.biPlanes = 1;
+          bi.biBitCount = 32;
+          bi.biCompression = BI_RGB;
+
+          std::vector<uint8_t> pixels(ssW * ssH * 4);
+          GetDIBits(hdcMem, hBitmap, 0, ssH, pixels.data(), (BITMAPINFO*)&bi, DIB_RGB_COLORS);
+          SelectObject(hdcMem, hOld);
+          DeleteObject(hBitmap);
+          DeleteDC(hdcMem);
+          ReleaseDC(nullptr, hdcScreen);
+
+          // Write BMP file
+          std::wstring wFilePath(filePath.begin(), filePath.end());
+          FILE* f = nullptr;
+          _wfopen_s(&f, wFilePath.c_str(), L"wb");
+          if (f) {
+            BITMAPFILEHEADER bfh = {};
+            bfh.bfType = 0x4D42;
+            bfh.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+            bfh.bfSize = bfh.bfOffBits + (DWORD)pixels.size();
+
+            BITMAPINFOHEADER bmi = {};
+            bmi.biSize = sizeof(BITMAPINFOHEADER);
+            bmi.biWidth = ssW;
+            bmi.biHeight = ssH;
+            bmi.biPlanes = 1;
+            bmi.biBitCount = 32;
+            bmi.biCompression = BI_RGB;
+            bmi.biSizeImage = (DWORD)pixels.size();
+
+            fwrite(&bfh, sizeof(bfh), 1, f);
+            fwrite(&bmi, sizeof(bmi), 1, f);
+            fwrite(pixels.data(), 1, pixels.size(), f);
+            fclose(f);
+            result->Success(flutter::EncodableValue(true));
+          } else {
+            result->Error("FILE_ERROR", "Failed to save screenshot");
+          }
         } else if (call.method_name() == "initSystemTray") {
           InitSystemTray();
           result->Success(flutter::EncodableValue(true));

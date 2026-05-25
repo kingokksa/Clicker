@@ -19,8 +19,6 @@ class MacroService {
 
   MacroModel? _currentMacro;
   int _currentRepeat = 0;
-  int _currentEventIndex = 0;
-  int _playbackStartMs = 0;
 
   void Function(MacroStatus status)? onStatusChanged;
   void Function(int eventCount)? onRecordingUpdate;
@@ -54,7 +52,7 @@ class MacroService {
         // Low-level hooks are stable and shouldn't be cancelled by the system,
         // but keep this handler as a safety net.
         if (_status == MacroStatus.recording && _recordingBuffer.isNotEmpty) {
-          final macro = stopRecording(name: '录制中断的宏');
+          stopRecording(name: '录制中断的宏');
           onError?.call('录制被系统中断，已自动保存已捕获的事件');
         } else {
           cancelRecording();
@@ -273,12 +271,9 @@ class MacroService {
         _currentRepeat++) {
       if (_status != MacroStatus.playing) break;
 
-      _playbackStartMs = DateTime.now().millisecondsSinceEpoch;
-
       for (int i = 0; i < events.length; i++) {
         if (_status != MacroStatus.playing) break;
 
-        _currentEventIndex = i;
         onPlaybackProgress?.call(i + 1, events.length);
 
         final event = events[i];
@@ -343,7 +338,6 @@ class MacroService {
     _playbackTimer = null;
     _currentMacro = null;
     _currentRepeat = 0;
-    _currentEventIndex = 0;
     final wasPlaying = _status == MacroStatus.playing;
     _status = MacroStatus.idle;
     if (wasPlaying) {

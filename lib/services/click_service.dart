@@ -87,8 +87,6 @@ class ClickService {
     _scheduleClick();
   }
 
-  int _uiUpdateCounter = 0;
-
   void _scheduleClick() {
     if (_status != ClickerStatus.running) return;
 
@@ -205,51 +203,6 @@ class ClickService {
     // Single character: use its uppercase code point as VK
     if (key.length == 1) return key.toUpperCase().codeUnitAt(0);
     return 0;
-  }
-
-  /// Synchronous fast keyboard action — bypasses all async/await overhead.
-  void _performFastKeyAction() {
-    final key = _config.keyToRepeat;
-    _input.keyPress(key);
-    _input.keyRelease(key);
-  }
-
-  void _scheduleCombo() {
-    if (_status != ClickerStatus.running) return;
-
-    final delayUs = _getDelayUs();
-
-    if (delayUs >= 50000) {
-      _timer = Timer(Duration(microseconds: delayUs), () async {
-        if (_status != ClickerStatus.running) return;
-        await _performComboAction();
-        _clickCount++;
-        onStatusChanged?.call(_status, _clickCount);
-        if (_shouldStop()) { stop(); return; }
-        _scheduleCombo();
-      });
-    } else {
-      final clicksPerTick = (1000.0 / _config.intervalMs).ceil();
-      final batch = clicksPerTick.clamp(1, 500);
-
-      _timer = Timer.periodic(const Duration(milliseconds: 1), (_) {
-        if (_status != ClickerStatus.running) return;
-        for (int i = 0; i < batch; i++) {
-          if (_shouldStop()) break;
-          _performComboAction();
-          _clickCount++;
-        }
-        _uiUpdateCounter++;
-        if (_uiUpdateCounter >= 10) {
-          _uiUpdateCounter = 0;
-          onStatusChanged?.call(_status, _clickCount);
-        }
-        if (_shouldStop()) {
-          onStatusChanged?.call(_status, _clickCount);
-          stop();
-        }
-      });
-    }
   }
 
   int _getDelayUs() {
@@ -401,7 +354,6 @@ class ClickService {
   void stop() {
     _timer?.cancel();
     _timer = null;
-    _uiUpdateCounter = 0;
 
     // Stop native fast clicker if running
     if (_usingNativeClicker) {

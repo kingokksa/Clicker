@@ -136,7 +136,7 @@ class ScreenMonitorService {
           final diff = _colorDifference(color, region.targetColor!);
           if (diff < (1.0 - _sensitivity)) {
             // Color matches — trigger action
-            _addLog('区域 "${region.name}" 检测到目标颜色 RGB(${color.red},${color.green},${color.blue})', MonitorLogLevel.detected);
+            _addLog('区域 "${region.name}" 检测到目标颜色 RGB(${(color.r * 255.0).round().clamp(0, 255)},${(color.g * 255.0).round().clamp(0, 255)},${(color.b * 255.0).round().clamp(0, 255)})', MonitorLogLevel.detected);
             region.onDetected?.call();
           }
         }
@@ -158,9 +158,9 @@ class ScreenMonitorService {
   }
 
   double _colorDifference(Color a, Color b) {
-    final dr = (a.red - b.red).abs();
-    final dg = (a.green - b.green).abs();
-    final db = (a.blue - b.blue).abs();
+    final dr = ((a.r - b.r) * 255.0).round().abs();
+    final dg = ((a.g - b.g) * 255.0).round().abs();
+    final db = ((a.b - b.b) * 255.0).round().abs();
     return (dr + dg + db) / (255 * 3);
   }
 

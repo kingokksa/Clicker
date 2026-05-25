@@ -37,8 +37,6 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
             const Text('添加按键'),
           ])),
         ]),
-        const SizedBox(height: 6),
-        Text('长按配置的按键时自动连点，每个按键可独立配置', style: TextStyle(fontSize: 13, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
         const SizedBox(height: 16),
 
         // Empty state
@@ -55,7 +53,7 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
     return Container(
       padding: const EdgeInsets.all(32),
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF252540).withOpacity(0.3) : const Color(0xFFF0F0FA).withOpacity(0.3),
+        color: isDark ? const Color(0xFF252540).withValues(alpha:0.3) : const Color(0xFFF0F0FA).withValues(alpha:0.3),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0), style: BorderStyle.solid),
       ),
@@ -63,15 +61,13 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
         Icon(FluentIcons.keyboard_classic, size: 40, color: isDark ? const Color(0xFF505070) : const Color(0xFFB0B0C0)),
         const SizedBox(height: 12),
         Text('暂无按住触发按键', style: TextStyle(fontSize: 14, color: isDark ? const Color(0xFF707090) : const Color(0xFF9A9AAA))),
-        const SizedBox(height: 4),
-        Text('点击上方"添加按键"开始配置', style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF606080) : const Color(0xFFAAAABB))),
       ]),
     );
   }
 
   Widget _buildKeyCard(HoldTriggerKey key, bool isDark, AppState state) {
     final accentColor = state.accentColor;
-    final cardBg = isDark ? const Color(0xFF252540).withOpacity(0.5) : const Color(0xFFF0F0FA).withOpacity(0.5);
+    final cardBg = isDark ? const Color(0xFF252540).withValues(alpha:0.5) : const Color(0xFFF0F0FA).withValues(alpha:0.5);
 
     String actionDesc;
     switch (key.action) {
@@ -101,9 +97,9 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
-              color: key.enabled ? accentColor.withOpacity(0.15) : (isDark ? const Color(0xFF303050) : const Color(0xFFE0E0F0)),
+              color: key.enabled ? accentColor.withValues(alpha:0.15) : (isDark ? const Color(0xFF303050) : const Color(0xFFE0E0F0)),
               borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: key.enabled ? accentColor.withOpacity(0.4) : (isDark ? const Color(0xFF404060) : const Color(0xFFD0D0E0))),
+              border: Border.all(color: key.enabled ? accentColor.withValues(alpha:0.4) : (isDark ? const Color(0xFF404060) : const Color(0xFFD0D0E0))),
             ),
             child: Text(
               _displayName(key.triggerKey),
@@ -291,9 +287,9 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
                 ...comboKeys.map((k) => Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                    color: FluentTheme.of(context).accentColor.withOpacity(0.1),
+                    color: FluentTheme.of(context).accentColor.withValues(alpha:0.1),
                     borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: FluentTheme.of(context).accentColor.withOpacity(0.3)),
+                    border: Border.all(color: FluentTheme.of(context).accentColor.withValues(alpha:0.3)),
                   ),
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
                     Text(_displayName(k), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),

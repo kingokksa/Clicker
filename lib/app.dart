@@ -62,10 +62,10 @@ class _ClickerAppState extends State<ClickerApp> {
               accentColor: _toAccent(accent),
               visualDensity: VisualDensity.standard,
               fontFamily: 'Segoe UI Variable, Segoe UI, Microsoft YaHei UI, PingFang SC, sans-serif',
-              scaffoldBackgroundColor: const Color(0xFFF8F8FC).withOpacity(0.88),
-              cardColor: Colors.white.withOpacity(0.78),
+              scaffoldBackgroundColor: const Color(0xFFF8F8FC).withValues(alpha:0.88),
+              cardColor: Colors.white.withValues(alpha:0.78),
               navigationPaneTheme: NavigationPaneThemeData(
-                backgroundColor: const Color(0xFFF2F2FA).withOpacity(0.75),
+                backgroundColor: const Color(0xFFF2F2FA).withValues(alpha:0.75),
               ),
             ),
             darkTheme: FluentThemeData(
@@ -73,10 +73,10 @@ class _ClickerAppState extends State<ClickerApp> {
               accentColor: _toAccent(accent),
               visualDensity: VisualDensity.standard,
               fontFamily: 'Segoe UI Variable, Segoe UI, Microsoft YaHei UI, PingFang SC, sans-serif',
-              scaffoldBackgroundColor: const Color(0xFF16162A).withOpacity(0.88),
-              cardColor: const Color(0xFF22223A).withOpacity(0.78),
+              scaffoldBackgroundColor: const Color(0xFF16162A).withValues(alpha:0.88),
+              cardColor: const Color(0xFF22223A).withValues(alpha:0.78),
               navigationPaneTheme: NavigationPaneThemeData(
-                backgroundColor: const Color(0xFF16162A).withOpacity(0.75),
+                backgroundColor: const Color(0xFF16162A).withValues(alpha:0.75),
               ),
             ),
             themeMode: isDark ? ThemeMode.dark : ThemeMode.light,
