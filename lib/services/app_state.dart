@@ -634,6 +634,10 @@ class AppState extends ChangeNotifier {
         k.targetHwnd,       // target hwnd
         k.targetX,          // client x
         k.targetY,          // client y
+        k.triggerType.name, // trigger type: "keyboard" or "mouse"
+        k.triggerType == HoldTriggerType.mouse
+          ? (k.triggerMouseButton == 'right' ? 1 : (k.triggerMouseButton == 'middle' ? 2 : 0))
+          : 0,              // mouse trigger button: 0=left, 1=right, 2=middle
       ];
     }).toList();
 

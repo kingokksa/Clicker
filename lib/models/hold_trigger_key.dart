@@ -10,9 +10,16 @@ enum HoldTriggerAction {
   keyCombo,     // key combination
 }
 
+enum HoldTriggerType {
+  keyboard,     // triggered by keyboard key hold
+  mouse,        // triggered by mouse button hold
+}
+
 class HoldTriggerKey {
   final String id;
   String triggerKey;       // e.g. "F5", "Q", "1"
+  HoldTriggerType triggerType; // keyboard or mouse trigger
+  String triggerMouseButton; // "left", "right", "middle" (when triggerType == mouse)
   bool enabled;
 
   // Action type
@@ -39,6 +46,8 @@ class HoldTriggerKey {
   HoldTriggerKey({
     String? id,
     this.triggerKey = 'F5',
+    this.triggerType = HoldTriggerType.keyboard,
+    this.triggerMouseButton = 'left',
     this.enabled = true,
     this.action = HoldTriggerAction.mouseClick,
     this.mouseButton = 'left',
@@ -63,6 +72,11 @@ class HoldTriggerKey {
     return HoldTriggerKey(
       id: json['id'],
       triggerKey: json['triggerKey'] ?? 'F5',
+      triggerType: HoldTriggerType.values.firstWhere(
+        (e) => e.name == json['triggerType'],
+        orElse: () => HoldTriggerType.keyboard,
+      ),
+      triggerMouseButton: json['triggerMouseButton'] ?? 'left',
       enabled: json['enabled'] ?? true,
       action: HoldTriggerAction.values.firstWhere(
         (e) => e.name == json['action'],
@@ -85,6 +99,8 @@ class HoldTriggerKey {
   Map<String, dynamic> toJson() => {
         'id': id,
         'triggerKey': triggerKey,
+        'triggerType': triggerType.name,
+        'triggerMouseButton': triggerMouseButton,
         'enabled': enabled,
         'action': action.name,
         'mouseButton': mouseButton,
@@ -99,6 +115,8 @@ class HoldTriggerKey {
 
   HoldTriggerKey copyWith({
     String? triggerKey,
+    HoldTriggerType? triggerType,
+    String? triggerMouseButton,
     bool? enabled,
     HoldTriggerAction? action,
     String? mouseButton,
@@ -113,6 +131,8 @@ class HoldTriggerKey {
     return HoldTriggerKey(
       id: id,
       triggerKey: triggerKey ?? this.triggerKey,
+      triggerType: triggerType ?? this.triggerType,
+      triggerMouseButton: triggerMouseButton ?? this.triggerMouseButton,
       enabled: enabled ?? this.enabled,
       action: action ?? this.action,
       mouseButton: mouseButton ?? this.mouseButton,

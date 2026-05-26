@@ -102,7 +102,9 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
               border: Border.all(color: key.enabled ? accentColor.withValues(alpha:0.4) : (isDark ? const Color(0xFF404060) : const Color(0xFFD0D0E0))),
             ),
             child: Text(
-              _displayName(key.triggerKey),
+              key.triggerType == HoldTriggerType.mouse
+                ? _mouseButtonName(key.triggerMouseButton)
+                : _displayName(key.triggerKey),
               style: TextStyle(
                 fontSize: 13, fontWeight: FontWeight.w700,
                 color: key.enabled ? accentColor : (isDark ? const Color(0xFF606080) : const Color(0xFFB0B0C0)),
@@ -152,6 +154,14 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
     return key;
   }
 
+  String _mouseButtonName(String btn) {
+    switch (btn) {
+      case 'right': return '右键';
+      case 'middle': return '中键';
+      default: return '左键';
+    }
+  }
+
   void _addNewKey() {
     final newKey = HoldTriggerKey();
     _showEditDialog(newKey, isNew: true);
@@ -176,6 +186,8 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
 
     // Local editing state
     var triggerKey = key.triggerKey;
+    var triggerType = key.triggerType;
+    var triggerMouseButton = key.triggerMouseButton;
     var action = key.action;
     var mouseButton = key.mouseButton;
     var keyToRepeat = key.keyToRepeat;
@@ -194,33 +206,68 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
           title: Text(isNew ? '添加按住触发按键' : '编辑按住触发按键'),
           constraints: const BoxConstraints(maxWidth: 420),
           content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            // Trigger key
-            Text('触发按键', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80))),
+            // Trigger type
+            Text('触发方式', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80))),
             const SizedBox(height: 6),
-            Row(children: [
-              Expanded(child: Button(
-                onPressed: () {
-                  setDialogState(() => listeningTrigger = true);
-                  context.read<AppState>().captureKey().then((captured) {
-                    if (captured != null && captured.isNotEmpty) {
-                      setDialogState(() {
-                        triggerKey = captured;
-                        listeningTrigger = false;
-                      });
-                    } else {
-                      setDialogState(() => listeningTrigger = false);
-                    }
-                  });
+            ComboBox<HoldTriggerType>(
+              value: triggerType,
+              items: HoldTriggerType.values.map((t) => ComboBoxItem<HoldTriggerType>(
+                value: t,
+                child: Text(t == HoldTriggerType.keyboard ? '键盘按键' : '鼠标按键'),
+              )).toList(),
+              onChanged: (v) {
+                if (v != null) setDialogState(() => triggerType = v);
+              },
+            ),
+
+            const SizedBox(height: 14),
+
+            // Trigger key (keyboard mode)
+            if (triggerType == HoldTriggerType.keyboard) ...[
+              Text('触发按键', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80))),
+              const SizedBox(height: 6),
+              Row(children: [
+                Expanded(child: Button(
+                  onPressed: () {
+                    setDialogState(() => listeningTrigger = true);
+                    context.read<AppState>().captureKey().then((captured) {
+                      if (captured != null && captured.isNotEmpty) {
+                        setDialogState(() {
+                          triggerKey = captured;
+                          listeningTrigger = false;
+                        });
+                      } else {
+                        setDialogState(() => listeningTrigger = false);
+                      }
+                    });
+                  },
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Text(listeningTrigger ? '按下任意键...' : _displayName(triggerKey), style: TextStyle(fontWeight: FontWeight.w600)),
+                    if (!listeningTrigger) ...[
+                      const SizedBox(width: 6),
+                      const Icon(FluentIcons.edit, size: 10),
+                    ],
+                  ]),
+                )),
+              ]),
+            ],
+
+            // Trigger mouse button (mouse mode)
+            if (triggerType == HoldTriggerType.mouse) ...[
+              Text('触发鼠标按键', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80))),
+              const SizedBox(height: 6),
+              ComboBox<String>(
+                value: ['left', 'right', 'middle'].contains(triggerMouseButton) ? triggerMouseButton : 'left',
+                items: const [
+                  ComboBoxItem(value: 'left', child: Text('左键')),
+                  ComboBoxItem(value: 'right', child: Text('右键')),
+                  ComboBoxItem(value: 'middle', child: Text('中键')),
+                ],
+                onChanged: (v) {
+                  if (v != null) setDialogState(() => triggerMouseButton = v);
                 },
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  Text(listeningTrigger ? '按下任意键...' : _displayName(triggerKey), style: TextStyle(fontWeight: FontWeight.w600)),
-                  if (!listeningTrigger) ...[
-                    const SizedBox(width: 6),
-                    const Icon(FluentIcons.edit, size: 10),
-                  ],
-                ]),
-              )),
-            ]),
+              ),
+            ],
 
             const SizedBox(height: 14),
 
@@ -370,6 +417,8 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
                 final updated = HoldTriggerKey(
                   id: key.id,
                   triggerKey: triggerKey,
+                  triggerType: triggerType,
+                  triggerMouseButton: triggerMouseButton,
                   enabled: enabled,
                   action: action,
                   mouseButton: mouseButton,

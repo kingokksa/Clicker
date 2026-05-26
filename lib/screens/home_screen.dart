@@ -29,6 +29,35 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
   bool _isMaximized = false;
   bool _isClosing = false;
 
+  // Cache plugin page instances with GlobalKeys to preserve state across rebuilds
+  final Map<String, ({Widget widget, GlobalKey key})> _pluginPageCache = {};
+
+  // Lazy-loaded page cache: only created when first visited
+  final Map<int, Widget> _lazyPages = {};
+
+  Widget _getOrCreatePage(int index) {
+    return _lazyPages.putIfAbsent(index, () {
+      switch (index) {
+        case 0: return const ClickerPage();
+        case 1: return const PluginPage();
+        default:
+          final plugins = PluginRegistry.instance.enabledPlugins;
+          final pluginIndex = index - 2;
+          if (pluginIndex >= 0 && pluginIndex < plugins.length) {
+            final plugin = plugins[pluginIndex];
+            final cached = _pluginPageCache[plugin.manifest.id];
+            if (cached == null) {
+              final key = GlobalKey();
+              final widget = KeyedSubtree(key: key, child: Builder(builder: plugin.buildPage));
+              _pluginPageCache[plugin.manifest.id] = (widget: widget, key: key);
+            }
+            return _pluginPageCache[plugin.manifest.id]!.widget;
+          }
+          return const SettingsPage();
+      }
+    });
+  }
+
   static const _platformChannel = MethodChannel('com.clicker.pro/platform');
 
   @override
@@ -41,6 +70,14 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
     PluginRegistry.instance.addListener(_onPluginsChanged);
   }
 
+  @override
+  void dispose() {
+    _pluginPageCache.clear();
+    PluginRegistry.instance.removeListener(_onPluginsChanged);
+    windowManager.removeListener(this);
+    super.dispose();
+  }
+
   void _onPluginsChanged() {
     if (mounted) {
       // Reset index if it's out of bounds after plugin change
@@ -50,13 +87,6 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
       }
       setState(() {});
     }
-  }
-
-  @override
-  void dispose() {
-    PluginRegistry.instance.removeListener(_onPluginsChanged);
-    windowManager.removeListener(this);
-    super.dispose();
   }
 
   void _checkMaximized() {
@@ -177,6 +207,23 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
       return FloatingWindow(onSwitchToMain: _switchToMain);
     }
 
+    final plugins = PluginRegistry.instance.enabledPlugins;
+    final totalPages = 2 + plugins.length + 1;
+
+    // _currentIndex is the index into effectiveItems (separators excluded)
+    // 0 -> ClickerPage, 1 -> PluginPage, 2..2+plugins-1 -> plugins, 2+plugins -> SettingsPage
+    final pageIndex = _currentIndex.clamp(0, totalPages - 1);
+
+    // Ensure current page is created (lazy)
+    _getOrCreatePage(pageIndex);
+
+    // Build all created pages for IndexedStack (unvisited slots get placeholder)
+    final pages = List<Widget>.generate(totalPages, (i) {
+      final page = _lazyPages[i];
+      if (page != null) return page;
+      return const SizedBox.shrink();
+    });
+
     return DragToResizeArea(
       resizeEdgeSize: 6,
       child: Column(children: [
@@ -195,21 +242,20 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
                 )),
               ),
               items: [
-                PaneItem(icon: const Icon(FluentIcons.touch), title: const Text('连点'), body: const ClickerPage()),
+                PaneItem(icon: const Icon(FluentIcons.touch), title: const Text('连点'), body: const SizedBox.shrink()),
                 PaneItemSeparator(),
-                PaneItem(icon: const Icon(FluentIcons.puzzle), title: const Text('插件中心'), body: const PluginPage()),
-                // Dynamic plugin nav items
-                ...PluginRegistry.instance.enabledPlugins.map((plugin) =>
-                  PaneItem(
-                    icon: Icon(plugin.manifest.icon),
-                    title: Text(plugin.manifest.name),
-                    body: plugin.buildPage(context),
-                  ),
+                PaneItem(icon: const Icon(FluentIcons.puzzle), title: const Text('插件中心'), body: const SizedBox.shrink()),
+                ...plugins.map((plugin) =>
+                  PaneItem(icon: Icon(plugin.manifest.icon), title: Text(plugin.manifest.name), body: const SizedBox.shrink()),
                 ),
               ],
               footerItems: [
-                PaneItem(icon: const Icon(FluentIcons.settings), title: const Text('设置'), body: const SettingsPage()),
+                PaneItem(icon: const Icon(FluentIcons.settings), title: const Text('设置'), body: const SizedBox.shrink()),
               ],
+            ),
+            paneBodyBuilder: (item, body) => IndexedStack(
+              index: pageIndex,
+              children: pages,
             ),
           ),
         ),

@@ -2,14 +2,18 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/app_state.dart';
+import '../../services/macro_service.dart';
 import '../../services/screen_monitor_service.dart';
 import '../../services/vision_service.dart';
 import '../../services/vision_plugin.dart';
 import '../../services/vision_plugin_manager.dart';
+import '../../services/platform/windows_input.dart';
 
 class ImageRecognitionPage extends StatefulWidget {
   const ImageRecognitionPage({super.key});
@@ -49,13 +53,22 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
   bool _ocrRunning = false;
   String? _selectedOcrEngine; // plugin ID for OCR
 
+  // OCR tools install state
+  bool _tesseractInstalled = false;
+  bool _pythonInstalled = false;
+  bool _checkingTools = true;
+  bool _installingTool = false;
+  bool _initialized = false;
+
   // Conditional triggers
   final List<_TriggerEntry> _triggers = [];
+  Timer? _triggerCheckTimer;
+  final Map<String, DateTime> _triggerLastFired = {}; // debounce
 
   // Area selection state (shared by all overlay operations)
-  Function(int x1, int y1, int x2, int y2)? _areaSelectCallback;
+  Completer<(int, int, int, int)>? _areaSelectCompleter;
   // Click pick state
-  Function(int x, int y)? _pickCallback;
+  Completer<(int, int)>? _pickCompleter;
   bool _overlayActive = false;
 
   // Platform channel for overlay
@@ -67,10 +80,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     _monitor.onLogEntry = (_) { if (mounted) setState(() {}); };
     _monitor.onMonitoringChanged = (_) { if (mounted) setState(() {}); };
 
-    // Initialize vision plugins
-    _initPlugins();
-
-    // Single unified overlay handler
+    // Single unified overlay handler (must be set before any async work)
     _platformChannel.setMethodCallHandler((call) async {
       if (!mounted) return;
       switch (call.method) {
@@ -94,9 +104,8 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
           final y2 = args['y2'] as int;
           await _platformChannel.invokeMethod('stopOverlay');
           _overlayActive = false;
-          if (_areaSelectCallback != null) {
-            _areaSelectCallback!(x1, y1, x2, y2);
-            _areaSelectCallback = null;
+          if (_areaSelectCompleter != null && !_areaSelectCompleter!.isCompleted) {
+            _areaSelectCompleter!.complete((x1, y1, x2, y2));
           }
           if (mounted) setState(() {
             _selectingSearchArea = false;
@@ -107,8 +116,12 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
         case 'onOverlayCancelled':
           await _platformChannel.invokeMethod('stopOverlay');
           _overlayActive = false;
-          _areaSelectCallback = null;
-          _pickCallback = null;
+          if (_areaSelectCompleter != null && !_areaSelectCompleter!.isCompleted) {
+            _areaSelectCompleter!.completeError('cancelled');
+          }
+          if (_pickCompleter != null && !_pickCompleter!.isCompleted) {
+            _pickCompleter!.completeError('cancelled');
+          }
           if (mounted) setState(() {
             _selectingSearchArea = false;
             _selectingOcrArea = false;
@@ -117,6 +130,17 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
           break;
       }
     });
+
+    // Defer all heavy initialization to avoid blocking page switch
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initAndLoad();
+    });
+  }
+
+  Future<void> _initAndLoad() async {
+    await _initPlugins();
+    await _loadPersistedData();
+    if (mounted) setState(() => _initialized = true);
   }
 
   Future<void> _initPlugins() async {
@@ -125,43 +149,360 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     if (mounted) setState(() {});
   }
 
+  // ─── Persistence ──────────────────────────────────────────
+  static const _kRegionsKey = 'img_rec_regions';
+  static const _kTriggersKey = 'img_rec_triggers';
+
+  Future<void> _loadPersistedData() async {
+    final prefs = await SharedPreferences.getInstance();
+
+    // Load regions
+    final regionsJson = prefs.getString(_kRegionsKey);
+    if (regionsJson != null) {
+      try {
+        final list = jsonDecode(regionsJson) as List;
+        for (final m in list) {
+          final entry = _RegionEntry(
+            id: m['id'] ?? '',
+            name: m['name'] ?? '监控区域',
+            threshold: (m['threshold'] as num?)?.toDouble() ?? 0.85,
+            enabled: m['enabled'] ?? true,
+            x: m['x'] ?? 0, y: m['y'] ?? 0,
+            w: m['w'] ?? 100, h: m['h'] ?? 100,
+          );
+          _regions.add(entry);
+          _monitor.addRegion(MonitorRegion(
+            id: entry.id, name: entry.name,
+            x: entry.x, y: entry.y, w: entry.w, h: entry.h,
+            enabled: entry.enabled,
+            onDetected: () { if (mounted) setState(() {}); },
+            onChanged: () {
+              final t = _regions.where((t) => t.id == entry.id).firstOrNull;
+              if (t != null) {
+                final region = _monitor.regions.where((r) => r.id == entry.id).firstOrNull;
+                if (region != null && region.lastCenterColor != null) {
+                  t.lastColor = region.lastCenterColor;
+                }
+              }
+              if (mounted) setState(() {});
+            },
+          ));
+        }
+      } catch (_) {}
+    }
+
+    // Load triggers
+    final triggersJson = prefs.getString(_kTriggersKey);
+    if (triggersJson != null) {
+      try {
+        final list = jsonDecode(triggersJson) as List;
+        for (final m in list) {
+          _triggers.add(_TriggerEntry(
+            id: m['id'] ?? '',
+            name: m['name'] ?? '',
+            conditionType: _TriggerConditionType.values.firstWhere(
+              (e) => e.name == m['conditionType'], orElse: () => _TriggerConditionType.colorMatch),
+            actionType: _TriggerActionType.values.firstWhere(
+              (e) => e.name == m['actionType'], orElse: () => _TriggerActionType.click),
+            enabled: m['enabled'] ?? true,
+            x: m['x'] ?? 0, y: m['y'] ?? 0, w: m['w'] ?? 100, h: m['h'] ?? 100,
+            matchThreshold: (m['matchThreshold'] as num?)?.toDouble() ?? 0.8,
+            targetText: m['targetText'] ?? '',
+            textMatchMode: _TextMatchMode.values.firstWhere(
+              (e) => e.name == m['textMatchMode'], orElse: () => _TextMatchMode.fuzzy),
+            actionX: m['actionX'] ?? 0, actionY: m['actionY'] ?? 0,
+            actionKey: m['actionKey'] ?? '',
+            macroId: m['macroId'] ?? '',
+            intervalMs: m['intervalMs'] ?? 500,
+          ));
+        }
+      } catch (_) {}
+    }
+
+    if (mounted) setState(() {});
+    // Delay heavy checks to avoid blocking page load
+    Future.delayed(const Duration(seconds: 1), () {
+      if (mounted) _checkOcrTools();
+    });
+  }
+
+  Future<void> _checkOcrTools() async {
+    setState(() => _checkingTools = true);
+    try {
+      final results = await _platformChannel.invokeMethod<Map>('checkOcrTools');
+      if (results != null && mounted) {
+        setState(() {
+          _tesseractInstalled = results['tesseract'] == true;
+          _pythonInstalled = results['python'] == true;
+          _checkingTools = false;
+        });
+      }
+    } on PlatformException {
+      if (mounted) setState(() => _checkingTools = false);
+    }
+  }
+
+  Future<void> _saveRegions() async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = _regions.map((r) => {
+      'id': r.id, 'name': r.name, 'threshold': r.threshold,
+      'enabled': r.enabled, 'x': r.x, 'y': r.y, 'w': r.w, 'h': r.h,
+    }).toList();
+    await prefs.setString(_kRegionsKey, jsonEncode(list));
+  }
+
+  Future<void> _saveTriggers() async {
+    final prefs = await SharedPreferences.getInstance();
+    final list = _triggers.map((t) => {
+      'id': t.id, 'name': t.name,
+      'conditionType': t.conditionType.name,
+      'actionType': t.actionType.name,
+      'enabled': t.enabled,
+      'x': t.x, 'y': t.y, 'w': t.w, 'h': t.h,
+      'matchThreshold': t.matchThreshold,
+      'targetText': t.targetText,
+      'textMatchMode': t.textMatchMode.name,
+      'actionX': t.actionX, 'actionY': t.actionY,
+      'actionKey': t.actionKey, 'macroId': t.macroId, 'intervalMs': t.intervalMs,
+    }).toList();
+    await prefs.setString(_kTriggersKey, jsonEncode(list));
+  }
+
+  // ─── Trigger Execution ────────────────────────────────────
+  bool _triggerRunning = false; // user must explicitly start
+
+  void _startTriggerChecker() {
+    _triggerCheckTimer?.cancel();
+    final enabledTriggers = _triggers.where((t) => t.enabled).toList();
+    if (enabledTriggers.isEmpty) return;
+
+    // Determine interval: at least 500ms, use trigger intervals as guide
+    int minInterval = 500;
+    // For expensive triggers (OCR/template), enforce at least 2s interval
+    final hasExpensiveTriggers = enabledTriggers.any((t) =>
+      t.conditionType == _TriggerConditionType.imageMatch ||
+      t.conditionType == _TriggerConditionType.textMatch);
+    if (hasExpensiveTriggers && minInterval < 2000) minInterval = 2000;
+
+    _triggerCheckTimer = Timer.periodic(Duration(milliseconds: minInterval), (_) => _checkTriggers());
+  }
+
+  void _stopTriggerChecker() {
+    _triggerCheckTimer?.cancel();
+    _triggerCheckTimer = null;
+  }
+
+  Future<void> _checkTriggers() async {
+    if (!_triggerRunning) return;
+    final now = DateTime.now();
+    for (final trigger in _triggers) {
+      if (!trigger.enabled) continue;
+
+      // Debounce: don't fire more often than the trigger's interval
+      final lastFired = _triggerLastFired[trigger.id];
+      if (lastFired != null && now.difference(lastFired).inMilliseconds < trigger.intervalMs) continue;
+
+      bool conditionMet = false;
+      try {
+        switch (trigger.conditionType) {
+          case _TriggerConditionType.colorMatch:
+            final color = await _monitor.getPixelColor(trigger.x + trigger.w ~/ 2, trigger.y + trigger.h ~/ 2);
+            if (color == null) continue;
+            if (trigger.targetColor != null) {
+              final diff = _colorDiff(color, trigger.targetColor!);
+              conditionMet = diff < 40; // close enough to target color
+            } else {
+              // No target color: detect any change from initial color
+              final lastColor = _triggerLastColors[trigger.id];
+              if (lastColor == null) {
+                _triggerLastColors[trigger.id] = color; // record initial
+              } else {
+                conditionMet = _colorDiff(color, lastColor) > 30;
+                if (conditionMet) _triggerLastColors[trigger.id] = color; // update after trigger
+              }
+            }
+            break;
+          case _TriggerConditionType.colorChange:
+            final color = await _monitor.getPixelColor(trigger.x + trigger.w ~/ 2, trigger.y + trigger.h ~/ 2);
+            if (color == null) continue;
+            final lastColor = _triggerLastColors[trigger.id];
+            if (lastColor == null) {
+              _triggerLastColors[trigger.id] = color; // record initial
+            } else {
+              final diff = _colorDiff(color, lastColor);
+              if (diff > 30) {
+                conditionMet = true;
+                _triggerLastColors[trigger.id] = color; // update after change
+              }
+            }
+            break;
+          case _TriggerConditionType.colorDisappear:
+            final color = await _monitor.getPixelColor(trigger.x + trigger.w ~/ 2, trigger.y + trigger.h ~/ 2);
+            if (color == null) continue;
+            if (trigger.targetColor != null) {
+              final diff = _colorDiff(color, trigger.targetColor!);
+              conditionMet = diff > 60; // target color is no longer present
+            } else {
+              // No target color: detect if region becomes very dark/white (likely disappeared)
+              final brightness = (color.r * 0.299 + color.g * 0.587 + color.b * 0.114);
+              final lastColor = _triggerLastColors[trigger.id];
+              if (lastColor != null) {
+                final lastBrightness = (lastColor.r * 0.299 + lastColor.g * 0.587 + lastColor.b * 0.114);
+                conditionMet = (brightness - lastBrightness).abs() > 0.3;
+              }
+              _triggerLastColors[trigger.id] = color;
+            }
+            break;
+          case _TriggerConditionType.imageMatch:
+            if (trigger.templateData != null) {
+              final result = await _vision.findImage(
+                regionX: trigger.x, regionY: trigger.y, regionW: trigger.w, regionH: trigger.h,
+                template: trigger.templateData!,
+                threshold: trigger.matchThreshold,
+              );
+              conditionMet = result != null;
+            }
+            break;
+          case _TriggerConditionType.textMatch:
+            if (trigger.targetText.isNotEmpty) {
+              final ocrResult = await _vision.ocrRegion(
+                x: trigger.x, y: trigger.y, w: trigger.w, h: trigger.h,
+                language: _ocrLanguage,
+              );
+              if (ocrResult != null && ocrResult.hasText) {
+                conditionMet = _matchText(ocrResult.text, trigger.targetText, trigger.textMatchMode);
+              }
+            }
+            break;
+        }
+      } catch (_) {
+        continue;
+      }
+
+      if (conditionMet) {
+        _triggerLastFired[trigger.id] = now;
+        await _executeTriggerAction(trigger);
+      }
+    }
+  }
+
+  final Map<String, Color> _triggerLastColors = {};
+
+  double _colorDiff(Color a, Color b) {
+    final dr = ((a.r - b.r) * 255).round().abs();
+    final dg = ((a.g - b.g) * 255).round().abs();
+    final db = ((a.b - b.b) * 255).round().abs();
+    return (dr + dg + db) / 3.0;
+  }
+
+  /// Normalize text for fuzzy matching: remove spaces, punctuation, and convert to lowercase
+  static String _normalizeText(String text) {
+    return text
+      .replaceAll(RegExp(r'[\s\u3000]+'), '') // remove spaces (including full-width)
+      .replaceAll(RegExp(r'[^\w\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]+'), '') // keep letters, digits, CJK, kana
+      .toLowerCase();
+  }
+
+  bool _matchText(String ocrText, String target, _TextMatchMode mode) {
+    switch (mode) {
+      case _TextMatchMode.contains:
+        return ocrText.contains(target);
+      case _TextMatchMode.notContains:
+        return !ocrText.contains(target);
+      case _TextMatchMode.equals:
+        return ocrText.trim() == target.trim();
+      case _TextMatchMode.regex:
+        try {
+          return RegExp(target).hasMatch(ocrText);
+        } catch (_) {
+          return false; // invalid regex
+        }
+      case _TextMatchMode.fuzzy:
+        // Normalize both texts: remove spaces, punctuation, lowercase
+        final normOcr = _normalizeText(ocrText);
+        final normTarget = _normalizeText(target);
+        if (normTarget.isEmpty) return false;
+        return normOcr.contains(normTarget);
+    }
+  }
+
+  Future<void> _executeTriggerAction(_TriggerEntry trigger) async {
+    switch (trigger.actionType) {
+      case _TriggerActionType.click:
+        await _platformChannel.invokeMethod('sendClick', [trigger.actionX, trigger.actionY, 0]);
+        break;
+      case _TriggerActionType.keyPress:
+        if (trigger.actionKey.isNotEmpty) {
+          await _platformChannel.invokeMethod('sendKeyPress', trigger.actionKey);
+        }
+        break;
+      case _TriggerActionType.startClicker:
+      case _TriggerActionType.stopClicker:
+        // These would integrate with the main clicker functionality
+        break;
+      case _TriggerActionType.runMacro:
+        if (trigger.macroId.isNotEmpty) {
+          final state = context.read<AppState>();
+          final macro = state.macros.where((m) => m.id == trigger.macroId).firstOrNull;
+          if (macro != null) {
+            final macroService = MacroService(WindowsInput());
+            macroService.playMacro(macro);
+          }
+        }
+        break;
+    }
+  }
+
   Future<void> _handleOverlayClick(int x, int y) async {
     try {
       await _platformChannel.invokeMethod('stopOverlay');
       _overlayActive = false;
-      if (_pickCallback != null) {
-        _pickCallback!(x, y);
-        _pickCallback = null;
+      if (_pickCompleter != null && !_pickCompleter!.isCompleted) {
+        _pickCompleter!.complete((x, y));
       }
     } on PlatformException {
       // ignore
     }
   }
 
-  Future<void> _startAreaSelect(Function(int x1, int y1, int x2, int y2) callback) async {
-    _areaSelectCallback = callback;
+  Future<(int, int, int, int)?> _startAreaSelect() async {
+    _areaSelectCompleter = Completer<(int, int, int, int)>();
     _overlayActive = true;
     try {
       await _platformChannel.invokeMethod('startAreaSelectOverlay');
+      // Wait for user to complete selection
+      return await _areaSelectCompleter!.future;
     } on PlatformException {
       _overlayActive = false;
-      _areaSelectCallback = null;
+      _areaSelectCompleter = null;
+      return null;
+    } catch (e) {
+      _overlayActive = false;
+      _areaSelectCompleter = null;
+      return null;
     }
   }
 
-  Future<void> _startPick(Function(int x, int y) callback) async {
-    _pickCallback = callback;
+  Future<(int, int)?> _startPick() async {
+    _pickCompleter = Completer<(int, int)>();
     _overlayActive = true;
     try {
       await _platformChannel.invokeMethod('startPickOverlay');
+      return await _pickCompleter!.future;
     } on PlatformException {
       _overlayActive = false;
-      _pickCallback = null;
+      _pickCompleter = null;
+      return null;
+    } catch (e) {
+      _overlayActive = false;
+      _pickCompleter = null;
+      return null;
     }
   }
 
   @override
   void dispose() {
+    _stopTriggerChecker();
     if (_overlayActive) {
       _platformChannel.invokeMethod('stopOverlay');
     }
@@ -181,6 +522,17 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
           const Icon(FluentIcons.image_pixel, size: 48, color: Colors.grey),
           const SizedBox(height: 12),
           const Text('图像识别未启用', style: TextStyle(fontSize: 16)),
+        ])),
+      );
+    }
+
+    // Show loading animation while initializing
+    if (!_initialized) {
+      return ScaffoldPage(
+        content: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const SizedBox(width: 32, height: 32, child: ProgressRing()),
+          const SizedBox(height: 16),
+          Text('正在初始化图像识别...', style: TextStyle(fontSize: 14, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A7A))),
         ])),
       );
     }
@@ -322,10 +674,11 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
                 Icon(FluentIcons.image_search, size: 16, color: state.accentColor),
                 const SizedBox(width: 8),
                 Expanded(child: Text(t.name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14))),
-                ToggleSwitch(checked: t.enabled, onChanged: (v) => setState(() => t.enabled = v)),
+                ToggleSwitch(checked: t.enabled, onChanged: (v) { setState(() => t.enabled = v); _saveRegions(); }),
                 const SizedBox(width: 8),
                 IconButton(icon: Icon(FluentIcons.delete, size: 14, color: Colors.red), onPressed: () {
                   setState(() { _regions.remove(t); _monitor.removeRegion(t.id); });
+                  _saveRegions();
                 }),
               ]),
               const SizedBox(height: 4),
@@ -412,7 +765,16 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
   }
 
   void _addRegion(bool isDark, AppState state) async {
-    final result = await showDialog<_RegionConfig>(context: context, builder: (ctx) => _AddRegionDialog());
+    final sel = await _startAreaSelect();
+    if (sel == null) return; // cancelled
+    final (selX, selY, selX2, selY2) = sel;
+    final selW = selX2 - selX;
+    final selH = selY2 - selY;
+
+    final result = await showDialog<_RegionConfig>(context: context, builder: (ctx) => _AddRegionDialog(
+      initialX: selX, initialY: selY,
+      initialW: selW, initialH: selH,
+    ));
     if (result != null && mounted) {
       final entry = _RegionEntry(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
@@ -442,6 +804,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
           if (mounted) setState(() {});
         },
       ));
+      _saveRegions();
     }
   }
 
@@ -472,20 +835,23 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
               FilledButton(
                 onPressed: () async {
                   setState(() => _capturingTemplate = true);
-                  await _startAreaSelect((x1, y1, x2, y2) {
-                    final w = x2 - x1;
-                    final h = y2 - y1;
-                    if (w < 5 || h < 5) {
-                      if (mounted) setState(() => _capturingTemplate = false);
-                      return;
-                    }
-                    _vision.captureTemplate(x1, y1, w, h).then((tpl) {
-                      if (mounted) setState(() {
-                        _template = tpl;
-                        _templateInfo = '(${x1}, ${y1}) ${w}x${h}';
-                        _capturingTemplate = false;
-                      });
-                    });
+                  final sel = await _startAreaSelect();
+                  if (sel == null) {
+                    if (mounted) setState(() => _capturingTemplate = false);
+                    return;
+                  }
+                  final (x1, y1, x2, y2) = sel;
+                  final w = x2 - x1;
+                  final h = y2 - y1;
+                  if (w < 5 || h < 5) {
+                    if (mounted) setState(() => _capturingTemplate = false);
+                    return;
+                  }
+                  final tpl = await _vision.captureTemplate(x1, y1, w, h);
+                  if (mounted) setState(() {
+                    _template = tpl;
+                    _templateInfo = '($x1, $y1) ${w}x$h';
+                    _capturingTemplate = false;
                   });
                 },
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -530,14 +896,18 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
               FilledButton(
                 onPressed: () async {
                   setState(() => _selectingSearchArea = true);
-                  await _startAreaSelect((x1, y1, x2, y2) {
-                    setState(() {
-                      _searchAreaX = x1;
-                      _searchAreaY = y1;
-                      _searchAreaW = x2 - x1;
-                      _searchAreaH = y2 - y1;
-                      _searchAreaInfo = '($x1, $y1) ${_searchAreaW}x$_searchAreaH';
-                    });
+                  final sel = await _startAreaSelect();
+                  if (sel == null) {
+                    if (mounted) setState(() => _selectingSearchArea = false);
+                    return;
+                  }
+                  final (x1, y1, x2, y2) = sel;
+                  setState(() {
+                    _searchAreaX = x1;
+                    _searchAreaY = y1;
+                    _searchAreaW = x2 - x1;
+                    _searchAreaH = y2 - y1;
+                    _searchAreaInfo = '($x1, $y1) ${_searchAreaW}x$_searchAreaH';
                   });
                 },
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -678,14 +1048,18 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
               FilledButton(
                 onPressed: () async {
                   setState(() => _selectingOcrArea = true);
-                  await _startAreaSelect((x1, y1, x2, y2) {
-                    setState(() {
-                      _ocrAreaX = x1;
-                      _ocrAreaY = y1;
-                      _ocrAreaW = x2 - x1;
-                      _ocrAreaH = y2 - y1;
-                      _ocrAreaInfo = '($x1, $y1) ${_ocrAreaW}x$_ocrAreaH';
-                    });
+                  final sel = await _startAreaSelect();
+                  if (sel == null) {
+                    if (mounted) setState(() => _selectingOcrArea = false);
+                    return;
+                  }
+                  final (x1, y1, x2, y2) = sel;
+                  setState(() {
+                    _ocrAreaX = x1;
+                    _ocrAreaY = y1;
+                    _ocrAreaW = x2 - x1;
+                    _ocrAreaH = y2 - y1;
+                    _ocrAreaInfo = '($x1, $y1) ${_ocrAreaW}x$_ocrAreaH';
                   });
                 },
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -722,6 +1096,12 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
           Row(children: [
             const Text('识别引擎: ', style: TextStyle(fontSize: 13)),
             _buildEngineSelector(VisionCapability.ocr, _selectedOcrEngine, (id) => setState(() => _selectedOcrEngine = id)),
+          ]),
+          const SizedBox(height: 8),
+          // Tesseract OCR install / status
+          _buildOcrToolsBar(isDark, state),
+          const SizedBox(height: 10),
+          Row(children: [
             const Spacer(),
             FilledButton(
               onPressed: !_ocrRunning ? _doOcr : null,
@@ -802,16 +1182,155 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     }
   }
 
+  // ─── OCR Tools Bar (install / uninstall Tesseract, Python) ──
+  Widget _buildOcrToolsBar(bool isDark, AppState state) {
+    if (_checkingTools) {
+      return const Row(children: [
+        SizedBox(width: 14, height: 14, child: ProgressRing(strokeWidth: 2)),
+        SizedBox(width: 8),
+        Text('检测OCR工具...', style: TextStyle(fontSize: 12)),
+      ]);
+    }
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('备用OCR工具', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A7A))),
+      const SizedBox(height: 6),
+      Wrap(spacing: 8, runSpacing: 6, children: [
+        // Tesseract
+        _toolChip(
+          icon: FluentIcons.processing,
+          label: 'Tesseract OCR',
+          installed: _tesseractInstalled,
+          installing: _installingTool,
+          isDark: isDark,
+          onInstall: () => _installTool('tesseract'),
+          onUninstall: () => _uninstallTool('tesseract'),
+        ),
+        // Python + pytesseract
+        _toolChip(
+          icon: FluentIcons.code,
+          label: 'Python + pytesseract',
+          installed: _pythonInstalled,
+          installing: _installingTool,
+          isDark: isDark,
+          onInstall: () => _installTool('python'),
+          onUninstall: () => _uninstallTool('python'),
+        ),
+      ]),
+    ]);
+  }
+
+  Widget _toolChip({
+    required IconData icon,
+    required String label,
+    required bool installed,
+    required bool installing,
+    required bool isDark,
+    required VoidCallback onInstall,
+    required VoidCallback onUninstall,
+  }) {
+    final bgColor = installed
+      ? const Color(0xFF00BCD4).withValues(alpha: 0.12)
+      : isDark ? const Color(0xFF303050) : const Color(0xFFE0E0F0);
+    final borderColor = installed
+      ? const Color(0xFF00BCD4).withValues(alpha: 0.4)
+      : isDark ? const Color(0xFF404060) : const Color(0xFFC0C0D0);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: borderColor),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: 14, color: installed ? const Color(0xFF00BCD4) : (isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A7A))),
+        const SizedBox(width: 6),
+        Text(label, style: TextStyle(fontSize: 12, color: installed ? const Color(0xFF00BCD4) : null)),
+        const SizedBox(width: 8),
+        if (installing)
+          const SizedBox(width: 12, height: 12, child: ProgressRing(strokeWidth: 2))
+        else if (installed)
+          Button(
+            style: ButtonStyle(padding: WidgetStateProperty.all(const EdgeInsets.symmetric(horizontal: 6, vertical: 2))),
+            onPressed: onUninstall,
+            child: const Text('卸载', style: TextStyle(fontSize: 11)),
+          )
+        else
+          FilledButton(
+            style: ButtonStyle(padding: WidgetStateProperty.all(const EdgeInsets.symmetric(horizontal: 6, vertical: 2))),
+            onPressed: onInstall,
+            child: const Text('安装', style: TextStyle(fontSize: 11)),
+          ),
+      ]),
+    );
+  }
+
+  Future<void> _installTool(String tool) async {
+    setState(() => _installingTool = true);
+    try {
+      await _platformChannel.invokeMethod('installOcrTool', tool);
+      await _checkOcrTools();
+    } on PlatformException catch (e) {
+      if (mounted) {
+        showDialog(context: context, builder: (_) => ContentDialog(
+          title: const Text('安装失败'),
+          content: Text(e.message ?? '未知错误'),
+          actions: [Button(child: const Text('确定'), onPressed: () => Navigator.pop(context))],
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _installingTool = false);
+    }
+  }
+
+  Future<void> _uninstallTool(String tool) async {
+    setState(() => _installingTool = true);
+    try {
+      await _platformChannel.invokeMethod('uninstallOcrTool', tool);
+      await _checkOcrTools();
+    } on PlatformException {
+      // ignore
+    } finally {
+      if (mounted) setState(() => _installingTool = false);
+    }
+  }
+
   // ─── Conditional Triggers ──────────────────────────────────
 
   List<Widget> _buildTriggers(bool isDark, AppState state) {
     final cardBg = isDark ? const Color(0xFF252540).withValues(alpha: 0.5) : const Color(0xFFF0F0FA).withValues(alpha: 0.5);
     return [
-      SizedBox(width: double.infinity, child: Button(onPressed: () => _addTrigger(isDark, state), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-        const Icon(FluentIcons.add, size: 14),
-        const SizedBox(width: 6),
-        const Text('添加触发条件'),
-      ]))),
+      Row(children: [
+        Expanded(child: Button(onPressed: () => _addTrigger(isDark, state), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          const Icon(FluentIcons.add, size: 14),
+          const SizedBox(width: 6),
+          const Text('添加触发条件'),
+        ]))),
+        const SizedBox(width: 8),
+        if (_triggerRunning)
+          FilledButton(
+            style: ButtonStyle(backgroundColor: WidgetStateProperty.all(Colors.red)),
+            onPressed: () { setState(() { _triggerRunning = false; _stopTriggerChecker(); }); },
+            child: const Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(FluentIcons.stop, size: 14),
+              SizedBox(width: 6),
+              Text('停止监控'),
+            ]),
+          )
+        else
+          FilledButton(
+            onPressed: _triggers.isEmpty ? null : () {
+              setState(() { _triggerRunning = true; });
+              _startTriggerChecker();
+            },
+            child: const Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(FluentIcons.play, size: 14),
+              SizedBox(width: 6),
+              Text('启动监控'),
+            ]),
+          ),
+      ]),
       const SizedBox(height: 12),
 
       if (_triggers.isEmpty)
@@ -835,10 +1354,46 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
                 Icon(FluentIcons.process_meta_task, size: 16, color: state.accentColor),
                 const SizedBox(width: 8),
                 Expanded(child: Text(t.name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14))),
-                ToggleSwitch(checked: t.enabled, onChanged: (v) => setState(() => t.enabled = v)),
-                const SizedBox(width: 8),
+                ToggleSwitch(checked: t.enabled, onChanged: (v) { setState(() => t.enabled = v); _saveTriggers(); if (_triggerRunning) _startTriggerChecker(); }),
+                const SizedBox(width: 4),
+                IconButton(icon: Icon(FluentIcons.edit, size: 14, color: state.accentColor), onPressed: () async {
+                  final result = await showDialog<_TriggerConfig>(context: context, builder: (_) => _AddTriggerDialog(
+                    initialX: t.x, initialY: t.y, initialW: t.w, initialH: t.h,
+                    onPickActionPos: _startPick,
+                    initialTrigger: t,
+                  ));
+                  if (result != null) {
+                    setState(() {
+                      final idx = _triggers.indexOf(t);
+                      if (idx >= 0) {
+                        _triggers[idx] = _TriggerEntry(
+                          id: t.id,
+                          name: result.name,
+                          conditionType: result.conditionType,
+                          actionType: result.actionType,
+                          enabled: t.enabled,
+                          x: result.x, y: result.y, w: result.w, h: result.h,
+                          targetColor: result.targetColor,
+                          templateData: result.templateData,
+                          matchThreshold: result.matchThreshold,
+                          targetText: result.targetText,
+                          textMatchMode: result.textMatchMode,
+                          actionX: result.actionX, actionY: result.actionY,
+                          actionKey: result.actionKey,
+                          macroId: result.macroId,
+                          intervalMs: result.intervalMs,
+                        );
+                      }
+                    });
+                    _saveTriggers();
+                    if (_triggerRunning) _startTriggerChecker();
+                  }
+                }),
+                const SizedBox(width: 4),
                 IconButton(icon: Icon(FluentIcons.delete, size: 14, color: Colors.red), onPressed: () {
                   setState(() => _triggers.remove(t));
+                  _saveTriggers();
+                  if (_triggerRunning) _startTriggerChecker();
                 }),
               ]),
               const SizedBox(height: 6),
@@ -875,7 +1430,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
                 const SizedBox(height: 4),
                 Row(children: [
                   const Text('目标文字: ', style: TextStyle(fontSize: 12)),
-                  Text(t.targetText.isNotEmpty ? '"${t.targetText}"' : '未设置',
+                  Text(t.targetText.isNotEmpty ? '"${t.targetText}" [${t.textMatchMode.label}]' : '未设置',
                     style: TextStyle(fontSize: 12, color: t.targetText.isNotEmpty ? const Color(0xFF00BCD4) : Colors.grey)),
                 ]),
               ],
@@ -887,6 +1442,11 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
                   Text('点击 (${t.actionX}, ${t.actionY})', style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A)))
                 else if (t.actionType == _TriggerActionType.keyPress)
                   Text('按键 ${t.actionKey}', style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A)))
+                else if (t.actionType == _TriggerActionType.runMacro)
+                  Builder(builder: (context) {
+                    final macro = context.read<AppState>().macros.where((m) => m.id == t.macroId).firstOrNull;
+                    return Text(macro != null ? '宏: ${macro.name}' : '宏未找到', style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A)));
+                  })
                 else if (t.actionType == _TriggerActionType.startClicker)
                   const Text('启动连点', style: TextStyle(fontSize: 12))
                 else if (t.actionType == _TriggerActionType.stopClicker)
@@ -990,7 +1550,17 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
   }
 
   void _addTrigger(bool isDark, AppState state) async {
-    final result = await showDialog<_TriggerConfig>(context: context, builder: (ctx) => _AddTriggerDialog());
+    final sel = await _startAreaSelect();
+    if (sel == null) return; // cancelled
+    final (selX, selY, selX2, selY2) = sel;
+    final selW = selX2 - selX;
+    final selH = selY2 - selY;
+
+    final result = await showDialog<_TriggerConfig>(context: context, builder: (ctx) => _AddTriggerDialog(
+      initialX: selX, initialY: selY,
+      initialW: selW, initialH: selH,
+      onPickActionPos: _startPick,
+    ));
     if (result != null && mounted) {
       setState(() {
         _triggers.add(_TriggerEntry(
@@ -1003,12 +1573,16 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
           templateData: result.templateData,
           matchThreshold: result.matchThreshold,
           targetText: result.targetText,
+          textMatchMode: result.textMatchMode,
           actionX: result.actionX, actionY: result.actionY,
           actionKey: result.actionKey,
+          macroId: result.macroId,
           intervalMs: result.intervalMs,
           enabled: true,
         ));
       });
+      _saveTriggers();
+      if (_triggerRunning) _startTriggerChecker();
     }
   }
 
@@ -1070,7 +1644,7 @@ extension on _TriggerConditionType {
   }
 }
 
-enum _TriggerActionType { click, keyPress, startClicker, stopClicker }
+enum _TriggerActionType { click, keyPress, startClicker, stopClicker, runMacro }
 extension on _TriggerActionType {
   String get label {
     switch (this) {
@@ -1078,6 +1652,29 @@ extension on _TriggerActionType {
       case _TriggerActionType.keyPress: return '按键';
       case _TriggerActionType.startClicker: return '启动连点';
       case _TriggerActionType.stopClicker: return '停止连点';
+      case _TriggerActionType.runMacro: return '执行宏';
+    }
+  }
+}
+
+enum _TextMatchMode { contains, notContains, equals, regex, fuzzy }
+extension on _TextMatchMode {
+  String get label {
+    switch (this) {
+      case _TextMatchMode.contains: return '包含';
+      case _TextMatchMode.notContains: return '不包含';
+      case _TextMatchMode.equals: return '等于';
+      case _TextMatchMode.regex: return '正则匹配';
+      case _TextMatchMode.fuzzy: return '模糊匹配';
+    }
+  }
+  String get hint {
+    switch (this) {
+      case _TextMatchMode.contains: return 'OCR文本中包含指定文字时触发';
+      case _TextMatchMode.notContains: return 'OCR文本中不包含指定文字时触发';
+      case _TextMatchMode.equals: return 'OCR文本完全等于指定文字时触发';
+      case _TextMatchMode.regex: return 'OCR文本匹配正则表达式时触发';
+      case _TextMatchMode.fuzzy: return '忽略空格和标点，模糊匹配文字';
     }
   }
 }
@@ -1093,8 +1690,10 @@ class _TriggerEntry {
   final TemplateData? templateData;
   final double matchThreshold;
   final String targetText;
+  final _TextMatchMode textMatchMode;
   final int actionX, actionY;
   final String actionKey;
+  final String macroId;
   int intervalMs;
 
   _TriggerEntry({
@@ -1103,8 +1702,10 @@ class _TriggerEntry {
     this.x = 0, this.y = 0, this.w = 100, this.h = 100,
     this.targetColor, this.templateData, this.matchThreshold = 0.8,
     this.targetText = '',
+    this.textMatchMode = _TextMatchMode.fuzzy,
     this.actionX = 0, this.actionY = 0,
-    this.actionKey = '', this.intervalMs = 500,
+    this.actionKey = '', this.macroId = '',
+    this.intervalMs = 500,
   });
 }
 
@@ -1117,32 +1718,49 @@ class _TriggerConfig {
   final TemplateData? templateData;
   final double matchThreshold;
   final String targetText;
+  final _TextMatchMode textMatchMode;
   final int actionX, actionY;
   final String actionKey;
+  final String macroId;
   final int intervalMs;
   _TriggerConfig({
     required this.name, required this.conditionType, required this.actionType,
     required this.x, required this.y, required this.w, required this.h,
     this.targetColor, this.templateData, this.matchThreshold = 0.8,
     this.targetText = '',
+    this.textMatchMode = _TextMatchMode.fuzzy,
     this.actionX = 0, this.actionY = 0,
-    this.actionKey = '', this.intervalMs = 500,
+    this.actionKey = '', this.macroId = '',
+    this.intervalMs = 500,
   });
 }
 
 // ─── Add Region Dialog ──────────────────────────────────────
 
 class _AddRegionDialog extends StatefulWidget {
+  final int initialX, initialY, initialW, initialH;
+  const _AddRegionDialog({
+    this.initialX = 0, this.initialY = 0,
+    this.initialW = 100, this.initialH = 100,
+  });
   @override
   State<_AddRegionDialog> createState() => _AddRegionDialogState();
 }
 
 class _AddRegionDialogState extends State<_AddRegionDialog> {
-  int _x = 0, _y = 0, _w = 100, _h = 100;
+  late int _x, _y, _w, _h;
   double _threshold = 0.85;
   Color? _targetColor;
-  String _areaInfo = '';
   String _colorInfo = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _x = widget.initialX;
+    _y = widget.initialY;
+    _w = widget.initialW;
+    _h = widget.initialH;
+  }
 
   @override
   void dispose() {
@@ -1155,24 +1773,28 @@ class _AddRegionDialogState extends State<_AddRegionDialog> {
     return ContentDialog(
       title: const Text('添加监控区域'),
       content: SizedBox(width: 380, child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Row(children: [
-          FilledButton(
-            onPressed: () async {
-              // Use main page's overlay by closing dialog and letting main page handle it
-              // For simplicity, use manual coordinate input
-            },
-            child: Text(_areaInfo.isNotEmpty ? _areaInfo : '手动输入坐标'),
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: Colors.green.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
           ),
-        ]),
+          child: Row(children: [
+            Icon(FluentIcons.checkbox_composite, size: 14, color: Colors.green),
+            const SizedBox(width: 6),
+            Text('已选区域: ($_x, $_y) ${_w}x$_h', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          ]),
+        ),
         const SizedBox(height: 12),
         Row(children: [
-          SizedBox(width: 70, child: TextBox(placeholder: 'X', onChanged: (v) => _x = int.tryParse(v) ?? 0)),
+          SizedBox(width: 70, child: TextBox(placeholder: 'X', onChanged: (v) => _x = int.tryParse(v) ?? _x)),
           const SizedBox(width: 6),
-          SizedBox(width: 70, child: TextBox(placeholder: 'Y', onChanged: (v) => _y = int.tryParse(v) ?? 0)),
+          SizedBox(width: 70, child: TextBox(placeholder: 'Y', onChanged: (v) => _y = int.tryParse(v) ?? _y)),
           const SizedBox(width: 6),
-          SizedBox(width: 70, child: TextBox(placeholder: '宽', onChanged: (v) => _w = int.tryParse(v) ?? 100)),
+          SizedBox(width: 70, child: TextBox(placeholder: '宽', onChanged: (v) => _w = int.tryParse(v) ?? _w)),
           const SizedBox(width: 6),
-          SizedBox(width: 70, child: TextBox(placeholder: '高', onChanged: (v) => _h = int.tryParse(v) ?? 100)),
+          SizedBox(width: 70, child: TextBox(placeholder: '高', onChanged: (v) => _h = int.tryParse(v) ?? _h)),
         ]),
         const SizedBox(height: 12),
         Row(children: [
@@ -1196,6 +1818,15 @@ class _AddRegionDialogState extends State<_AddRegionDialog> {
 // ─── Add Trigger Dialog ─────────────────────────────────────
 
 class _AddTriggerDialog extends StatefulWidget {
+  final int initialX, initialY, initialW, initialH;
+  final Future<(int, int)?> Function()? onPickActionPos;
+  final _TriggerEntry? initialTrigger; // null = add mode, non-null = edit mode
+  const _AddTriggerDialog({
+    this.initialX = 0, this.initialY = 0,
+    this.initialW = 100, this.initialH = 100,
+    this.onPickActionPos,
+    this.initialTrigger,
+  });
   @override
   State<_AddTriggerDialog> createState() => _AddTriggerDialogState();
 }
@@ -1203,21 +1834,49 @@ class _AddTriggerDialog extends StatefulWidget {
 class _AddTriggerDialogState extends State<_AddTriggerDialog> {
   _TriggerConditionType _conditionType = _TriggerConditionType.colorMatch;
   _TriggerActionType _actionType = _TriggerActionType.click;
-  int _x = 0, _y = 0, _w = 100, _h = 100;
+  late int _x, _y, _w, _h;
   Color? _targetColor;
   int _actionX = 0, _actionY = 0;
   String _actionKey = '';
+  String _macroId = '';
   int _intervalMs = 500;
-  String _areaInfo = '';
   String _colorInfo = '';
   String _actionPosInfo = '';
   double _matchThreshold = 0.8;
   String _targetText = '';
+  _TextMatchMode _textMatchMode = _TextMatchMode.fuzzy;
+
+  @override
+  void initState() {
+    super.initState();
+    final t = widget.initialTrigger;
+    if (t != null) {
+      // Edit mode: populate from existing trigger
+      _conditionType = t.conditionType;
+      _actionType = t.actionType;
+      _x = t.x; _y = t.y; _w = t.w; _h = t.h;
+      _targetColor = t.targetColor;
+      _matchThreshold = t.matchThreshold;
+      _targetText = t.targetText;
+      _textMatchMode = t.textMatchMode;
+      _actionX = t.actionX; _actionY = t.actionY;
+      _actionKey = t.actionKey;
+      _macroId = t.macroId;
+      _intervalMs = t.intervalMs;
+    } else {
+      _x = widget.initialX;
+      _y = widget.initialY;
+      _w = widget.initialW;
+      _h = widget.initialH;
+    }
+  }
+
+  bool get _isEditing => widget.initialTrigger != null;
 
   @override
   Widget build(BuildContext context) {
     return ContentDialog(
-      title: const Text('添加触发条件'),
+      title: Text(_isEditing ? '编辑触发条件' : '添加触发条件'),
       content: SizedBox(width: 400, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
         const Text('条件类型:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
         const SizedBox(height: 6),
@@ -1233,14 +1892,28 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
         const SizedBox(height: 8),
         const Text('监控区域:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
         const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: Colors.green.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
+          ),
+          child: Row(children: [
+            Icon(FluentIcons.checkbox_composite, size: 14, color: Colors.green),
+            const SizedBox(width: 6),
+            Text('已选区域: ($_x, $_y) ${_w}x$_h', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          ]),
+        ),
+        const SizedBox(height: 8),
         Row(children: [
-          SizedBox(width: 70, child: TextBox(placeholder: 'X', onChanged: (v) => _x = int.tryParse(v) ?? 0)),
+          SizedBox(width: 70, child: TextBox(placeholder: 'X', onChanged: (v) => _x = int.tryParse(v) ?? _x)),
           const SizedBox(width: 6),
-          SizedBox(width: 70, child: TextBox(placeholder: 'Y', onChanged: (v) => _y = int.tryParse(v) ?? 0)),
+          SizedBox(width: 70, child: TextBox(placeholder: 'Y', onChanged: (v) => _y = int.tryParse(v) ?? _y)),
           const SizedBox(width: 6),
-          SizedBox(width: 70, child: TextBox(placeholder: '宽', onChanged: (v) => _w = int.tryParse(v) ?? 100)),
+          SizedBox(width: 70, child: TextBox(placeholder: '宽', onChanged: (v) => _w = int.tryParse(v) ?? _w)),
           const SizedBox(width: 6),
-          SizedBox(width: 70, child: TextBox(placeholder: '高', onChanged: (v) => _h = int.tryParse(v) ?? 100)),
+          SizedBox(width: 70, child: TextBox(placeholder: '高', onChanged: (v) => _h = int.tryParse(v) ?? _h)),
         ]),
 
         // Image match specific: threshold
@@ -1260,8 +1933,19 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
         if (_conditionType == _TriggerConditionType.textMatch) ...[
           const SizedBox(height: 8),
           TextBox(placeholder: '输入要匹配的文字', onChanged: (v) => _targetText = v),
+          const SizedBox(height: 6),
+          const Text('匹配模式:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
           const SizedBox(height: 4),
-          Text('OCR识别到包含此文字时触发', style: const TextStyle(fontSize: 11, color: Color(0xFF9090B0))),
+          ComboBox<_TextMatchMode>(
+            value: _textMatchMode,
+            items: _TextMatchMode.values.map((m) => ComboBoxItem<_TextMatchMode>(
+              value: m,
+              child: Text(m.label),
+            )).toList(),
+            onChanged: (v) { if (v != null) setState(() => _textMatchMode = v); },
+          ),
+          const SizedBox(height: 4),
+          Text(_textMatchMode.hint, style: const TextStyle(fontSize: 11, color: Color(0xFF9090B0))),
         ],
 
         const SizedBox(height: 12),
@@ -1279,13 +1963,52 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
         if (_actionType == _TriggerActionType.click) ...[
           const SizedBox(height: 4),
           Row(children: [
-            SizedBox(width: 70, child: TextBox(placeholder: 'X', onChanged: (v) => _actionX = int.tryParse(v) ?? 0)),
+            if (widget.onPickActionPos != null)
+              Button(
+                onPressed: () async {
+                  final pos = await widget.onPickActionPos!();
+                  if (pos != null) {
+                    setState(() {
+                      _actionX = pos.$1;
+                      _actionY = pos.$2;
+                      _actionPosInfo = '(${pos.$1}, ${pos.$2})';
+                    });
+                  }
+                },
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(FluentIcons.map_pin, size: 12),
+                  const SizedBox(width: 4),
+                  Text(_actionPosInfo.isNotEmpty ? _actionPosInfo : '选取坐标'),
+                ]),
+              ),
+            if (widget.onPickActionPos != null) const SizedBox(width: 8),
+            SizedBox(width: 70, child: TextBox(placeholder: 'X', onChanged: (v) => _actionX = int.tryParse(v) ?? _actionX)),
             const SizedBox(width: 6),
-            SizedBox(width: 70, child: TextBox(placeholder: 'Y', onChanged: (v) => _actionY = int.tryParse(v) ?? 0)),
+            SizedBox(width: 70, child: TextBox(placeholder: 'Y', onChanged: (v) => _actionY = int.tryParse(v) ?? _actionY)),
           ]),
         ] else if (_actionType == _TriggerActionType.keyPress) ...[
           const SizedBox(height: 4),
           SizedBox(width: 120, child: TextBox(placeholder: '按键 (如 A, Enter)', onChanged: (v) => _actionKey = v)),
+        ] else if (_actionType == _TriggerActionType.runMacro) ...[
+          const SizedBox(height: 4),
+          Builder(builder: (context) {
+            final macros = context.read<AppState>().macros;
+            if (macros.isEmpty) {
+              return const Text('暂无已保存的宏，请先录制宏', style: TextStyle(fontSize: 12, color: Colors.grey));
+            }
+            return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('选择宏:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 4),
+              ComboBox<String>(
+                value: _macroId.isNotEmpty && macros.any((m) => m.id == _macroId) ? _macroId : macros.first.id,
+                items: macros.map((m) => ComboBoxItem<String>(
+                  value: m.id,
+                  child: Text('${m.name} (${m.events.length}步)'),
+                )).toList(),
+                onChanged: (v) { if (v != null) setState(() => _macroId = v); },
+              ),
+            ]);
+          }),
         ],
 
         const SizedBox(height: 8),
@@ -1306,10 +2029,12 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
           targetColor: _targetColor,
           matchThreshold: _matchThreshold,
           targetText: _targetText,
+          textMatchMode: _textMatchMode,
           actionX: _actionX, actionY: _actionY,
           actionKey: _actionKey,
+          macroId: _macroId,
           intervalMs: _intervalMs,
-        )), child: const Text('添加')),
+        )), child: Text(_isEditing ? '保存' : '添加')),
       ],
     );
   }

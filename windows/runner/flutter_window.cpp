@@ -7,6 +7,13 @@
 #include <algorithm>
 #include <vector>
 
+// C++/WinRT for Windows OCR
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Graphics.Imaging.h>
+#include <winrt/Windows.Media.Ocr.h>
+#include <winrt/Windows.Globalization.h>
+#include <winrt/Windows.Storage.Streams.h>
+
 #pragma comment(lib, "winmm.lib")
 #pragma comment(lib, "dwmapi.lib")
 
@@ -25,6 +32,166 @@ static int64_t GetInt64(const flutter::EncodableValue& val) {
   if (const auto* p = std::get_if<int64_t>(&val)) return *p;
   if (const auto* p = std::get_if<int32_t>(&val)) return static_cast<int64_t>(*p);
   return 0;
+}
+
+// ─── OCR Fallback Methods ──────────────────────────────────
+// Save BGRA pixels to a temp BMP file (shared by fallback methods)
+static std::string _ocrSaveTempBmp(const std::vector<uint8_t>& pixels, int w, int h) {
+  char tempDir[MAX_PATH];
+  GetTempPathA(MAX_PATH, tempDir);
+  std::string tempPath = std::string(tempDir) + "clicker_ocr_" +
+    std::to_string(GetCurrentProcessId()) + "_" + std::to_string(GetTickCount64()) + ".bmp";
+
+  FILE* f = nullptr;
+  fopen_s(&f, tempPath.c_str(), "wb");
+  if (!f) return "";
+
+  // Flip rows for BMP (bottom-up)
+  std::vector<uint8_t> flipped(pixels.size());
+  int rowSize = w * 4;
+  for (int y = 0; y < h; y++) {
+    memcpy(&flipped[(h - 1 - y) * rowSize], &pixels[y * rowSize], rowSize);
+  }
+
+  BITMAPFILEHEADER bfh = {};
+  bfh.bfType = 0x4D42;
+  bfh.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+  bfh.bfSize = bfh.bfOffBits + (DWORD)flipped.size();
+
+  BITMAPINFOHEADER bmi = {};
+  bmi.biSize = sizeof(BITMAPINFOHEADER);
+  bmi.biWidth = w;
+  bmi.biHeight = h;
+  bmi.biPlanes = 1;
+  bmi.biBitCount = 32;
+  bmi.biCompression = BI_RGB;
+  bmi.biSizeImage = (DWORD)flipped.size();
+
+  fwrite(&bfh, sizeof(bfh), 1, f);
+  fwrite(&bmi, sizeof(bmi), 1, f);
+  fwrite(flipped.data(), 1, flipped.size(), f);
+  fclose(f);
+  return tempPath;
+}
+
+// Fallback: Python with pytesseract
+static bool _ocrFallbackPython(const std::vector<uint8_t>& pixels, int w, int h,
+                                const std::string& lang, std::string& outText) {
+  std::string bmpPath = _ocrSaveTempBmp(pixels, w, h);
+  if (bmpPath.empty()) return false;
+
+  // Map language code to tesseract format
+  std::string tessLang = "eng";
+  if (lang.find("zh") != std::string::npos) tessLang = "chi_sim";
+  else if (lang == "ja") tessLang = "jpn";
+  else if (lang == "ko") tessLang = "kor";
+
+  // Write a temp Python script
+  char tempDir[MAX_PATH];
+  GetTempPathA(MAX_PATH, tempDir);
+  std::string pyPath = std::string(tempDir) + "clicker_ocr_" +
+    std::to_string(GetCurrentProcessId()) + "_" + std::to_string(GetTickCount64()) + ".py";
+
+  FILE* pyf = nullptr;
+  fopen_s(&pyf, pyPath.c_str(), "w");
+  if (!pyf) { remove(bmpPath.c_str()); return false; }
+
+  fprintf(pyf,
+    "import sys\n"
+    "try:\n"
+    "  from PIL import Image\n"
+    "  import pytesseract\n"
+    "  img = Image.open(r'%s')\n"
+    "  text = pytesseract.image_to_string(img, lang='%s')\n"
+    "  print(text)\n"
+    "except Exception as e:\n"
+    "  print('PYTHON_OCR_ERROR:' + str(e))\n",
+    bmpPath.c_str(), tessLang.c_str());
+  fclose(pyf);
+
+  // Try python3 first, then python
+  std::string ocrText;
+  for (const char* pyCmd : {"python", "python3", "py"}) {
+    std::string cmd = std::string(pyCmd) + " \"" + pyPath + "\"";
+    FILE* pipe = _popen(cmd.c_str(), "r");
+    if (pipe) {
+      char buffer[256];
+      ocrText.clear();
+      while (fgets(buffer, sizeof(buffer), pipe)) {
+        ocrText += buffer;
+      }
+      int ret = _pclose(pipe);
+      if (ret == 0 && ocrText.find("PYTHON_OCR_ERROR:") == std::string::npos && !ocrText.empty()) {
+        // Trim
+        while (!ocrText.empty() && (ocrText.back() == '\n' || ocrText.back() == '\r' || ocrText.back() == ' '))
+          ocrText.pop_back();
+        remove(bmpPath.c_str());
+        remove(pyPath.c_str());
+        outText = ocrText;
+        return true;
+      }
+    }
+  }
+
+  remove(bmpPath.c_str());
+  remove(pyPath.c_str());
+  return false;
+}
+
+// Fallback: PowerShell with Windows.Media.Ocr
+static bool _ocrFallbackPowerShell(const std::vector<uint8_t>& pixels, int w, int h,
+                                    const std::string& lang, std::string& outText) {
+  std::string bmpPath = _ocrSaveTempBmp(pixels, w, h);
+  if (bmpPath.empty()) return false;
+
+  char tempDir[MAX_PATH];
+  GetTempPathA(MAX_PATH, tempDir);
+  std::string ps1Path = std::string(tempDir) + "clicker_ocr_" +
+    std::to_string(GetCurrentProcessId()) + "_" + std::to_string(GetTickCount64()) + ".ps1";
+
+  FILE* ps1f = nullptr;
+  fopen_s(&ps1f, ps1Path.c_str(), "w");
+  if (!ps1f) { remove(bmpPath.c_str()); return false; }
+
+  fprintf(ps1f,
+    "Add-Type -AssemblyName System.Runtime.WindowsRuntime\n"
+    "[Windows.Storage.StorageFile,Windows.Storage,ContentType=WindowsRuntime] | Out-Null\n"
+    "[Windows.Media.Ocr.OcrEngine,Windows.Media.Ocr,ContentType=WindowsRuntime] | Out-Null\n"
+    "[Windows.Graphics.Imaging.SoftwareBitmap,Windows.Graphics.Imaging,ContentType=WindowsRuntime] | Out-Null\n"
+    "[Windows.Graphics.Imaging.BitmapDecoder,Windows.Graphics.Imaging,ContentType=WindowsRuntime] | Out-Null\n"
+    "$file = [Windows.Storage.StorageFile]::GetFileFromPathAsync('%s').AsTask().GetAwaiter().GetResult()\n"
+    "$stream = $file.OpenAsync([Windows.Storage.FileAccessMode]::Read).AsTask().GetAwaiter().GetResult()\n"
+    "$decoder = [Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream).AsTask().GetAwaiter().GetResult()\n"
+    "$bmp = $decoder.GetSoftwareBitmapAsync().AsTask().GetAwaiter().GetResult()\n"
+    "$ocrEngine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()\n"
+    "if ($ocrEngine -eq $null) { Write-Output 'OCR_NOT_AVAILABLE' } else {\n"
+    "$result = $ocrEngine.RecognizeAsync($bmp).AsTask().GetAwaiter().GetResult()\n"
+    "Write-Output $result.Text\n"
+    "}\n",
+    bmpPath.c_str());
+  fclose(ps1f);
+
+  std::string cmd = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"" + ps1Path + "\"";
+  std::string ocrText;
+  char buffer[256];
+  FILE* pipe = _popen(cmd.c_str(), "r");
+  if (pipe) {
+    while (fgets(buffer, sizeof(buffer), pipe)) {
+      ocrText += buffer;
+    }
+    _pclose(pipe);
+  }
+
+  remove(bmpPath.c_str());
+  remove(ps1Path.c_str());
+
+  while (!ocrText.empty() && (ocrText.back() == '\n' || ocrText.back() == '\r' || ocrText.back() == ' '))
+    ocrText.pop_back();
+
+  if (ocrText.empty() || ocrText == "OCR_NOT_AVAILABLE") return false;
+
+  outText = ocrText;
+  return true;
 }
 
 // Ensure DWMWA_TRANSITIONS_FORCEDISABLED is defined (older SDKs may not have it)
@@ -86,6 +253,8 @@ static int KeyNameToVk(const std::string& name) {
 
 struct HoldTriggerEntry {
   int trigger_vk = 0;
+  bool is_mouse_trigger = false;  // true = triggered by mouse button hold
+  int mouse_trigger_button = 0;   // 0=left, 1=right, 2=middle
   bool is_keyboard = false;
   int key_vk = 0;
   int key_action_mode = 0;
@@ -870,7 +1039,7 @@ bool FlutterWindow::OnCreate() {
 
           result->Success(flutter::EncodableValue(matches));
         } else if (call.method_name() == "ocrRegion") {
-          // OCR a screen region using Windows.Media.Ocr (WinRT)
+          // OCR a screen region using Windows.Media.Ocr (C++/WinRT)
           // Args: [x, y, w, h, language]
           const auto* args = std::get_if<flutter::EncodableList>(call.arguments());
           if (!args || args->size() < 4) {
@@ -901,7 +1070,7 @@ bool FlutterWindow::OnCreate() {
           BITMAPINFOHEADER bi = {};
           bi.biSize = sizeof(BITMAPINFOHEADER);
           bi.biWidth = ocrW;
-          bi.biHeight = -ocrH;
+          bi.biHeight = -ocrH; // top-down
           bi.biPlanes = 1;
           bi.biBitCount = 32;
           bi.biCompression = BI_RGB;
@@ -922,100 +1091,281 @@ bool FlutterWindow::OnCreate() {
             rgba[i*4+3] = pixels[i*4+3]; // A
           }
 
-          // Use WinRT OCR
-          // We need to initialize WinRT and use OcrEngine
-          // This requires C++/WinRT headers which may not be available
-          // Fallback: try to use PowerShell via command line for OCR
-          // For now, return the captured image data so Dart can process it
-          // We'll implement a proper WinRT OCR in a future update
+          // Use C++/WinRT to call Windows.Media.Ocr directly
+          try {
+            // Initialize WinRT (safe to call multiple times)
+            winrt::init_apartment(winrt::apartment_type::single_threaded);
 
-          // Save to a temp BMP file and use Windows OCR via PowerShell
-          char tempDir[MAX_PATH];
-          GetTempPathA(MAX_PATH, tempDir);
-          std::string tempPath = std::string(tempDir) + "clicker_ocr_" + std::to_string(GetCurrentProcessId()) + "_" + std::to_string(GetTickCount64()) + ".bmp";
+            // Create SoftwareBitmap from pixel data
+            auto softwareBitmap = winrt::Windows::Graphics::Imaging::SoftwareBitmap(
+              winrt::Windows::Graphics::Imaging::BitmapPixelFormat::Rgba8,
+              ocrW, ocrH,
+              winrt::Windows::Graphics::Imaging::BitmapAlphaMode::Premultiplied);
 
-          // Write BMP file
-          FILE* f = nullptr;
-          fopen_s(&f, tempPath.c_str(), "wb");
-          if (f) {
-            BITMAPFILEHEADER bfh = {};
-            bfh.bfType = 0x4D42; // 'BM'
-            bfh.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
-            bfh.bfSize = bfh.bfOffBits + (DWORD)pixels.size();
-
-            BITMAPINFOHEADER bmi = {};
-            bmi.biSize = sizeof(BITMAPINFOHEADER);
-            bmi.biWidth = ocrW;
-            bmi.biHeight = ocrH;
-            bmi.biPlanes = 1;
-            bmi.biBitCount = 32;
-            bmi.biCompression = BI_RGB;
-            bmi.biSizeImage = (DWORD)pixels.size();
-
-            // BMP stores rows bottom-up, but our pixels are top-down, so flip
-            std::vector<uint8_t> flipped(pixels.size());
-            int rowSize = ocrW * 4;
-            for (int y = 0; y < ocrH; y++) {
-              memcpy(&flipped[(ocrH - 1 - y) * rowSize], &pixels[y * rowSize], rowSize);
+            // Copy pixel data into the bitmap via DataWriter
+            {
+              auto dataWriter = winrt::Windows::Storage::Streams::DataWriter();
+              dataWriter.WriteBytes(winrt::array_view<uint8_t const>(rgba));
+              auto buffer = dataWriter.DetachBuffer();
+              softwareBitmap.CopyFromBuffer(buffer);
             }
 
-            fwrite(&bfh, sizeof(bfh), 1, f);
-            fwrite(&bmi, sizeof(bmi), 1, f);
-            fwrite(flipped.data(), 1, flipped.size(), f);
-            fclose(f);
-
-            // Use PowerShell to call Windows.Media.Ocr
-            std::string psCmd =
-              "Add-Type -AssemblyName System.Runtime.WindowsRuntime; "
-              "[Windows.Storage.StorageFile,Windows.Storage,ContentType=WindowsRuntime] | Out-Null; "
-              "[Windows.Media.Ocr.OcrEngine,Windows.Media.Ocr,ContentType=WindowsRuntime] | Out-Null; "
-              "[Windows.Graphics.Imaging.SoftwareBitmap,Windows.Graphics.Imaging,ContentType=WindowsRuntime] | Out-Null; "
-              "[Windows.Graphics.Imaging.BitmapDecoder,Windows.Graphics.Imaging,ContentType=WindowsRuntime] | Out-Null; "
-              "$file = [Windows.Storage.StorageFile]::GetFileFromPathAsync('" + tempPath + "').AsTask().GetAwaiter().GetResult(); "
-              "$stream = $file.OpenAsync([Windows.Storage.FileAccessMode]::Read).AsTask().GetAwaiter().GetResult(); "
-              "$decoder = [Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream).AsTask().GetAwaiter().GetResult(); "
-              "$bmp = $decoder.GetSoftwareBitmapAsync().AsTask().GetAwaiter().GetResult(); "
-              "$ocrEngine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages(); "
-              "if ($ocrEngine -eq $null) { Write-Output 'OCR_NOT_AVAILABLE' } else { "
-              "$result = $ocrEngine.RecognizeAsync($bmp).AsTask().GetAwaiter().GetResult(); "
-              "Write-Output $result.Text }";
-
-            // Escape for cmd.exe
-            std::string cmd = "powershell -NoProfile -NonInteractive -Command \"" + psCmd + "\"";
-
-            // Execute PowerShell
-            std::string ocrText;
-            char buffer[256];
-            FILE* pipe = _popen(cmd.c_str(), "r");
-            if (pipe) {
-              while (fgets(buffer, sizeof(buffer), pipe)) {
-                ocrText += buffer;
+            // Try to create OCR engine with the requested language
+            winrt::Windows::Media::Ocr::OcrEngine ocrEngine = nullptr;
+            if (lang != "en" && lang != "") {
+              try {
+                auto language = winrt::Windows::Globalization::Language(winrt::to_hstring(lang));
+                ocrEngine = winrt::Windows::Media::Ocr::OcrEngine::TryCreateFromLanguage(language);
+              } catch (...) {
+                // Fall back to user profile languages
               }
-              _pclose(pipe);
             }
-
-            // Clean up temp file
-            remove(tempPath.c_str());
-
-            // Trim whitespace
-            while (!ocrText.empty() && (ocrText.back() == '\n' || ocrText.back() == '\r' || ocrText.back() == ' '))
-              ocrText.pop_back();
-
-            if (ocrText == "OCR_NOT_AVAILABLE") {
-              result->Error("OCR_NOT_AVAILABLE", "Windows OCR engine not available. Install OCR language pack.");
+            if (ocrEngine == nullptr) {
+              ocrEngine = winrt::Windows::Media::Ocr::OcrEngine::TryCreateFromUserProfileLanguages();
+            }
+            if (ocrEngine == nullptr) {
+              result->Error("OCR_NOT_AVAILABLE", "Windows OCR engine not available. Install OCR language pack from Windows Settings > Time & Language > Language & region.");
               return;
             }
 
-            flutter::EncodableMap ocrResult;
-            ocrResult[flutter::EncodableValue("text")] = flutter::EncodableValue(ocrText);
-            ocrResult[flutter::EncodableValue("x")] = flutter::EncodableValue(ocrX);
-            ocrResult[flutter::EncodableValue("y")] = flutter::EncodableValue(ocrY);
-            ocrResult[flutter::EncodableValue("width")] = flutter::EncodableValue(ocrW);
-            ocrResult[flutter::EncodableValue("height")] = flutter::EncodableValue(ocrH);
-            result->Success(flutter::EncodableValue(ocrResult));
-          } else {
-            result->Error("FILE_ERROR", "Failed to create temp file for OCR");
+            // Perform OCR
+            auto ocrResult = ocrEngine.RecognizeAsync(softwareBitmap).get();
+            auto ocrText = winrt::to_string(ocrResult.Text());
+
+            flutter::EncodableMap resultMap;
+            resultMap[flutter::EncodableValue("text")] = flutter::EncodableValue(ocrText);
+            resultMap[flutter::EncodableValue("x")] = flutter::EncodableValue(ocrX);
+            resultMap[flutter::EncodableValue("y")] = flutter::EncodableValue(ocrY);
+            resultMap[flutter::EncodableValue("width")] = flutter::EncodableValue(ocrW);
+            resultMap[flutter::EncodableValue("height")] = flutter::EncodableValue(ocrH);
+            result->Success(flutter::EncodableValue(resultMap));
+          } catch (const winrt::hresult_error& ex) {
+            // WinRT failed, try fallback methods
+            std::string winrtError = winrt::to_string(ex.message());
+            std::string ocrText;
+            bool fallbackOk = _ocrFallbackPython(pixels, ocrW, ocrH, lang, ocrText)
+                           || _ocrFallbackPowerShell(pixels, ocrW, ocrH, lang, ocrText);
+            if (fallbackOk) {
+              flutter::EncodableMap resultMap;
+              resultMap[flutter::EncodableValue("text")] = flutter::EncodableValue(ocrText);
+              resultMap[flutter::EncodableValue("x")] = flutter::EncodableValue(ocrX);
+              resultMap[flutter::EncodableValue("y")] = flutter::EncodableValue(ocrY);
+              resultMap[flutter::EncodableValue("width")] = flutter::EncodableValue(ocrW);
+              resultMap[flutter::EncodableValue("height")] = flutter::EncodableValue(ocrH);
+              result->Success(flutter::EncodableValue(resultMap));
+            } else {
+              result->Error("OCR_ERROR", ("WinRT: " + winrtError + ". Fallback methods also failed.").c_str());
+            }
+          } catch (const std::exception& ex) {
+            std::string ocrText;
+            bool fallbackOk = _ocrFallbackPython(pixels, ocrW, ocrH, lang, ocrText)
+                           || _ocrFallbackPowerShell(pixels, ocrW, ocrH, lang, ocrText);
+            if (fallbackOk) {
+              flutter::EncodableMap resultMap;
+              resultMap[flutter::EncodableValue("text")] = flutter::EncodableValue(ocrText);
+              resultMap[flutter::EncodableValue("x")] = flutter::EncodableValue(ocrX);
+              resultMap[flutter::EncodableValue("y")] = flutter::EncodableValue(ocrY);
+              resultMap[flutter::EncodableValue("width")] = flutter::EncodableValue(ocrW);
+              resultMap[flutter::EncodableValue("height")] = flutter::EncodableValue(ocrH);
+              result->Success(flutter::EncodableValue(resultMap));
+            } else {
+              result->Error("OCR_ERROR", ex.what());
+            }
+          } catch (...) {
+            std::string ocrText;
+            bool fallbackOk = _ocrFallbackPython(pixels, ocrW, ocrH, lang, ocrText)
+                           || _ocrFallbackPowerShell(pixels, ocrW, ocrH, lang, ocrText);
+            if (fallbackOk) {
+              flutter::EncodableMap resultMap;
+              resultMap[flutter::EncodableValue("text")] = flutter::EncodableValue(ocrText);
+              resultMap[flutter::EncodableValue("x")] = flutter::EncodableValue(ocrX);
+              resultMap[flutter::EncodableValue("y")] = flutter::EncodableValue(ocrY);
+              resultMap[flutter::EncodableValue("width")] = flutter::EncodableValue(ocrW);
+              resultMap[flutter::EncodableValue("height")] = flutter::EncodableValue(ocrH);
+              result->Success(flutter::EncodableValue(resultMap));
+            } else {
+              result->Error("OCR_ERROR", "All OCR methods failed");
+            }
           }
+        } else if (call.method_name() == "sendClick") {
+          // Send a mouse click at (x, y)
+          // Args: [x, y, button]  button: 0=left, 1=right, 2=middle
+          const auto* args = std::get_if<flutter::EncodableList>(call.arguments());
+          if (!args || args->size() < 2) {
+            result->Error("INVALID_ARGS", "Expected [x, y, button?]");
+            return;
+          }
+          int clickX = GetInt(args->at(0));
+          int clickY = GetInt(args->at(1));
+          int button = args->size() >= 3 ? GetInt(args->at(2)) : 0;
+
+          INPUT inputs[3] = {};
+          // Move mouse
+          inputs[0].type = INPUT_MOUSE;
+          inputs[0].mi.dx = (LONG)(clickX * 65535.0 / GetSystemMetrics(SM_CXSCREEN));
+          inputs[0].mi.dy = (LONG)(clickY * 65535.0 / GetSystemMetrics(SM_CYSCREEN));
+          inputs[0].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
+          // Down
+          inputs[1].type = INPUT_MOUSE;
+          inputs[1].mi.dx = inputs[0].mi.dx;
+          inputs[1].mi.dy = inputs[0].mi.dy;
+          inputs[1].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE |
+            (button == 1 ? MOUSEEVENTF_RIGHTDOWN : button == 2 ? MOUSEEVENTF_MIDDLEDOWN : MOUSEEVENTF_LEFTDOWN);
+          // Up
+          inputs[2].type = INPUT_MOUSE;
+          inputs[2].mi.dx = inputs[0].mi.dx;
+          inputs[2].mi.dy = inputs[0].mi.dy;
+          inputs[2].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE |
+            (button == 1 ? MOUSEEVENTF_RIGHTUP : button == 2 ? MOUSEEVENTF_MIDDLEUP : MOUSEEVENTF_LEFTUP);
+
+          SendInput(3, inputs, sizeof(INPUT));
+          result->Success();
+
+        } else if (call.method_name() == "sendKeyPress") {
+          // Send a key press
+          // Args: keyName (string) or keyCode (int) or [keyName/codigo]
+          DWORD vk = 0;
+          // Try direct string argument first
+          if (const auto* s = std::get_if<std::string>(call.arguments())) {
+            if (*s == "Enter" || *s == "Return") vk = VK_RETURN;
+            else if (*s == "Space") vk = VK_SPACE;
+            else if (*s == "Tab") vk = VK_TAB;
+            else if (*s == "Escape" || *s == "Esc") vk = VK_ESCAPE;
+            else if (*s == "Backspace") vk = VK_BACK;
+            else if (*s == "Delete") vk = VK_DELETE;
+            else if (s->size() == 1) vk = VkKeyScanA(s->at(0)) & 0xFF;
+          } else if (const auto* args = std::get_if<flutter::EncodableList>(call.arguments())) {
+            if (!args->empty()) {
+              if (const auto* s2 = std::get_if<std::string>(&args->at(0))) {
+                if (*s2 == "Enter" || *s2 == "Return") vk = VK_RETURN;
+                else if (*s2 == "Space") vk = VK_SPACE;
+                else if (*s2 == "Tab") vk = VK_TAB;
+                else if (*s2 == "Escape" || *s2 == "Esc") vk = VK_ESCAPE;
+                else if (*s2 == "Backspace") vk = VK_BACK;
+                else if (*s2 == "Delete") vk = VK_DELETE;
+                else if (s2->size() == 1) vk = VkKeyScanA(s2->at(0)) & 0xFF;
+              } else {
+                vk = GetInt(args->at(0));
+              }
+            }
+          }
+          if (vk != 0) {
+            INPUT inputs[2] = {};
+            inputs[0].type = INPUT_KEYBOARD;
+            inputs[0].ki.wVk = (WORD)vk;
+            inputs[1].type = INPUT_KEYBOARD;
+            inputs[1].ki.wVk = (WORD)vk;
+            inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
+            SendInput(2, inputs, sizeof(INPUT));
+          }
+          result->Success();
+
+        } else if (call.method_name() == "checkOcrTools") {
+          // Check if Tesseract and Python+pytesseract are available (fast checks)
+          flutter::EncodableMap toolMap;
+          // Check Tesseract via 'where' command (fast, no process launch)
+          {
+            bool tessOk = false;
+            FILE* pipe = _popen("where tesseract 2>nul", "r");
+            if (pipe) {
+              char buf[256];
+              if (fgets(buf, sizeof(buf), pipe)) tessOk = true;
+              _pclose(pipe);
+            }
+            toolMap[flutter::EncodableValue("tesseract")] = flutter::EncodableValue(tessOk);
+          }
+          // Check Python + pytesseract
+          {
+            bool pyOk = false;
+            for (const char* pyCmd : {"python", "python3", "py"}) {
+              std::string cmd = std::string(pyCmd) + " -c \"import pytesseract\" 2>nul";
+              FILE* pipe = _popen(cmd.c_str(), "r");
+              if (pipe) {
+                int ret = _pclose(pipe);
+                if (ret == 0) { pyOk = true; break; }
+              }
+            }
+            toolMap[flutter::EncodableValue("python")] = flutter::EncodableValue(pyOk);
+          }
+          result->Success(flutter::EncodableValue(toolMap));
+
+        } else if (call.method_name() == "installOcrTool") {
+          // Install OCR tool: "tesseract" or "python"
+          std::string tool;
+          if (const auto* s = std::get_if<std::string>(call.arguments())) {
+            tool = *s;
+          } else if (const auto* args = std::get_if<flutter::EncodableList>(call.arguments())) {
+            if (!args->empty() && std::holds_alternative<std::string>(args->at(0)))
+              tool = std::get<std::string>(args->at(0));
+          }
+
+          if (tool == "tesseract") {
+            // Install Tesseract via winget, fallback to chocolatey, fallback to direct download
+            bool ok = false;
+            // Try winget first
+            {
+              FILE* pipe = _popen("winget install --id UB-Mannheim.TesseractOCR -e --accept-source-agreements --accept-package-agreements 2>&1", "r");
+              if (pipe) {
+                char buf[256];
+                while (fgets(buf, sizeof(buf), pipe)) {}
+                int ret = _pclose(pipe);
+                ok = (ret == 0);
+              }
+            }
+            if (!ok) {
+              // Try chocolatey
+              FILE* pipe = _popen("choco install tesseract -y 2>&1", "r");
+              if (pipe) {
+                char buf[256];
+                while (fgets(buf, sizeof(buf), pipe)) {}
+                int ret = _pclose(pipe);
+                ok = (ret == 0);
+              }
+            }
+            if (ok) result->Success();
+            else result->Error("INSTALL_FAILED", "Failed to install Tesseract OCR. Please install manually from https://github.com/UB-Mannheim/tesseract/wiki");
+          } else if (tool == "python") {
+            // Install Python + pytesseract + Pillow
+            bool ok = false;
+            // Try winget for Python
+            {
+              FILE* pipe = _popen("winget install --id Python.Python.3.12 -e --accept-source-agreements --accept-package-agreements 2>&1", "r");
+              if (pipe) {
+                char buf[256];
+                while (fgets(buf, sizeof(buf), pipe)) {}
+                int ret = _pclose(pipe);
+                ok = (ret == 0);
+              }
+            }
+            // Install pytesseract + Pillow via pip
+            _popen("python -m pip install pytesseract Pillow 2>&1", "r");
+            _popen("python3 -m pip install pytesseract Pillow 2>&1", "r");
+            _popen("py -m pip install pytesseract Pillow 2>&1", "r");
+            if (ok) result->Success();
+            else result->Error("INSTALL_FAILED", "Failed to install Python. Please install manually from https://python.org");
+          } else {
+            result->Error("INVALID_TOOL", "Unknown tool: " + tool);
+          }
+
+        } else if (call.method_name() == "uninstallOcrTool") {
+          std::string tool;
+          if (const auto* s = std::get_if<std::string>(call.arguments())) {
+            tool = *s;
+          } else if (const auto* args = std::get_if<flutter::EncodableList>(call.arguments())) {
+            if (!args->empty() && std::holds_alternative<std::string>(args->at(0)))
+              tool = std::get<std::string>(args->at(0));
+          }
+
+          if (tool == "tesseract") {
+            _popen("winget uninstall --id UB-Mannheim.TesseractOCR -e 2>&1", "r");
+            result->Success();
+          } else if (tool == "python") {
+            _popen("python -m pip uninstall pytesseract Pillow -y 2>&1", "r");
+            result->Success();
+          } else {
+            result->Error("INVALID_TOOL", "Unknown tool: " + tool);
+          }
+
         } else if (call.method_name() == "saveScreenshot") {
           // Save a screen region as PNG file
           // Args: [x, y, w, h, filePath]
@@ -1169,6 +1519,12 @@ bool FlutterWindow::OnCreate() {
           // Start capturing next key press for UI key selection
           g_capturing_key = true;
           g_capture_channel = platform_channel_.get();
+          // Install hooks if not already installed
+          if (!keyboard_hook_) {
+            g_flutter_window_for_hooks = this;
+            keyboard_hook_ = SetWindowsHookExW(WH_KEYBOARD_LL, KeyboardHookProc, nullptr, 0);
+            mouse_hook_ = SetWindowsHookExW(WH_MOUSE_LL, MouseHookProc, nullptr, 0);
+          }
           result->Success(flutter::EncodableValue(true));
         } else if (call.method_name() == "registerHoldTriggerKeys") {
           // Args: list of [triggerKey, action, mouseButton/keyVk/keyActionMode/comboKeys, intervalMs, bgMode, hwnd, cx, cy]
@@ -1196,6 +1552,8 @@ bool FlutterWindow::OnCreate() {
 
             auto& entry = g_hold_triggers[g_hold_trigger_count++];
             entry.trigger_vk = 0;
+            entry.is_mouse_trigger = false;
+            entry.mouse_trigger_button = 0;
             entry.is_keyboard = false;
             entry.key_vk = 0;
             entry.key_action_mode = 0;
@@ -1216,6 +1574,15 @@ bool FlutterWindow::OnCreate() {
             int actionType = GetInt(cfg[1]);
             entry.interval_ms = GetInt(cfg[2]);
             if (entry.interval_ms < 10) entry.interval_ms = 10;
+
+            // Parse trigger type: cfg[8] = "keyboard" or "mouse", cfg[9] = mouse button (0/1/2)
+            if (cfg.size() >= 10) {
+              const auto* triggerTypePtr = std::get_if<std::string>(&cfg[8]);
+              if (triggerTypePtr && *triggerTypePtr == "mouse") {
+                entry.is_mouse_trigger = true;
+                entry.mouse_trigger_button = GetInt(cfg[9]);
+              }
+            }
 
             if (actionType == 0) {
               // Mouse click
@@ -1253,6 +1620,14 @@ bool FlutterWindow::OnCreate() {
             }
           }
           LeaveCriticalSection(&g_hold_trigger_cs);
+
+          // Install hooks if not already installed (needed for hold trigger detection)
+          if (!keyboard_hook_) {
+            g_flutter_window_for_hooks = this;
+            keyboard_hook_ = SetWindowsHookExW(WH_KEYBOARD_LL, KeyboardHookProc, nullptr, 0);
+            mouse_hook_ = SetWindowsHookExW(WH_MOUSE_LL, MouseHookProc, nullptr, 0);
+          }
+
           result->Success(flutter::EncodableValue(true));
         } else if (call.method_name() == "unregisterHoldTriggerKeys") {
           EnterCriticalSection(&g_hold_trigger_cs);
@@ -1267,6 +1642,14 @@ bool FlutterWindow::OnCreate() {
           }
           g_hold_trigger_count = 0;
           LeaveCriticalSection(&g_hold_trigger_cs);
+
+          // Uninstall hooks if not recording
+          if (!is_recording_) {
+            if (keyboard_hook_) { UnhookWindowsHookEx(keyboard_hook_); keyboard_hook_ = nullptr; }
+            if (mouse_hook_) { UnhookWindowsHookEx(mouse_hook_); mouse_hook_ = nullptr; }
+            if (!is_recording_) g_flutter_window_for_hooks = nullptr;
+          }
+
           result->Success(flutter::EncodableValue(true));
         } else if (call.method_name() == "enumerateWindows") {
           // Return list of visible windows: [{hwnd, title, className}]
@@ -1420,16 +1803,19 @@ bool FlutterWindow::OnCreate() {
           }
           result->Success(flutter::EncodableValue(true));
         } else if (call.method_name() == "stopRecording") {
-          if (keyboard_hook_) {
-            UnhookWindowsHookEx(keyboard_hook_);
-            keyboard_hook_ = nullptr;
-          }
-          if (mouse_hook_) {
-            UnhookWindowsHookEx(mouse_hook_);
-            mouse_hook_ = nullptr;
-          }
           is_recording_ = false;
-          g_flutter_window_for_hooks = nullptr;
+          // Only uninstall hooks if hold trigger is not active
+          if (g_hold_trigger_count == 0) {
+            if (keyboard_hook_) {
+              UnhookWindowsHookEx(keyboard_hook_);
+              keyboard_hook_ = nullptr;
+            }
+            if (mouse_hook_) {
+              UnhookWindowsHookEx(mouse_hook_);
+              mouse_hook_ = nullptr;
+            }
+            g_flutter_window_for_hooks = nullptr;
+          }
           result->Success();
         } else {
           result->NotImplemented();
@@ -1533,10 +1919,12 @@ LRESULT CALLBACK FlutterWindow::KeyboardHookProc(int code, WPARAM wparam, LPARAM
     }
 
     // Hold trigger: detect key down/up for registered trigger keys
+    // Ignore injected events (from SendInput) to prevent feedback loop
     bool key_down = (wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN);
     bool key_up = (wparam == WM_KEYUP || wparam == WM_SYSKEYUP);
+    bool is_injected = (kb->flags & LLKHF_INJECTED) != 0;
 
-    if ((key_down || key_up) && g_hold_trigger_count > 0) {
+    if ((key_down || key_up) && !is_injected && g_hold_trigger_count > 0) {
       EnterCriticalSection(&g_hold_trigger_cs);
       for (int i = 0; i < g_hold_trigger_count; i++) {
         if (g_hold_triggers[i].trigger_vk == vk) {
@@ -1584,6 +1972,33 @@ LRESULT CALLBACK FlutterWindow::MouseHookProc(int code, WPARAM wparam, LPARAM lp
   if (code == HC_ACTION && g_flutter_window_for_hooks) {
     auto* ms = reinterpret_cast<MSLLHOOKSTRUCT*>(lparam);
     auto* self = g_flutter_window_for_hooks;
+
+    // Hold trigger: detect mouse button down/up for registered mouse triggers
+    // Ignore injected events (from SendInput) to prevent feedback loop
+    bool is_mouse_injected = (ms->flags & LLMHF_INJECTED) != 0;
+    if (g_hold_trigger_count > 0 && !is_mouse_injected &&
+        (wparam == WM_LBUTTONDOWN || wparam == WM_LBUTTONUP ||
+         wparam == WM_RBUTTONDOWN || wparam == WM_RBUTTONUP ||
+         wparam == WM_MBUTTONDOWN || wparam == WM_MBUTTONUP)) {
+      int btn = 0; // 0=left, 1=right, 2=middle
+      if (wparam == WM_RBUTTONDOWN || wparam == WM_RBUTTONUP) btn = 1;
+      else if (wparam == WM_MBUTTONDOWN || wparam == WM_MBUTTONUP) btn = 2;
+      bool is_down = (wparam == WM_LBUTTONDOWN || wparam == WM_RBUTTONDOWN || wparam == WM_MBUTTONDOWN);
+
+      EnterCriticalSection(&g_hold_trigger_cs);
+      for (int i = 0; i < g_hold_trigger_count; i++) {
+        if (g_hold_triggers[i].is_mouse_trigger && g_hold_triggers[i].mouse_trigger_button == btn) {
+          if (is_down && !g_hold_triggers[i].active) {
+            StartHoldTrigger(&g_hold_triggers[i]);
+          } else if (!is_down && g_hold_triggers[i].active) {
+            StopHoldTrigger(&g_hold_triggers[i]);
+          }
+          break;
+        }
+      }
+      LeaveCriticalSection(&g_hold_trigger_cs);
+    }
+
     if (self && self->record_channel_ && self->is_recording_) {
       // Forward mouse events: down, up, move, wheel
       if (wparam == WM_LBUTTONDOWN || wparam == WM_LBUTTONUP ||
