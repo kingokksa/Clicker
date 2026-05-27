@@ -66,6 +66,7 @@ class _ClickerAppState extends State<ClickerApp> {
               cardColor: Colors.white.withValues(alpha:0.78),
               navigationPaneTheme: NavigationPaneThemeData(
                 backgroundColor: const Color(0xFFF2F2FA).withValues(alpha:0.75),
+                animationDuration: Duration.zero,
               ),
             ),
             darkTheme: FluentThemeData(
@@ -77,6 +78,7 @@ class _ClickerAppState extends State<ClickerApp> {
               cardColor: const Color(0xFF22223A).withValues(alpha:0.78),
               navigationPaneTheme: NavigationPaneThemeData(
                 backgroundColor: const Color(0xFF16162A).withValues(alpha:0.75),
+                animationDuration: Duration.zero,
               ),
             ),
             themeMode: isDark ? ThemeMode.dark : ThemeMode.light,

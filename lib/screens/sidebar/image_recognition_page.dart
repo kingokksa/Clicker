@@ -32,26 +32,8 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
   int _checkIntervalMs = 500;
   double _sensitivity = 0.5;
 
-  // Image search state
-  TemplateData? _template;
-  String _templateInfo = '';
-  int _searchAreaX = 0, _searchAreaY = 0, _searchAreaW = 1920, _searchAreaH = 1080;
-  String _searchAreaInfo = '';
-  bool _selectingSearchArea = false;
-  bool _capturingTemplate = false;
-  double _matchThreshold = 0.8;
-  MatchResult? _lastMatch;
-  bool _searching = false;
-  String? _selectedMatchEngine; // plugin ID for template matching
-
-  // OCR state
-  int _ocrAreaX = 0, _ocrAreaY = 0, _ocrAreaW = 400, _ocrAreaH = 200;
-  String _ocrAreaInfo = '';
-  bool _selectingOcrArea = false;
+  // OCR state (used by trigger textMatch)
   String _ocrLanguage = 'zh-Hans-CN';
-  OcrResult? _lastOcrResult;
-  bool _ocrRunning = false;
-  String? _selectedOcrEngine; // plugin ID for OCR
 
   // OCR tools install state
   bool _tesseractInstalled = false;
@@ -80,60 +62,13 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     _monitor.onLogEntry = (_) { if (mounted) setState(() {}); };
     _monitor.onMonitoringChanged = (_) { if (mounted) setState(() {}); };
 
-    // Single unified overlay handler (must be set before any async work)
-    _platformChannel.setMethodCallHandler((call) async {
-      if (!mounted) return;
-      switch (call.method) {
-        case 'onOverlayClick':
-          final args = call.arguments as Map;
-          final x = args['x'] as int;
-          final y = args['y'] as int;
-          await _handleOverlayClick(x, y);
-          break;
-        case 'onOverlayWindowPick':
-          final args = call.arguments as Map;
-          final x = args['x'] as int;
-          final y = args['y'] as int;
-          await _handleOverlayClick(x, y);
-          break;
-        case 'onOverlayAreaSelected':
-          final args = call.arguments as Map;
-          final x1 = args['x1'] as int;
-          final y1 = args['y1'] as int;
-          final x2 = args['x2'] as int;
-          final y2 = args['y2'] as int;
-          await _platformChannel.invokeMethod('stopOverlay');
-          _overlayActive = false;
-          if (_areaSelectCompleter != null && !_areaSelectCompleter!.isCompleted) {
-            _areaSelectCompleter!.complete((x1, y1, x2, y2));
-          }
-          if (mounted) setState(() {
-            _selectingSearchArea = false;
-            _selectingOcrArea = false;
-            _capturingTemplate = false;
-          });
-          break;
-        case 'onOverlayCancelled':
-          await _platformChannel.invokeMethod('stopOverlay');
-          _overlayActive = false;
-          if (_areaSelectCompleter != null && !_areaSelectCompleter!.isCompleted) {
-            _areaSelectCompleter!.completeError('cancelled');
-          }
-          if (_pickCompleter != null && !_pickCompleter!.isCompleted) {
-            _pickCompleter!.completeError('cancelled');
-          }
-          if (mounted) setState(() {
-            _selectingSearchArea = false;
-            _selectingOcrArea = false;
-            _capturingTemplate = false;
-          });
-          break;
-      }
-    });
+    // Register overlay handler
+    _registerOverlayHandler();
 
-    // Defer all heavy initialization to avoid blocking page switch
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _initAndLoad();
+    // Defer heavy initialization with a small delay so the loading
+    // animation renders before we start blocking the platform thread.
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (mounted) _initAndLoad();
     });
   }
 
@@ -214,16 +149,25 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
             actionKey: m['actionKey'] ?? '',
             macroId: m['macroId'] ?? '',
             intervalMs: m['intervalMs'] ?? 500,
+            templateData: () {
+              final td = m['templateData'];
+              if (td == null) return null;
+              try {
+                return TemplateData(
+                  width: td['width'] as int,
+                  height: td['height'] as int,
+                  pixels: base64Decode(td['pixels'] as String),
+                );
+              } catch (_) { return null; }
+            }(),
           ));
         }
       } catch (_) {}
     }
 
     if (mounted) setState(() {});
-    // Delay heavy checks to avoid blocking page load
-    Future.delayed(const Duration(seconds: 1), () {
-      if (mounted) _checkOcrTools();
-    });
+    // checkOcrTools now runs on a background thread in C++, so it won't block the UI.
+    if (mounted) _checkOcrTools();
   }
 
   Future<void> _checkOcrTools() async {
@@ -264,6 +208,11 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
       'textMatchMode': t.textMatchMode.name,
       'actionX': t.actionX, 'actionY': t.actionY,
       'actionKey': t.actionKey, 'macroId': t.macroId, 'intervalMs': t.intervalMs,
+      if (t.templateData != null) 'templateData': {
+        'width': t.templateData!.width,
+        'height': t.templateData!.height,
+        'pixels': base64Encode(t.templateData!.pixels),
+      },
     }).toList();
     await prefs.setString(_kTriggersKey, jsonEncode(list));
   }
@@ -468,6 +417,8 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
   Future<(int, int, int, int)?> _startAreaSelect() async {
     _areaSelectCompleter = Completer<(int, int, int, int)>();
     _overlayActive = true;
+    // Re-register handler to ensure we receive overlay callbacks
+    _registerOverlayHandler();
     try {
       await _platformChannel.invokeMethod('startAreaSelectOverlay');
       // Wait for user to complete selection
@@ -486,6 +437,8 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
   Future<(int, int)?> _startPick() async {
     _pickCompleter = Completer<(int, int)>();
     _overlayActive = true;
+    // Re-register handler to ensure we receive overlay callbacks
+    _registerOverlayHandler();
     try {
       await _platformChannel.invokeMethod('startPickOverlay');
       return await _pickCompleter!.future;
@@ -496,6 +449,64 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     } catch (e) {
       _overlayActive = false;
       _pickCompleter = null;
+      return null;
+    }
+  }
+
+  void _registerOverlayHandler() {
+    _platformChannel.setMethodCallHandler((call) async {
+      if (!mounted) return;
+      switch (call.method) {
+        case 'onOverlayClick':
+          final args = call.arguments as Map;
+          final x = args['x'] as int;
+          final y = args['y'] as int;
+          await _handleOverlayClick(x, y);
+          break;
+        case 'onOverlayWindowPick':
+          final args = call.arguments as Map;
+          final x = args['x'] as int;
+          final y = args['y'] as int;
+          await _handleOverlayClick(x, y);
+          break;
+        case 'onOverlayAreaSelected':
+          final args = call.arguments as Map;
+          final x1 = args['x1'] as int;
+          final y1 = args['y1'] as int;
+          final x2 = args['x2'] as int;
+          final y2 = args['y2'] as int;
+          await _platformChannel.invokeMethod('stopOverlay');
+          _overlayActive = false;
+          if (_areaSelectCompleter != null && !_areaSelectCompleter!.isCompleted) {
+            _areaSelectCompleter!.complete((x1, y1, x2, y2));
+          }
+          if (mounted) setState(() {});
+          break;
+        case 'onOverlayCancelled':
+          await _platformChannel.invokeMethod('stopOverlay');
+          _overlayActive = false;
+          if (_areaSelectCompleter != null && !_areaSelectCompleter!.isCompleted) {
+            _areaSelectCompleter!.completeError('cancelled');
+          }
+          if (_pickCompleter != null && !_pickCompleter!.isCompleted) {
+            _pickCompleter!.completeError('cancelled');
+          }
+          if (mounted) setState(() {});
+          break;
+      }
+    });
+  }
+
+  Future<TemplateData?> _captureTemplate() async {
+    final sel = await _startAreaSelect();
+    if (sel == null) return null;
+    final (x1, y1, x2, y2) = sel;
+    final w = x2 - x1;
+    final h = y2 - y1;
+    if (w < 5 || h < 5) return null;
+    try {
+      return await _vision.captureTemplate(x1, y1, w, h);
+    } catch (_) {
       return null;
     }
   }
@@ -513,8 +524,30 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
 
   @override
   Widget build(BuildContext context) {
-    final state = context.watch<AppState>();
     final isDark = FluentTheme.of(context).brightness == Brightness.dark;
+
+    if (!_initialized) {
+      // Use read() instead of watch() during loading to avoid unnecessary rebuilds
+      final config = context.read<AppState>().clickerConfig;
+      if (!config.imageRecognitionEnabled) {
+        return ScaffoldPage(
+          content: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Icon(FluentIcons.image_pixel, size: 48, color: Colors.grey),
+            const SizedBox(height: 12),
+            const Text('图像识别未启用', style: TextStyle(fontSize: 16)),
+          ])),
+        );
+      }
+      return ScaffoldPage(
+        content: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const SizedBox(width: 32, height: 32, child: ProgressRing()),
+          const SizedBox(height: 16),
+          Text('正在初始化图像识别...', style: TextStyle(fontSize: 14, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A7A))),
+        ])),
+      );
+    }
+
+    final state = context.watch<AppState>();
 
     if (!state.clickerConfig.imageRecognitionEnabled) {
       return ScaffoldPage(
@@ -522,17 +555,6 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
           const Icon(FluentIcons.image_pixel, size: 48, color: Colors.grey),
           const SizedBox(height: 12),
           const Text('图像识别未启用', style: TextStyle(fontSize: 16)),
-        ])),
-      );
-    }
-
-    // Show loading animation while initializing
-    if (!_initialized) {
-      return ScaffoldPage(
-        content: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const SizedBox(width: 32, height: 32, child: ProgressRing()),
-          const SizedBox(height: 16),
-          Text('正在初始化图像识别...', style: TextStyle(fontSize: 14, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A7A))),
         ])),
       );
     }
@@ -552,18 +574,12 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
         Row(children: [
           _tabChip('区域监控', _selectedTab == 0, () => setState(() => _selectedTab = 0)),
           const SizedBox(width: 6),
-          _tabChip('图像查找', _selectedTab == 1, () => setState(() => _selectedTab = 1)),
-          const SizedBox(width: 6),
-          _tabChip('文字识别', _selectedTab == 2, () => setState(() => _selectedTab = 2)),
-          const SizedBox(width: 6),
-          _tabChip('条件触发', _selectedTab == 3, () => setState(() => _selectedTab = 3)),
+          _tabChip('条件触发', _selectedTab == 1, () => setState(() => _selectedTab = 1)),
         ]),
         const SizedBox(height: 16),
 
         if (_selectedTab == 0) ..._buildRegionMonitor(isDark, state),
-        if (_selectedTab == 1) ..._buildImageSearch(isDark, state),
-        if (_selectedTab == 2) ..._buildOcrTab(isDark, state),
-        if (_selectedTab == 3) ..._buildTriggers(isDark, state),
+        if (_selectedTab == 1) ..._buildTriggers(isDark, state),
       ],
     );
   }
@@ -808,494 +824,6 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     }
   }
 
-  // ─── Image Search ──────────────────────────────────────────
-
-  List<Widget> _buildImageSearch(bool isDark, AppState state) {
-    final cardBg = isDark ? const Color(0xFF252540).withValues(alpha: 0.5) : const Color(0xFFF0F0FA).withValues(alpha: 0.5);
-    return [
-      // Template
-      Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: cardBg,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)),
-        ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Icon(FluentIcons.image_search, size: 16, color: state.accentColor),
-            const SizedBox(width: 8),
-            const Text('查找模板', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-          ]),
-          const SizedBox(height: 12),
-          if (_capturingTemplate)
-            _overlayHint('在屏幕上拖拽选择要查找的图像区域')
-          else
-            Row(children: [
-              FilledButton(
-                onPressed: () async {
-                  setState(() => _capturingTemplate = true);
-                  final sel = await _startAreaSelect();
-                  if (sel == null) {
-                    if (mounted) setState(() => _capturingTemplate = false);
-                    return;
-                  }
-                  final (x1, y1, x2, y2) = sel;
-                  final w = x2 - x1;
-                  final h = y2 - y1;
-                  if (w < 5 || h < 5) {
-                    if (mounted) setState(() => _capturingTemplate = false);
-                    return;
-                  }
-                  final tpl = await _vision.captureTemplate(x1, y1, w, h);
-                  if (mounted) setState(() {
-                    _template = tpl;
-                    _templateInfo = '($x1, $y1) ${w}x$h';
-                    _capturingTemplate = false;
-                  });
-                },
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  const Icon(FluentIcons.camera, size: 14),
-                  const SizedBox(width: 6),
-                  const Text('截取模板'),
-                ]),
-              ),
-              if (_template != null) ...[
-                const SizedBox(width: 12),
-                Icon(FluentIcons.completed, size: 16, color: const Color(0xFF00E676)),
-                const SizedBox(width: 4),
-                Text(_templateInfo, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                const SizedBox(width: 8),
-                Button(onPressed: () => setState(() { _template = null; _templateInfo = ''; _lastMatch = null; }),
-                  child: const Text('清除')),
-              ],
-            ]),
-        ]),
-      ),
-      const SizedBox(height: 12),
-
-      // Search area
-      Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: cardBg,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)),
-        ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Icon(FluentIcons.map_pin, size: 16, color: state.accentColor),
-            const SizedBox(width: 8),
-            const Text('搜索区域', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-          ]),
-          const SizedBox(height: 12),
-          if (_selectingSearchArea)
-            _overlayHint('在屏幕上拖拽选择搜索区域')
-          else
-            Row(children: [
-              FilledButton(
-                onPressed: () async {
-                  setState(() => _selectingSearchArea = true);
-                  final sel = await _startAreaSelect();
-                  if (sel == null) {
-                    if (mounted) setState(() => _selectingSearchArea = false);
-                    return;
-                  }
-                  final (x1, y1, x2, y2) = sel;
-                  setState(() {
-                    _searchAreaX = x1;
-                    _searchAreaY = y1;
-                    _searchAreaW = x2 - x1;
-                    _searchAreaH = y2 - y1;
-                    _searchAreaInfo = '($x1, $y1) ${_searchAreaW}x$_searchAreaH';
-                  });
-                },
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  const Icon(FluentIcons.checkbox_composite, size: 14),
-                  const SizedBox(width: 6),
-                  Text(_searchAreaInfo.isNotEmpty ? _searchAreaInfo : '选择搜索区域'),
-                ]),
-              ),
-              const SizedBox(width: 8),
-              SizedBox(width: 70, child: TextBox(placeholder: 'X', onChanged: (v) => _searchAreaX = int.tryParse(v) ?? 0)),
-              const SizedBox(width: 6),
-              SizedBox(width: 70, child: TextBox(placeholder: 'Y', onChanged: (v) => _searchAreaY = int.tryParse(v) ?? 0)),
-              const SizedBox(width: 6),
-              SizedBox(width: 70, child: TextBox(placeholder: '宽', onChanged: (v) => _searchAreaW = int.tryParse(v) ?? 1920)),
-              const SizedBox(width: 6),
-              SizedBox(width: 70, child: TextBox(placeholder: '高', onChanged: (v) => _searchAreaH = int.tryParse(v) ?? 1080)),
-            ]),
-        ]),
-      ),
-      const SizedBox(height: 12),
-
-      // Threshold, engine & search button
-      Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: cardBg,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)),
-        ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            const Text('匹配阈值: ', style: TextStyle(fontSize: 13)),
-            SizedBox(width: 140, child: Slider(
-              value: _matchThreshold,
-              min: 0.5, max: 1.0, divisions: 50,
-              onChanged: (v) => setState(() => _matchThreshold = v),
-            )),
-            Text('${(_matchThreshold * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-          ]),
-          const SizedBox(height: 8),
-          Row(children: [
-            const Text('识别引擎: ', style: TextStyle(fontSize: 13)),
-            _buildEngineSelector(VisionCapability.templateMatch, _selectedMatchEngine, (id) => setState(() => _selectedMatchEngine = id)),
-            const Spacer(),
-            FilledButton(
-              onPressed: _template != null && !_searching ? _doImageSearch : null,
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                if (_searching)
-                  const SizedBox(width: 12, height: 12, child: ProgressRing(strokeWidth: 2))
-                else
-                  const Icon(FluentIcons.search, size: 14),
-                const SizedBox(width: 6),
-                Text(_searching ? '搜索中...' : '查找'),
-              ]),
-            ),
-          ]),
-        ]),
-      ),
-      const SizedBox(height: 12),
-
-      // Result
-      if (_lastMatch != null)
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: const Color(0xFF00E676).withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: const Color(0xFF00E676).withValues(alpha: 0.3)),
-          ),
-          child: Row(children: [
-            Icon(FluentIcons.completed, size: 16, color: const Color(0xFF00E676)),
-            const SizedBox(width: 8),
-            Text('找到匹配', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: Color(0xFF00E676))),
-            const SizedBox(width: 16),
-            Text('位置: (${_lastMatch!.x}, ${_lastMatch!.y})  大小: ${_lastMatch!.width}x${_lastMatch!.height}  匹配度: ${(_lastMatch!.score * 100).toStringAsFixed(1)}%',
-              style: const TextStyle(fontSize: 12)),
-            const Spacer(),
-            Button(onPressed: () => setState(() => _lastMatch = null), child: const Text('清除')),
-          ]),
-        )
-      else if (_searching)
-        Center(child: Padding(padding: const EdgeInsets.all(20), child: Text('搜索中...', style: TextStyle(fontSize: 13, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A)))))
-      else if (_template == null)
-        Center(child: Padding(padding: const EdgeInsets.all(32), child: Column(children: [
-          const Icon(FluentIcons.image_search, size: 48, color: Colors.grey),
-          const SizedBox(height: 12),
-          const Text('先截取要查找的图像模板', style: TextStyle(fontSize: 14)),
-        ]))),
-    ];
-  }
-
-  Future<void> _doImageSearch() async {
-    if (_template == null) return;
-    setState(() => _searching = true);
-    try {
-      final match = await _vision.findImage(
-        regionX: _searchAreaX,
-        regionY: _searchAreaY,
-        regionW: _searchAreaW,
-        regionH: _searchAreaH,
-        template: _template!,
-        threshold: _matchThreshold,
-        pluginId: _selectedMatchEngine,
-      );
-      if (mounted) setState(() {
-        _lastMatch = match;
-        _searching = false;
-      });
-    } catch (_) {
-      if (mounted) setState(() => _searching = false);
-    }
-  }
-
-  // ─── OCR Tab ──────────────────────────────────────────────
-
-  List<Widget> _buildOcrTab(bool isDark, AppState state) {
-    final cardBg = isDark ? const Color(0xFF252540).withValues(alpha: 0.5) : const Color(0xFFF0F0FA).withValues(alpha: 0.5);
-    return [
-      // Area selection
-      Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: cardBg,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)),
-        ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Icon(FluentIcons.font, size: 16, color: state.accentColor),
-            const SizedBox(width: 8),
-            const Text('识别区域', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-          ]),
-          const SizedBox(height: 12),
-          if (_selectingOcrArea)
-            _overlayHint('在屏幕上拖拽选择要识别文字的区域')
-          else
-            Row(children: [
-              FilledButton(
-                onPressed: () async {
-                  setState(() => _selectingOcrArea = true);
-                  final sel = await _startAreaSelect();
-                  if (sel == null) {
-                    if (mounted) setState(() => _selectingOcrArea = false);
-                    return;
-                  }
-                  final (x1, y1, x2, y2) = sel;
-                  setState(() {
-                    _ocrAreaX = x1;
-                    _ocrAreaY = y1;
-                    _ocrAreaW = x2 - x1;
-                    _ocrAreaH = y2 - y1;
-                    _ocrAreaInfo = '($x1, $y1) ${_ocrAreaW}x$_ocrAreaH';
-                  });
-                },
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  const Icon(FluentIcons.checkbox_composite, size: 14),
-                  const SizedBox(width: 6),
-                  Text(_ocrAreaInfo.isNotEmpty ? _ocrAreaInfo : '选择识别区域'),
-                ]),
-              ),
-              const SizedBox(width: 8),
-              SizedBox(width: 70, child: TextBox(placeholder: 'X', onChanged: (v) => _ocrAreaX = int.tryParse(v) ?? 0)),
-              const SizedBox(width: 6),
-              SizedBox(width: 70, child: TextBox(placeholder: 'Y', onChanged: (v) => _ocrAreaY = int.tryParse(v) ?? 0)),
-              const SizedBox(width: 6),
-              SizedBox(width: 70, child: TextBox(placeholder: '宽', onChanged: (v) => _ocrAreaW = int.tryParse(v) ?? 400)),
-              const SizedBox(width: 6),
-              SizedBox(width: 70, child: TextBox(placeholder: '高', onChanged: (v) => _ocrAreaH = int.tryParse(v) ?? 200)),
-            ]),
-          const SizedBox(height: 12),
-          Row(children: [
-            const Text('语言: ', style: TextStyle(fontSize: 13)),
-            ComboBox<String>(
-              items: const [
-                ComboBoxItem(value: 'zh-Hans-CN', child: Text('简体中文')),
-                ComboBoxItem(value: 'zh-Hant-CN', child: Text('繁体中文')),
-                ComboBoxItem(value: 'en', child: Text('English')),
-                ComboBoxItem(value: 'ja', child: Text('日本語')),
-                ComboBoxItem(value: 'ko', child: Text('한국어')),
-              ],
-              value: _ocrLanguage,
-              onChanged: (v) { if (v != null) setState(() => _ocrLanguage = v); },
-            ),
-          ]),
-          const SizedBox(height: 8),
-          Row(children: [
-            const Text('识别引擎: ', style: TextStyle(fontSize: 13)),
-            _buildEngineSelector(VisionCapability.ocr, _selectedOcrEngine, (id) => setState(() => _selectedOcrEngine = id)),
-          ]),
-          const SizedBox(height: 8),
-          // Tesseract OCR install / status
-          _buildOcrToolsBar(isDark, state),
-          const SizedBox(height: 10),
-          Row(children: [
-            const Spacer(),
-            FilledButton(
-              onPressed: !_ocrRunning ? _doOcr : null,
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                if (_ocrRunning)
-                  const SizedBox(width: 12, height: 12, child: ProgressRing(strokeWidth: 2))
-                else
-                  const Icon(FluentIcons.font, size: 14),
-                const SizedBox(width: 6),
-                Text(_ocrRunning ? '识别中...' : '识别文字'),
-              ]),
-            ),
-          ]),
-        ]),
-      ),
-      const SizedBox(height: 12),
-
-      // OCR Result
-      if (_lastOcrResult != null)
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: _lastOcrResult!.hasError
-              ? const Color(0xFFFF5252).withValues(alpha: 0.08)
-              : const Color(0xFF00BCD4).withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: _lastOcrResult!.hasError
-              ? const Color(0xFFFF5252).withValues(alpha: 0.3)
-              : const Color(0xFF00BCD4).withValues(alpha: 0.3)),
-          ),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Icon(_lastOcrResult!.hasError ? FluentIcons.warning : FluentIcons.font, size: 16,
-                color: _lastOcrResult!.hasError ? const Color(0xFFFF5252) : const Color(0xFF00BCD4)),
-              const SizedBox(width: 8),
-              Text(_lastOcrResult!.hasError ? '识别失败' : '识别结果',
-                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14,
-                  color: _lastOcrResult!.hasError ? const Color(0xFFFF5252) : const Color(0xFF00BCD4))),
-              const Spacer(),
-              if (_lastOcrResult!.hasText)
-                HyperlinkButton(onPressed: () {
-                  Clipboard.setData(ClipboardData(text: _lastOcrResult!.text));
-                }, child: const Text('复制')),
-              Button(onPressed: () => setState(() => _lastOcrResult = null), child: const Text('清除')),
-            ]),
-            const SizedBox(height: 8),
-            if (_lastOcrResult!.hasError)
-              Text(_lastOcrResult!.error!, style: const TextStyle(fontSize: 13, color: Color(0xFFFF5252)))
-            else if (_lastOcrResult!.hasText)
-              SelectableText(_lastOcrResult!.text, style: const TextStyle(fontSize: 14))
-            else
-              const Text('未识别到文字', style: TextStyle(fontSize: 13)),
-          ]),
-        )
-      else if (!_ocrRunning)
-        Center(child: Padding(padding: const EdgeInsets.all(32), child: Column(children: [
-          const Icon(FluentIcons.font, size: 48, color: Colors.grey),
-          const SizedBox(height: 12),
-          const Text('选择区域后识别文字', style: TextStyle(fontSize: 14)),
-        ]))),
-    ];
-  }
-
-  Future<void> _doOcr() async {
-    setState(() => _ocrRunning = true);
-    try {
-      final result = await _vision.ocrRegion(
-        x: _ocrAreaX, y: _ocrAreaY, w: _ocrAreaW, h: _ocrAreaH,
-        language: _ocrLanguage,
-        pluginId: _selectedOcrEngine,
-      );
-      if (mounted) setState(() {
-        _lastOcrResult = result;
-        _ocrRunning = false;
-      });
-    } catch (_) {
-      if (mounted) setState(() => _ocrRunning = false);
-    }
-  }
-
-  // ─── OCR Tools Bar (install / uninstall Tesseract, Python) ──
-  Widget _buildOcrToolsBar(bool isDark, AppState state) {
-    if (_checkingTools) {
-      return const Row(children: [
-        SizedBox(width: 14, height: 14, child: ProgressRing(strokeWidth: 2)),
-        SizedBox(width: 8),
-        Text('检测OCR工具...', style: TextStyle(fontSize: 12)),
-      ]);
-    }
-
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('备用OCR工具', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A7A))),
-      const SizedBox(height: 6),
-      Wrap(spacing: 8, runSpacing: 6, children: [
-        // Tesseract
-        _toolChip(
-          icon: FluentIcons.processing,
-          label: 'Tesseract OCR',
-          installed: _tesseractInstalled,
-          installing: _installingTool,
-          isDark: isDark,
-          onInstall: () => _installTool('tesseract'),
-          onUninstall: () => _uninstallTool('tesseract'),
-        ),
-        // Python + pytesseract
-        _toolChip(
-          icon: FluentIcons.code,
-          label: 'Python + pytesseract',
-          installed: _pythonInstalled,
-          installing: _installingTool,
-          isDark: isDark,
-          onInstall: () => _installTool('python'),
-          onUninstall: () => _uninstallTool('python'),
-        ),
-      ]),
-    ]);
-  }
-
-  Widget _toolChip({
-    required IconData icon,
-    required String label,
-    required bool installed,
-    required bool installing,
-    required bool isDark,
-    required VoidCallback onInstall,
-    required VoidCallback onUninstall,
-  }) {
-    final bgColor = installed
-      ? const Color(0xFF00BCD4).withValues(alpha: 0.12)
-      : isDark ? const Color(0xFF303050) : const Color(0xFFE0E0F0);
-    final borderColor = installed
-      ? const Color(0xFF00BCD4).withValues(alpha: 0.4)
-      : isDark ? const Color(0xFF404060) : const Color(0xFFC0C0D0);
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: borderColor),
-      ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(icon, size: 14, color: installed ? const Color(0xFF00BCD4) : (isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A7A))),
-        const SizedBox(width: 6),
-        Text(label, style: TextStyle(fontSize: 12, color: installed ? const Color(0xFF00BCD4) : null)),
-        const SizedBox(width: 8),
-        if (installing)
-          const SizedBox(width: 12, height: 12, child: ProgressRing(strokeWidth: 2))
-        else if (installed)
-          Button(
-            style: ButtonStyle(padding: WidgetStateProperty.all(const EdgeInsets.symmetric(horizontal: 6, vertical: 2))),
-            onPressed: onUninstall,
-            child: const Text('卸载', style: TextStyle(fontSize: 11)),
-          )
-        else
-          FilledButton(
-            style: ButtonStyle(padding: WidgetStateProperty.all(const EdgeInsets.symmetric(horizontal: 6, vertical: 2))),
-            onPressed: onInstall,
-            child: const Text('安装', style: TextStyle(fontSize: 11)),
-          ),
-      ]),
-    );
-  }
-
-  Future<void> _installTool(String tool) async {
-    setState(() => _installingTool = true);
-    try {
-      await _platformChannel.invokeMethod('installOcrTool', tool);
-      await _checkOcrTools();
-    } on PlatformException catch (e) {
-      if (mounted) {
-        showDialog(context: context, builder: (_) => ContentDialog(
-          title: const Text('安装失败'),
-          content: Text(e.message ?? '未知错误'),
-          actions: [Button(child: const Text('确定'), onPressed: () => Navigator.pop(context))],
-        ));
-      }
-    } finally {
-      if (mounted) setState(() => _installingTool = false);
-    }
-  }
-
-  Future<void> _uninstallTool(String tool) async {
-    setState(() => _installingTool = true);
-    try {
-      await _platformChannel.invokeMethod('uninstallOcrTool', tool);
-      await _checkOcrTools();
-    } on PlatformException {
-      // ignore
-    } finally {
-      if (mounted) setState(() => _installingTool = false);
-    }
-  }
-
   // ─── Conditional Triggers ──────────────────────────────────
 
   List<Widget> _buildTriggers(bool isDark, AppState state) {
@@ -1360,6 +888,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
                   final result = await showDialog<_TriggerConfig>(context: context, builder: (_) => _AddTriggerDialog(
                     initialX: t.x, initialY: t.y, initialW: t.w, initialH: t.h,
                     onPickActionPos: _startPick,
+                    onCaptureTemplate: _captureTemplate,
                     initialTrigger: t,
                   ));
                   if (result != null) {
@@ -1560,6 +1089,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
       initialX: selX, initialY: selY,
       initialW: selW, initialH: selH,
       onPickActionPos: _startPick,
+      onCaptureTemplate: _captureTemplate,
     ));
     if (result != null && mounted) {
       setState(() {
@@ -1820,11 +1350,13 @@ class _AddRegionDialogState extends State<_AddRegionDialog> {
 class _AddTriggerDialog extends StatefulWidget {
   final int initialX, initialY, initialW, initialH;
   final Future<(int, int)?> Function()? onPickActionPos;
+  final Future<TemplateData?> Function()? onCaptureTemplate;
   final _TriggerEntry? initialTrigger; // null = add mode, non-null = edit mode
   const _AddTriggerDialog({
     this.initialX = 0, this.initialY = 0,
     this.initialW = 100, this.initialH = 100,
     this.onPickActionPos,
+    this.onCaptureTemplate,
     this.initialTrigger,
   });
   @override
@@ -1845,6 +1377,8 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
   double _matchThreshold = 0.8;
   String _targetText = '';
   _TextMatchMode _textMatchMode = _TextMatchMode.fuzzy;
+  TemplateData? _templateData;
+  String _templateInfo = '';
 
   @override
   void initState() {
@@ -1863,6 +1397,10 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
       _actionKey = t.actionKey;
       _macroId = t.macroId;
       _intervalMs = t.intervalMs;
+      _templateData = t.templateData;
+      if (t.templateData != null) {
+        _templateInfo = '${t.templateData!.width}x${t.templateData!.height}';
+      }
     } else {
       _x = widget.initialX;
       _y = widget.initialY;
@@ -1916,8 +1454,36 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
           SizedBox(width: 70, child: TextBox(placeholder: '高', onChanged: (v) => _h = int.tryParse(v) ?? _h)),
         ]),
 
-        // Image match specific: threshold
+        // Image match specific: capture template + threshold
         if (_conditionType == _TriggerConditionType.imageMatch) ...[
+          const SizedBox(height: 8),
+          Row(children: [
+            FilledButton(
+              onPressed: widget.onCaptureTemplate != null ? () async {
+                final tpl = await widget.onCaptureTemplate!();
+                if (tpl != null && mounted) {
+                  setState(() {
+                    _templateData = tpl;
+                    _templateInfo = '${tpl.width}x${tpl.height}';
+                  });
+                }
+              } : null,
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(FluentIcons.camera, size: 14),
+                const SizedBox(width: 6),
+                const Text('截取模板'),
+              ]),
+            ),
+            if (_templateData != null) ...[
+              const SizedBox(width: 12),
+              Icon(FluentIcons.completed, size: 16, color: const Color(0xFF00E676)),
+              const SizedBox(width: 4),
+              Text(_templateInfo, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+              const SizedBox(width: 8),
+              Button(onPressed: () => setState(() { _templateData = null; _templateInfo = ''; }),
+                child: const Text('清除')),
+            ],
+          ]),
           const SizedBox(height: 8),
           Row(children: [
             const Text('匹配阈值: ', style: TextStyle(fontSize: 13)),
@@ -1925,8 +1491,6 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
             const SizedBox(width: 8),
             Text('${(_matchThreshold * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
           ]),
-          const SizedBox(height: 4),
-          Text('保存触发条件后，将在监控区域内查找匹配的图像模板', style: const TextStyle(fontSize: 11, color: Color(0xFF9090B0))),
         ],
 
         // Text match specific: target text
@@ -2027,6 +1591,7 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
           actionType: _actionType,
           x: _x, y: _y, w: _w, h: _h,
           targetColor: _targetColor,
+          templateData: _templateData,
           matchThreshold: _matchThreshold,
           targetText: _targetText,
           textMatchMode: _textMatchMode,

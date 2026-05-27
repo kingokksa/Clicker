@@ -33,29 +33,45 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
   final Map<String, ({Widget widget, GlobalKey key})> _pluginPageCache = {};
 
   // Lazy-loaded page cache: only created when first visited
-  final Map<int, Widget> _lazyPages = {};
+  // Each entry stores the widget and a GlobalKey to preserve State
+  final Map<int, ({Widget widget, GlobalKey key})> _lazyPages = {};
 
   Widget _getOrCreatePage(int index) {
-    return _lazyPages.putIfAbsent(index, () {
-      switch (index) {
-        case 0: return const ClickerPage();
-        case 1: return const PluginPage();
-        default:
-          final plugins = PluginRegistry.instance.enabledPlugins;
-          final pluginIndex = index - 2;
-          if (pluginIndex >= 0 && pluginIndex < plugins.length) {
-            final plugin = plugins[pluginIndex];
-            final cached = _pluginPageCache[plugin.manifest.id];
-            if (cached == null) {
-              final key = GlobalKey();
-              final widget = KeyedSubtree(key: key, child: Builder(builder: plugin.buildPage));
-              _pluginPageCache[plugin.manifest.id] = (widget: widget, key: key);
-            }
-            return _pluginPageCache[plugin.manifest.id]!.widget;
-          }
-          return const SettingsPage();
+    final existing = _lazyPages[index];
+    if (existing != null) return existing.widget;
+
+    final plugins = PluginRegistry.instance.enabledPlugins;
+    final pluginCount = plugins.length;
+
+    Widget page;
+    GlobalKey key;
+
+    if (index == 0) {
+      key = GlobalKey();
+      page = KeyedSubtree(key: key, child: const ClickerPage());
+    } else if (index >= 1 && index <= pluginCount) {
+      final plugin = plugins[index - 1];
+      final cached = _pluginPageCache[plugin.manifest.id];
+      if (cached == null) {
+        key = GlobalKey();
+        final widget = KeyedSubtree(key: key, child: Builder(builder: plugin.buildPage));
+        _pluginPageCache[plugin.manifest.id] = (widget: widget, key: key);
+        _lazyPages[index] = (widget: widget, key: key);
+        return widget;
       }
-    });
+      _lazyPages[index] = cached;
+      return cached.widget;
+    } else if (index == pluginCount + 1) {
+      key = GlobalKey();
+      page = KeyedSubtree(key: key, child: const PluginPage());
+    } else {
+      key = GlobalKey();
+      page = KeyedSubtree(key: key, child: const SettingsPage());
+    }
+
+    final entry = (widget: page, key: key);
+    _lazyPages[index] = entry;
+    return page;
   }
 
   static const _platformChannel = MethodChannel('com.clicker.pro/platform');
@@ -208,60 +224,113 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
     }
 
     final plugins = PluginRegistry.instance.enabledPlugins;
-    final totalPages = 2 + plugins.length + 1;
+    final totalPages = 1 + plugins.length + 2; // ClickerPage + plugins + PluginPage + SettingsPage
 
     // _currentIndex is the index into effectiveItems (separators excluded)
-    // 0 -> ClickerPage, 1 -> PluginPage, 2..2+plugins-1 -> plugins, 2+plugins -> SettingsPage
     final pageIndex = _currentIndex.clamp(0, totalPages - 1);
 
     // Ensure current page is created (lazy)
     _getOrCreatePage(pageIndex);
 
-    // Build all created pages for IndexedStack (unvisited slots get placeholder)
-    final pages = List<Widget>.generate(totalPages, (i) {
-      final page = _lazyPages[i];
-      if (page != null) return page;
-      return const SizedBox.shrink();
-    });
+    // Build the current page widget — only the active page is in the tree.
+    // GlobalKey preserves State when the widget is removed and re-inserted.
+    final currentPage = _lazyPages[pageIndex]?.widget ?? const SizedBox.shrink();
 
     return DragToResizeArea(
       resizeEdgeSize: 6,
       child: Column(children: [
         _GlassTitleBar(isDark: isDark, isMaximized: _isMaximized, onFloatingMode: _switchToFloating),
-        Expanded(child: NavigationView(
-            pane: NavigationPane(
-              selected: _currentIndex,
-              onChanged: (i) => setState(() => _currentIndex = i),
-              displayMode: PaneDisplayMode.compact,
-              header: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                child: Text('Clicker', style: TextStyle(
-                  fontSize: 14, fontWeight: FontWeight.w700,
-                  fontFamily: 'Segoe UI Variable, Segoe UI, Microsoft YaHei UI',
-                  color: isDark ? const Color(0xFFC0C0E8) : const Color(0xFF5A5A80),
-                )),
-              ),
-              items: [
-                PaneItem(icon: const Icon(FluentIcons.touch), title: const Text('连点'), body: const SizedBox.shrink()),
-                PaneItemSeparator(),
-                PaneItem(icon: const Icon(FluentIcons.puzzle), title: const Text('插件中心'), body: const SizedBox.shrink()),
-                ...plugins.map((plugin) =>
-                  PaneItem(icon: Icon(plugin.manifest.icon), title: Text(plugin.manifest.name), body: const SizedBox.shrink()),
-                ),
-              ],
-              footerItems: [
-                PaneItem(icon: const Icon(FluentIcons.settings), title: const Text('设置'), body: const SizedBox.shrink()),
-              ],
-            ),
-            paneBodyBuilder: (item, body) => IndexedStack(
-              index: pageIndex,
-              children: pages,
-            ),
-          ),
-        ),
+        Expanded(child: Row(children: [
+          // Custom sidebar — avoids NavigationView's AnimatedSwitcher overhead
+          _buildSidebar(isDark, plugins, pageIndex),
+          // Page content — rendered directly without AnimatedSwitcher
+          Expanded(child: ColoredBox(
+            color: FluentTheme.of(context).scaffoldBackgroundColor,
+            child: currentPage,
+          )),
+        ])),
       ]),
     );
   }
+
+  Widget _buildSidebar(bool isDark, List<ClickerPlugin> plugins, int selectedIndex) {
+    final accent = FluentTheme.of(context).accentColor;
+    const compactWidth = 50.0;
+    final bgColor = isDark ? const Color(0xFF16162A) : const Color(0xFFF2F2FA);
+
+    // Build all sidebar items
+    final items = <_SidebarItem>[
+      _SidebarItem(icon: FluentIcons.touch, label: '连点', index: 0),
+      // Plugin items (index 1..pluginCount)
+      for (int i = 0; i < plugins.length; i++)
+        _SidebarItem(icon: plugins[i].manifest.icon, label: plugins[i].manifest.name, index: i + 1),
+      // Footer items
+      _SidebarItem(icon: FluentIcons.puzzle, label: '插件中心', index: plugins.length + 1),
+      _SidebarItem(icon: FluentIcons.settings, label: '设置', index: plugins.length + 2),
+    ];
+
+    return Container(
+      width: compactWidth,
+      color: bgColor.withValues(alpha: 0.75),
+      child: Column(children: [
+        // Header
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Text('C', style: TextStyle(
+            fontSize: 14, fontWeight: FontWeight.w700,
+            fontFamily: 'Segoe UI Variable, Segoe UI, Microsoft YaHei UI',
+            color: isDark ? const Color(0xFFC0C0E8) : const Color(0xFF5A5A80),
+          )),
+        ),
+        // Main items
+        Expanded(child: ListView.builder(
+          padding: EdgeInsets.zero,
+          itemCount: items.length - 2, // exclude footer items
+          itemBuilder: (ctx, i) => _buildSidebarItem(items[i], selectedIndex, accent, isDark),
+        )),
+        // Footer items (plugin center + settings)
+        ...List.generate(2, (i) => _buildSidebarItem(items[items.length - 2 + i], selectedIndex, accent, isDark)),
+        const SizedBox(height: 8),
+      ]),
+    );
+  }
+
+  Widget _buildSidebarItem(_SidebarItem item, int selectedIndex, AccentColor accent, bool isDark) {
+    final selected = item.index == selectedIndex;
+    final hoverColor = isDark ? const Color(0xFF303050) : const Color(0xFFE0E0F0);
+    final selectedBg = accent.withValues(alpha: 0.15);
+
+    return Tooltip(
+      message: item.label,
+      child: GestureDetector(
+        onTap: () => setState(() => _currentIndex = item.index),
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: Container(
+            width: 50,
+            height: 42,
+            margin: const EdgeInsets.symmetric(vertical: 2, horizontal: 4),
+            decoration: BoxDecoration(
+              color: selected ? selectedBg : Colors.transparent,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Center(child: Icon(
+              item.icon,
+              size: 16,
+              color: selected ? accent : (isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80)),
+            )),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SidebarItem {
+  final IconData icon;
+  final String label;
+  final int index;
+  const _SidebarItem({required this.icon, required this.label, required this.index});
 }
 
 // ─── Title Bar ───────────────────────────────────────────────

@@ -38,6 +38,9 @@ class WindowsInput extends PlatformInput {
       final field = HotkeyConfig.idToField(id);
       if (field.isNotEmpty) {
         _keyController.add(field);
+      } else {
+        // Numeric IDs (100+) are used for per-macro hotkeys
+        _keyController.add(id.toString());
       }
     } else if (call.method == 'onStopClickerImmediate') {
       // C++ requests immediate stop (for keyboard mode which uses Dart Timers).
@@ -292,8 +295,15 @@ class WindowsInput extends PlatformInput {
   /// [hotkeyStr] is the hotkey string (e.g., 'Alt+F6').
   /// Returns true if registration succeeded.
   Future<bool> registerHotkey(String field, String hotkeyStr) async {
-    final id = HotkeyConfig.fieldToId(field);
-    if (id == 0) return false;
+    // Support both named fields and numeric IDs (for per-macro hotkeys)
+    int id;
+    final numericId = int.tryParse(field);
+    if (numericId != null) {
+      id = numericId;
+    } else {
+      id = HotkeyConfig.fieldToId(field);
+      if (id == 0) return false;
+    }
 
     // Unregister previous hotkey for this field if any
     if (_registeredHotkeys.containsKey(field)) {

@@ -7,7 +7,7 @@ import '../models/macro_model.dart';
 import 'platform/platform_input.dart';
 import 'platform/windows_input.dart';
 
-enum MacroStatus { idle, recording, playing }
+enum MacroStatus { idle, recording, paused, playing }
 
 class MacroService {
   final PlatformInput _input;
@@ -19,6 +19,8 @@ class MacroService {
 
   MacroModel? _currentMacro;
   int _currentRepeat = 0;
+  final Set<String> _heldKeys = {}; // Track currently held keys to avoid repeat
+  final Set<String> _heldMouseButtons = {}; // Track held mouse buttons
 
   void Function(MacroStatus status)? onStatusChanged;
   void Function(int eventCount)? onRecordingUpdate;
@@ -29,7 +31,8 @@ class MacroService {
 
   MacroStatus get status => _status;
   List<MacroEvent> get recordingEvents => List.unmodifiable(_recordingBuffer);
-  bool get isRecording => _status == MacroStatus.recording;
+  bool get isRecording => _status == MacroStatus.recording || _status == MacroStatus.paused;
+  bool get isPaused => _status == MacroStatus.paused;
   bool get isPlaying => _status == MacroStatus.playing;
 
   // ─── Recording ─────────────────────────────────────────────
@@ -38,6 +41,8 @@ class MacroService {
     if (_status != MacroStatus.idle) return;
 
     _recordingBuffer.clear();
+    _heldKeys.clear();
+    _heldMouseButtons.clear();
     _recordStartMs = DateTime.now().millisecondsSinceEpoch;
 
     // Set status immediately so UI updates
@@ -83,8 +88,12 @@ class MacroService {
       if (keyName == null) return;
 
       if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) {
+        // Ignore auto-repeat when key is held down
+        if (_heldKeys.contains(keyName)) return;
+        _heldKeys.add(keyName);
         _addEvent(MacroEventType.keyPress, time, key: keyName);
       } else if (msg == WM_KEYUP || msg == WM_SYSKEYUP) {
+        _heldKeys.remove(keyName);
         _addEvent(MacroEventType.keyRelease, time, key: keyName);
       }
     } else if (source == 'mouse') {
@@ -93,11 +102,29 @@ class MacroService {
       final y = data['y'] as int? ?? 0;
 
       if (msg == WM_LBUTTONDOWN) {
-        _addEvent(MacroEventType.click, time, button: 'left', x: x, y: y);
+        if (!_heldMouseButtons.contains('left')) {
+          _heldMouseButtons.add('left');
+          _addEvent(MacroEventType.mouseDown, time, button: 'left', x: x, y: y);
+        }
+      } else if (msg == WM_LBUTTONUP) {
+        _heldMouseButtons.remove('left');
+        _addEvent(MacroEventType.mouseUp, time, button: 'left', x: x, y: y);
       } else if (msg == WM_RBUTTONDOWN) {
-        _addEvent(MacroEventType.click, time, button: 'right', x: x, y: y);
+        if (!_heldMouseButtons.contains('right')) {
+          _heldMouseButtons.add('right');
+          _addEvent(MacroEventType.mouseDown, time, button: 'right', x: x, y: y);
+        }
+      } else if (msg == WM_RBUTTONUP) {
+        _heldMouseButtons.remove('right');
+        _addEvent(MacroEventType.mouseUp, time, button: 'right', x: x, y: y);
       } else if (msg == WM_MBUTTONDOWN) {
-        _addEvent(MacroEventType.click, time, button: 'middle', x: x, y: y);
+        if (!_heldMouseButtons.contains('middle')) {
+          _heldMouseButtons.add('middle');
+          _addEvent(MacroEventType.mouseDown, time, button: 'middle', x: x, y: y);
+        }
+      } else if (msg == WM_MBUTTONUP) {
+        _heldMouseButtons.remove('middle');
+        _addEvent(MacroEventType.mouseUp, time, button: 'middle', x: x, y: y);
       } else if (msg == WM_MOUSEWHEEL) {
         final mouseData = data['mouseData'] as int? ?? 0;
         final delta = mouseData >> 16;
@@ -112,8 +139,11 @@ class MacroService {
   static const int WM_SYSKEYDOWN = 0x0104;
   static const int WM_SYSKEYUP = 0x0105;
   static const int WM_LBUTTONDOWN = 0x0201;
+  static const int WM_LBUTTONUP = 0x0202;
   static const int WM_RBUTTONDOWN = 0x0204;
+  static const int WM_RBUTTONUP = 0x0205;
   static const int WM_MBUTTONDOWN = 0x0207;
+  static const int WM_MBUTTONUP = 0x0208;
   static const int WM_MOUSEWHEEL = 0x020A;
 
   void _addEvent(MacroEventType type, int timestampMs, {String? button, int? x, int? y, String? key, double? scrollDx, double? scrollDy}) {
@@ -188,25 +218,64 @@ class MacroService {
       winInput.stopJournalRecording();
     }
 
-    // Remove trailing click/key events that were likely from clicking the
-    // stop button. Remove events within 500ms of now.
+    // Remove trailing events that were likely from clicking the stop button
+    // or pressing the stop hotkey. Remove events within 200ms of now.
     final elapsedNow = DateTime.now().millisecondsSinceEpoch - _recordStartMs;
     while (_recordingBuffer.isNotEmpty) {
       final last = _recordingBuffer.last;
-      if (elapsedNow - last.timestampMs < 500) {
+      if (elapsedNow - last.timestampMs < 200) {
         _recordingBuffer.removeLast();
       } else {
         break;
       }
     }
 
+    // Remove orphaned keyPress/mouseDown events that have no matching release.
+    // When the user presses a hotkey to stop recording, the keydown is captured
+    // but the keyup is not (because the hook was already stopped).
+    // Playing back these orphaned presses causes stuck keys and system shortcuts.
+    _removeOrphanedPresses();
+
     onRecordingUpdate?.call(_recordingBuffer.length);
-    // Keep status as recording so UI knows we have pending data
-    // but no more events will come in.
+    _status = MacroStatus.paused;
+    onStatusChanged?.call(_status);
+  }
+
+  /// Remove keyPress/mouseDown events that have no matching keyRelease/mouseUp.
+  void _removeOrphanedPresses() {
+    final heldKeySet = <String>{};
+    final heldMouseSet = <String>{};
+
+    // First pass: find which keys/buttons are held at the end
+    for (final event in _recordingBuffer) {
+      if (event.type == MacroEventType.keyPress && event.key != null) {
+        heldKeySet.add(event.key!);
+      } else if (event.type == MacroEventType.keyRelease && event.key != null) {
+        heldKeySet.remove(event.key!);
+      } else if (event.type == MacroEventType.mouseDown && event.button != null) {
+        heldMouseSet.add(event.button!);
+      } else if (event.type == MacroEventType.mouseUp && event.button != null) {
+        heldMouseSet.remove(event.button!);
+      }
+    }
+
+    // If no orphans, nothing to do
+    if (heldKeySet.isEmpty && heldMouseSet.isEmpty) return;
+
+    // Second pass: remove the orphaned press events (from the end, since they're likely last)
+    _recordingBuffer.removeWhere((event) {
+      if (event.type == MacroEventType.keyPress && event.key != null && heldKeySet.contains(event.key!)) {
+        return true;
+      }
+      if (event.type == MacroEventType.mouseDown && event.button != null && heldMouseSet.contains(event.button!)) {
+        return true;
+      }
+      return false;
+    });
   }
 
   MacroModel stopRecording({String name = 'Recorded Macro'}) {
-    if (_status != MacroStatus.recording) {
+    if (_status != MacroStatus.recording && _status != MacroStatus.paused) {
       throw StateError('Not recording');
     }
 
@@ -229,6 +298,8 @@ class MacroService {
       events: List.from(_recordingBuffer),
     );
     _recordingBuffer.clear();
+    _heldKeys.clear();
+    _heldMouseButtons.clear();
     return macro;
   }
 
@@ -243,16 +314,22 @@ class MacroService {
 
     _status = MacroStatus.idle;
     _recordingBuffer.clear();
+    _heldKeys.clear();
+    _heldMouseButtons.clear();
     onStatusChanged?.call(_status);
   }
 
   // ─── Playback ──────────────────────────────────────────────
+
+  // Track keys held during playback for cleanup
+  final Set<String> _heldPlaybackKeys = {};
 
   Future<void> playMacro(MacroModel macro) async {
     if (_status != MacroStatus.idle) return;
 
     _currentMacro = macro;
     _status = MacroStatus.playing;
+    _heldPlaybackKeys.clear();
     onStatusChanged?.call(_status);
     _currentRepeat = 0;
 
@@ -300,6 +377,22 @@ class MacroService {
 
   Future<void> _executeEvent(MacroEvent event) async {
     switch (event.type) {
+      case MacroEventType.mouseDown:
+        await _input.mouseDown(
+          x: event.x ?? -1,
+          y: event.y ?? -1,
+          button: event.button ?? 'left',
+        );
+        break;
+
+      case MacroEventType.mouseUp:
+        await _input.mouseUp(
+          x: event.x ?? -1,
+          y: event.y ?? -1,
+          button: event.button ?? 'left',
+        );
+        break;
+
       case MacroEventType.click:
         await _input.mouseClick(
           x: event.x ?? -1,
@@ -310,12 +403,14 @@ class MacroService {
 
       case MacroEventType.keyPress:
         if (event.key != null) {
+          _heldPlaybackKeys.add(event.key!);
           await _input.keyPress(event.key!);
         }
         break;
 
       case MacroEventType.keyRelease:
         if (event.key != null) {
+          _heldPlaybackKeys.remove(event.key!);
           await _input.keyRelease(event.key!);
         }
         break;
@@ -341,8 +436,31 @@ class MacroService {
     final wasPlaying = _status == MacroStatus.playing;
     _status = MacroStatus.idle;
     if (wasPlaying) {
+      // Release all keys that may be stuck after playback
+      _releaseAllKeys();
       onStatusChanged?.call(_status);
     }
+  }
+
+  /// Release all keys that are still held after playback, plus common modifier keys.
+  void _releaseAllKeys() {
+    // Release keys tracked as held during playback
+    for (final key in _heldPlaybackKeys.toList()) {
+      _input.keyRelease(key);
+    }
+    _heldPlaybackKeys.clear();
+    // Also release common modifier keys as a safety net
+    const safetyKeys = [
+      'Shift', 'Ctrl', 'Alt', 'Win',
+      'Enter', 'Space', 'Tab', 'Escape', 'Backspace', 'Delete',
+    ];
+    for (final key in safetyKeys) {
+      _input.keyRelease(key);
+    }
+    // Release mouse buttons
+    _input.mouseUp(x: -1, y: -1, button: 'left');
+    _input.mouseUp(x: -1, y: -1, button: 'right');
+    _input.mouseUp(x: -1, y: -1, button: 'middle');
   }
 
   void dispose() {

@@ -11,6 +11,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
 import '../../services/app_state.dart';
 import '../../models/macro_model.dart';
+import '../../models/hotkey_config.dart';
 
 class MacroPage extends StatelessWidget {
   const MacroPage({super.key});
@@ -75,15 +76,19 @@ class MacroPage extends StatelessWidget {
   // ─── Status Bars ──────────────────────────────────────────
 
   Widget _buildRecordingStatus(AppState state) {
+    final isPaused = state.isPaused;
+    final color = isPaused ? Colors.orange : Colors.red;
+    final text = isPaused ? '录制已暂停 · ${state.recordingEventCount} 个事件' : '录制中 · ${state.recordingEventCount} 个事件';
+    final hint = isPaused ? '请保存或丢弃录制内容' : '按 ${state.hotkeyConfig.startStopRecording} 停止';
     return Container(
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(color: Colors.red.withValues(alpha:0.08), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.red.withValues(alpha:0.3))),
+      decoration: BoxDecoration(color: color.withValues(alpha:0.08), borderRadius: BorderRadius.circular(8), border: Border.all(color: color.withValues(alpha:0.3))),
       child: Row(children: [
-        Icon(FluentIcons.record2, color: Colors.red, size: 16),
+        Icon(isPaused ? FluentIcons.pause : FluentIcons.record2, color: color, size: 16),
         const SizedBox(width: 8),
-        Text('录制中 · ${state.recordingEventCount} 个事件', style: TextStyle(color: Colors.red, fontSize: 13)),
+        Text(text, style: TextStyle(color: color, fontSize: 13)),
         const Spacer(),
-        Text('按 ${state.hotkeyConfig.startStopRecording} 停止', style: TextStyle(color: Colors.red.withValues(alpha:0.7), fontSize: 12)),
+        Text(hint, style: TextStyle(color: color.withValues(alpha:0.7), fontSize: 12)),
       ]),
     );
   }
@@ -108,6 +113,22 @@ class MacroPage extends StatelessWidget {
   // ─── Record Button ────────────────────────────────────────
 
   Widget _buildRecordButton(BuildContext context, AppState state) {
+    if (state.isPaused) {
+      // Paused: show save and discard buttons
+      return Row(children: [
+        Expanded(child: SizedBox(height: 48, child: FilledButton(
+          onPressed: () => _stopRecording(context, state),
+          style: ButtonStyle(backgroundColor: WidgetStatePropertyAll(FluentTheme.of(context).accentColor)),
+          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(FluentIcons.save, size: 18, color: Colors.white), SizedBox(width: 8), Text('保存录制', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white))]),
+        ))),
+        const SizedBox(width: 8),
+        Expanded(child: SizedBox(height: 48, child: FilledButton(
+          onPressed: () => _discardRecording(context, state),
+          style: ButtonStyle(backgroundColor: WidgetStatePropertyAll(Colors.red)),
+          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(FluentIcons.cancel, size: 18, color: Colors.white), SizedBox(width: 8), Text('丢弃录制', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white))]),
+        ))),
+      ]);
+    }
     if (state.isRecording) {
       return SizedBox(width: double.infinity, height: 48, child: FilledButton(
         onPressed: () => _stopRecording(context, state),
@@ -130,24 +151,36 @@ class MacroPage extends StatelessWidget {
   }
 
   Future<void> _stopRecording(BuildContext context, AppState state) async {
-    // Stop the hook FIRST so no more events are captured while dialog is open
-    state.pauseRecording();
+    // Pause the hook if still recording
+    if (!state.isPaused) {
+      state.pauseRecording();
+    }
 
     final nameController = TextEditingController();
-    final name = await showDialog<String>(
+    final result = await showDialog<String>(
       context: context,
       builder: (ctx) => ContentDialog(
         title: const Text('保存宏'),
         content: TextBox(controller: nameController, autofocus: true, placeholder: '输入宏名称'),
         actions: [
+          Button(onPressed: () => Navigator.pop(ctx, 'discard'), child: const Text('丢弃')),
           Button(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, nameController.text), child: const Text('保存')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, nameController.text.isNotEmpty ? nameController.text : 'save'), child: const Text('保存')),
         ],
       ),
     );
-    if (name != null && context.mounted) {
-      await state.stopRecording(name: name.isNotEmpty ? name : '录制的宏');
+    if (!context.mounted) return;
+    if (result == 'discard') {
+      state.cancelRecording();
+    } else if (result != null) {
+      final name = result == 'save' ? '录制的宏' : result;
+      await state.stopRecording(name: name);
     }
+    // If result is null (cancel), keep paused state so user can still decide
+  }
+
+  void _discardRecording(BuildContext context, AppState state) {
+    state.cancelRecording();
   }
 
   // ─── Macro Card ───────────────────────────────────────────
@@ -163,7 +196,7 @@ class MacroPage extends StatelessWidget {
     final canPlay = !state.isRecording && !state.isPlaying;
 
     final keyCount = macro.events.where((e) => e.type == MacroEventType.keyPress || e.type == MacroEventType.keyRelease).length;
-    final clickCount = macro.events.where((e) => e.type == MacroEventType.click).length;
+    final clickCount = macro.events.where((e) => e.type == MacroEventType.click || e.type == MacroEventType.mouseDown || e.type == MacroEventType.mouseUp).length;
     final scrollCount = macro.events.where((e) => e.type == MacroEventType.scroll).length;
     final waitCount = macro.events.where((e) => e.type == MacroEventType.wait).length;
 
@@ -195,6 +228,7 @@ class MacroPage extends StatelessWidget {
             if (waitCount > 0) ...[_eventTag(FluentIcons.stopwatch, '$waitCount'), const SizedBox(width: 6)],
             _infoTag(durationStr, bg: tagBg),
             if (macro.repeatCount > 1) ...[const SizedBox(width: 4), _infoTag('x${macro.repeatCount}', bg: tagBg)],
+            if (macro.hotkey != null) ...[const SizedBox(width: 4), _infoTag(macro.hotkey!, bg: tagBg)],
           ]),
         ])),
 
@@ -309,7 +343,7 @@ class MacroPage extends StatelessWidget {
 
   void _showMacroEditor(BuildContext context, AppState state, MacroModel macro) {
     showDialog(context: context, builder: (ctx) => _MacroEditorDialog(macro: macro, onSave: (updatedMacro) async {
-      await state.saveMacroFromBuilder(updatedMacro);
+      await state.updateMacro(updatedMacro);
       if (ctx.mounted) Navigator.pop(ctx);
     }));
   }
@@ -469,6 +503,22 @@ class MacroPage extends StatelessWidget {
       for (final event in macro.events) {
         final delayMs = (1.0 / macro.speed).round();
         switch (event.type) {
+          case MacroEventType.mouseDown:
+            final btn = event.button == 'right' ? 'R' : (event.button == 'middle' ? 'M' : '');
+            if (event.x != null && event.y != null) {
+              buf.writeln('Click, $btn${event.x}, ${event.y}, D');
+            } else {
+              buf.writeln('Click, $btn, , D');
+            }
+            break;
+          case MacroEventType.mouseUp:
+            final btn = event.button == 'right' ? 'R' : (event.button == 'middle' ? 'M' : '');
+            if (event.x != null && event.y != null) {
+              buf.writeln('Click, $btn${event.x}, ${event.y}, U');
+            } else {
+              buf.writeln('Click, $btn, , U');
+            }
+            break;
           case MacroEventType.click:
             final btn = event.button == 'right' ? 'R' : (event.button == 'middle' ? 'M' : '');
             if (event.x != null && event.y != null) {
@@ -515,27 +565,36 @@ class MacroPage extends StatelessWidget {
         continue;
       }
 
-      // Click x, y [button]
+      // Click x, y [button] [D|U]
       if (trimmed.startsWith('Click')) {
         final parts = trimmed.substring(5).trim().split(RegExp(r'[,\s]+')).where((s) => s.isNotEmpty).toList();
         String button = 'left';
+        bool isDown = false;
+        bool isUp = false;
         int? x, y;
-        if (parts.isNotEmpty) {
-          // Check if first part is a button modifier
-          if (parts[0] == 'R' || parts[0] == 'Right') { button = 'right'; parts.removeAt(0); }
-          else if (parts[0] == 'M' || parts[0] == 'Middle') { button = 'middle'; parts.removeAt(0); }
-          else if (parts[0] == 'WheelDown' || parts[0] == 'WheelUp') {
+        // Parse parts
+        final remaining = <String>[];
+        for (final part in parts) {
+          if (part == 'R' || part == 'Right') { button = 'right'; }
+          else if (part == 'M' || part == 'Middle') { button = 'middle'; }
+          else if (part == 'D') { isDown = true; }
+          else if (part == 'U') { isUp = true; }
+          else if (part == 'WheelDown' || part == 'WheelUp') {
             final count = parts.length > 1 ? int.tryParse(parts[1]) ?? 1 : 1;
-            events.add(MacroEvent(type: MacroEventType.scroll, timestampMs: ts, scrollDy: parts[0] == 'WheelDown' ? count.toDouble() : -count.toDouble()));
+            events.add(MacroEvent(type: MacroEventType.scroll, timestampMs: ts, scrollDy: part == 'WheelDown' ? count.toDouble() : -count.toDouble()));
             ts += 10;
             continue;
           }
-          if (parts.length >= 2) {
-            x = int.tryParse(parts[0]);
-            y = int.tryParse(parts[1]);
-          }
+          else { remaining.add(part); }
         }
-        events.add(MacroEvent(type: MacroEventType.click, timestampMs: ts, x: x, y: y, button: button));
+        if (remaining.length >= 2) {
+          x = int.tryParse(remaining[0]);
+          y = int.tryParse(remaining[1]);
+        }
+        MacroEventType type = MacroEventType.click;
+        if (isDown) type = MacroEventType.mouseDown;
+        else if (isUp) type = MacroEventType.mouseUp;
+        events.add(MacroEvent(type: type, timestampMs: ts, x: x, y: y, button: button));
         ts += 10;
       }
       // Send, {key} or Send, text
@@ -623,6 +682,9 @@ class _MacroEditorDialogState extends State<_MacroEditorDialog> {
   late TextEditingController _nameCtrl;
   late int _repeatCount;
   late double _speed;
+  late List<MacroEvent> _events;
+  int? _editingIndex;
+  String? _hotkey;
 
   @override
   void initState() {
@@ -630,6 +692,129 @@ class _MacroEditorDialogState extends State<_MacroEditorDialog> {
     _nameCtrl = TextEditingController(text: widget.macro.name);
     _repeatCount = widget.macro.repeatCount;
     _speed = widget.macro.speed;
+    _events = List.from(widget.macro.events);
+    _hotkey = widget.macro.hotkey;
+  }
+
+  String _eventLabel(MacroEvent e) {
+    switch (e.type) {
+      case MacroEventType.mouseDown:
+        final btn = e.button == 'right' ? '右键' : (e.button == 'middle' ? '中键' : '左键');
+        return '$btn按下 (${e.x}, ${e.y})';
+      case MacroEventType.mouseUp:
+        final btn = e.button == 'right' ? '右键' : (e.button == 'middle' ? '中键' : '左键');
+        return '$btn释放 (${e.x}, ${e.y})';
+      case MacroEventType.click:
+        final btn = e.button == 'right' ? '右键' : (e.button == 'middle' ? '中键' : '左键');
+        return '$btn点击 (${e.x}, ${e.y})';
+      case MacroEventType.keyPress:
+        return '按下 ${e.key ?? "?"}';
+      case MacroEventType.keyRelease:
+        return '释放 ${e.key ?? "?"}';
+      case MacroEventType.scroll:
+        final dir = (e.scrollDy ?? 0) > 0 ? '上' : '下';
+        return '滚轮$dir';
+      case MacroEventType.wait:
+        return '等待 ${e.timestampMs}ms';
+    }
+  }
+
+  IconData _eventIcon(MacroEventType type) {
+    switch (type) {
+      case MacroEventType.mouseDown: return FluentIcons.touch_pointer;
+      case MacroEventType.mouseUp: return FluentIcons.touch_pointer;
+      case MacroEventType.click: return FluentIcons.touch_pointer;
+      case MacroEventType.keyPress: return FluentIcons.keyboard_classic;
+      case MacroEventType.keyRelease: return FluentIcons.keyboard_classic;
+      case MacroEventType.scroll: return FluentIcons.scroll_up_down;
+      case MacroEventType.wait: return FluentIcons.stopwatch;
+    }
+  }
+
+  ({List<String> mods, String key}) _parseHotkeyParts() {
+    if (_hotkey == null) return (mods: List.from(_pendingMods), key: '');
+    final parsed = HotkeyConfig.splitHotkey(_hotkey!);
+    return parsed;
+  }
+
+  String? _buildHotkeyFromParts(({List<String> mods, String key}) parts) {
+    if (parts.key.isEmpty) return null;
+    return HotkeyConfig.buildHotkey(parts.mods, parts.key);
+  }
+
+  // Track pending modifiers even when no key is selected yet
+  List<String> _pendingMods = [];
+
+  void _insertMacroEvents(BuildContext context) {
+    final state = context.read<AppState>();
+    final otherMacros = state.macros.where((m) => m.id != widget.macro.id && m.events.isNotEmpty).toList();
+    if (otherMacros.isEmpty) {
+      showDialog(context: context, builder: (_) => ContentDialog(
+        title: const Text('插入宏'),
+        content: const Text('没有可插入的宏'),
+        actions: [Button(onPressed: () => Navigator.pop(context), child: const Text('确定'))],
+      ));
+      return;
+    }
+
+    int insertIndex = _events.length; // default: append at end
+    showDialog(context: context, builder: (_) {
+      return StatefulBuilder(builder: (context, setDialogState) {
+        return ContentDialog(
+          title: const Text('插入宏'),
+          constraints: const BoxConstraints(maxWidth: 400, maxHeight: 500),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            // Insert position selector
+            Row(children: [
+              const Text('插入位置:', style: TextStyle(fontSize: 13)),
+              const SizedBox(width: 8),
+              ComboBox<int>(
+                value: insertIndex,
+                items: List.generate(_events.length + 1, (i) {
+                  final label = i == 0 ? '最前面' : (i == _events.length ? '最后面' : '第 $i 步之后');
+                  return ComboBoxItem<int>(value: i, child: Text(label, style: const TextStyle(fontSize: 12)));
+                }),
+                onChanged: (v) { if (v != null) setDialogState(() => insertIndex = v); },
+              ),
+            ]),
+            const SizedBox(height: 10),
+            const Divider(),
+            const SizedBox(height: 6),
+            Flexible(child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: otherMacros.length,
+              itemBuilder: (_, i) {
+                final m = otherMacros[i];
+                return ListTile(
+                  title: Text(m.name, style: const TextStyle(fontSize: 13)),
+                  subtitle: Text('${m.events.length} 个事件 · ${m.totalDurationMs}ms', style: const TextStyle(fontSize: 11)),
+                  onPressed: () {
+                    // Insert at chosen position
+                    final baseTime = insertIndex == 0 ? 0 : _events[insertIndex - 1].timestampMs;
+                    final newEvents = m.events.map((e) => MacroEvent(
+                      type: e.type,
+                      timestampMs: e.timestampMs + baseTime,
+                      button: e.button,
+                      x: e.x,
+                      y: e.y,
+                      key: e.key,
+                      scrollDx: e.scrollDx,
+                      scrollDy: e.scrollDy,
+                    )).toList();
+                    setState(() {
+                      _events.insertAll(insertIndex, newEvents);
+                      _editingIndex = null;
+                    });
+                    Navigator.pop(context);
+                  },
+                );
+              },
+            )),
+          ]),
+          actions: [Button(onPressed: () => Navigator.pop(context), child: const Text('取消'))],
+        );
+      });
+    });
   }
 
   @override
@@ -637,50 +822,281 @@ class _MacroEditorDialogState extends State<_MacroEditorDialog> {
     final isDark = FluentTheme.of(context).brightness == Brightness.dark;
     final accent = FluentTheme.of(context).accentColor;
     final containerBg = isDark ? const Color(0xFF303050) : const Color(0xFFF0F0F8);
-    final macro = widget.macro;
-    final keyCount = macro.events.where((e) => e.type == MacroEventType.keyPress || e.type == MacroEventType.keyRelease).length;
-    final clickCount = macro.events.where((e) => e.type == MacroEventType.click).length;
+    final rowBg = isDark ? const Color(0xFF252540) : const Color(0xFFF8F8FF);
+    final editBg = isDark ? const Color(0xFF1A1A30) : const Color(0xFFFFFFFF);
 
     return ContentDialog(
       title: const Text('编辑宏'),
-      content: SizedBox(width: 380, child: Column(mainAxisSize: MainAxisSize.min, children: [
+      constraints: const BoxConstraints(maxWidth: 520, maxHeight: 600),
+      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        // Name
         TextBox(controller: _nameCtrl, placeholder: '宏名称'),
-        const SizedBox(height: 12),
-        // Event summary
-        Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(color: containerBg, borderRadius: BorderRadius.circular(8)),
-          child: Row(children: [
-            if (clickCount > 0) ...[Icon(FluentIcons.touch_pointer, size: 14, color: accent), const SizedBox(width: 4), Text('$clickCount 点击', style: const TextStyle(fontSize: 12)), const SizedBox(width: 12)],
-            if (keyCount > 0) ...[Icon(FluentIcons.keyboard_classic, size: 14, color: accent), const SizedBox(width: 4), Text('${keyCount ~/ 2} 按键', style: const TextStyle(fontSize: 12)), const SizedBox(width: 12)],
-            Icon(FluentIcons.timer, size: 14, color: accent), const SizedBox(width: 4), Text('${macro.totalDurationMs}ms', style: const TextStyle(fontSize: 12)),
-          ]),
-        ),
-        const SizedBox(height: 12),
-        // Repeat count
+        const SizedBox(height: 10),
+        // Hotkey
         Row(children: [
-          const Text('重复次数:', style: TextStyle(fontSize: 13)),
+          const Text('快捷键:', style: TextStyle(fontSize: 13)),
           const SizedBox(width: 8),
-          SizedBox(width: 80, child: TextBox(
+          ...HotkeyConfig.modifiers.map((mod) {
+            final parts = _hotkey?.split('+') ?? [];
+            // Also check pending modifiers (selected before a key was chosen)
+            final selected = parts.contains(mod) || _pendingMods.contains(mod);
+            return Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: MouseRegion(cursor: SystemMouseCursors.click, child: GestureDetector(
+                onTap: () => setState(() {
+                  if (selected) {
+                    _pendingMods.remove(mod);
+                  } else {
+                    _pendingMods.add(mod);
+                  }
+                  final current = _parseHotkeyParts();
+                  final mergedMods = {...current.mods, ..._pendingMods}.toList();
+                  _hotkey = _buildHotkeyFromParts((mods: mergedMods, key: current.key));
+                }),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: selected ? accent.withValues(alpha: 0.2) : Colors.transparent,
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: selected ? accent : accent.withValues(alpha: 0.3)),
+                  ),
+                  child: Text(mod, style: TextStyle(fontSize: 11, color: selected ? accent : null, fontWeight: selected ? FontWeight.w600 : FontWeight.normal)),
+                ),
+              )),
+            );
+          }),
+          const SizedBox(width: 4),
+          DropDownButton(
+            title: Text(
+              _parseHotkeyParts().key.isEmpty ? '未设置' : _parseHotkeyParts().key,
+              style: TextStyle(fontSize: 11, color: _hotkey != null ? accent : null),
+            ),
+            items: HotkeyConfig.keys.map((key) => MenuFlyoutItem(
+              text: Text(key, style: const TextStyle(fontSize: 11)),
+              onPressed: () => setState(() {
+                final current = _parseHotkeyParts();
+                final mergedMods = {...current.mods, ..._pendingMods}.toList();
+                _pendingMods.clear();
+                _hotkey = _buildHotkeyFromParts((mods: mergedMods, key: key));
+              }),
+            )).toList(),
+          ),
+          if (_hotkey != null) ...[
+            const SizedBox(width: 6),
+            GestureDetector(
+              onTap: () => setState(() { _hotkey = null; _pendingMods.clear(); }),
+              child: Icon(FluentIcons.clear, size: 12, color: Colors.red.withValues(alpha: 0.7)),
+            ),
+          ],
+        ]),
+        const SizedBox(height: 10),
+        // Repeat & Speed
+        Row(children: [
+          const Text('重复:', style: TextStyle(fontSize: 13)),
+          const SizedBox(width: 6),
+          SizedBox(width: 70, child: TextBox(
             controller: TextEditingController(text: _repeatCount == 0 ? '∞' : _repeatCount.toString()),
             onChanged: (v) { final p = int.tryParse(v); if (p != null) setState(() => _repeatCount = p); },
           )),
-          const SizedBox(width: 8),
+          const SizedBox(width: 4),
           const Text('(0=无限)', style: TextStyle(fontSize: 11)),
-        ]),
-        const SizedBox(height: 12),
-        // Speed
-        Row(children: [
-          const Text('播放速度:', style: TextStyle(fontSize: 13)),
-          const SizedBox(width: 8),
+          const Spacer(),
+          const Text('速度:', style: TextStyle(fontSize: 13)),
+          const SizedBox(width: 6),
           Text('${_speed.toStringAsFixed(1)}x', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-          Expanded(child: Slider(value: _speed, min: 0.1, max: 5.0, divisions: 49, onChanged: (v) => setState(() => _speed = v))),
+          SizedBox(width: 120, child: Slider(value: _speed, min: 0.1, max: 5.0, divisions: 49, onChanged: (v) => setState(() => _speed = v))),
         ]),
-      ])),
-      actions: [FilledButton(onPressed: () {
-        final updated = widget.macro.copyWith(name: _nameCtrl.text.isNotEmpty ? _nameCtrl.text : widget.macro.name, repeatCount: _repeatCount, speed: _speed);
-        widget.onSave(updated);
-      }, child: const Text('保存'))],
+        const SizedBox(height: 10),
+        // Event list header
+        Row(children: [
+          Text('事件列表 (${_events.length})', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+          const Spacer(),
+          Button(onPressed: () => _insertMacroEvents(context), child: const Text('插入宏')),
+          const SizedBox(width: 6),
+          if (_events.isNotEmpty)
+            Button(onPressed: () => setState(() { _events.clear(); _editingIndex = null; }), child: const Text('清空')),
+        ]),
+        const SizedBox(height: 6),
+        // Event list
+        Flexible(child: Container(
+          constraints: const BoxConstraints(maxHeight: 320),
+          decoration: BoxDecoration(color: containerBg, borderRadius: BorderRadius.circular(8)),
+          child: _events.isEmpty
+              ? const Padding(padding: EdgeInsets.all(20), child: Center(child: Text('暂无事件', style: TextStyle(fontSize: 13))))
+              : ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: _events.length,
+                  itemBuilder: (ctx, i) {
+                    final event = _events[i];
+                    final isEditing = _editingIndex == i;
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      child: isEditing ? _buildEventEditor(i, event, accent, editBg) : _buildEventRow(i, event, accent, rowBg),
+                    );
+                  },
+                ),
+        )),
+      ]),
+      actions: [
+        Button(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+        FilledButton(onPressed: () {
+          final updated = widget.macro.copyWith(
+            name: _nameCtrl.text.isNotEmpty ? _nameCtrl.text : widget.macro.name,
+            events: _events,
+            repeatCount: _repeatCount,
+            speed: _speed,
+            hotkey: _hotkey,
+          );
+          widget.onSave(updated);
+        }, child: const Text('保存')),
+      ],
+    );
+  }
+
+  Widget _buildEventRow(int index, MacroEvent event, Color accent, Color bg) {
+    return GestureDetector(
+      onTap: () => setState(() => _editingIndex = index),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(6)),
+        child: Row(children: [
+          Icon(_eventIcon(event.type), size: 14, color: accent),
+          const SizedBox(width: 8),
+          Expanded(child: Text(_eventLabel(event), style: const TextStyle(fontSize: 12))),
+          Text('${event.timestampMs}ms', style: TextStyle(fontSize: 11, color: accent.withValues(alpha:0.7))),
+          const SizedBox(width: 8),
+          // Delete button
+          GestureDetector(
+            onTap: () => setState(() {
+              _events.removeAt(index);
+              if (_editingIndex == index) _editingIndex = null;
+              else if (_editingIndex != null && _editingIndex! > index) _editingIndex = _editingIndex! - 1;
+            }),
+            child: Icon(FluentIcons.delete, size: 12, color: Colors.red.withValues(alpha:0.7)),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _buildEventEditor(int index, MacroEvent event, Color accent, Color bg) {
+    final timeCtrl = TextEditingController(text: event.timestampMs.toString());
+    final xCtrl = TextEditingController(text: (event.x ?? 0).toString());
+    final yCtrl = TextEditingController(text: (event.y ?? 0).toString());
+    final keyCtrl = TextEditingController(text: event.key ?? '');
+    final scrollCtrl = TextEditingController(text: (event.scrollDy ?? 0).toString());
+
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(6), border: Border.all(color: accent.withValues(alpha:0.4))),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // Header
+        Row(children: [
+          Icon(_eventIcon(event.type), size: 14, color: accent),
+          const SizedBox(width: 6),
+          Text(_eventLabel(event), style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: accent)),
+          const Spacer(),
+          GestureDetector(
+            onTap: () => setState(() => _editingIndex = null),
+            child: const Icon(FluentIcons.cancel, size: 12),
+          ),
+        ]),
+        const SizedBox(height: 8),
+        // Time
+        Row(children: [
+          const SizedBox(width: 60, child: Text('时间(ms):', style: TextStyle(fontSize: 12))),
+          SizedBox(width: 80, child: TextBox(controller: timeCtrl, placeholder: '0')),
+        ]),
+        const SizedBox(height: 4),
+        // Type-specific fields
+        if (event.type == MacroEventType.click || event.type == MacroEventType.mouseDown || event.type == MacroEventType.mouseUp) ...[
+          Row(children: [
+            const SizedBox(width: 60, child: Text('X:', style: TextStyle(fontSize: 12))),
+            SizedBox(width: 70, child: TextBox(controller: xCtrl, placeholder: '0')),
+            const SizedBox(width: 12),
+            const Text('Y:', style: TextStyle(fontSize: 12)),
+            SizedBox(width: 70, child: TextBox(controller: yCtrl, placeholder: '0')),
+          ]),
+          const SizedBox(height: 4),
+          Row(children: [
+            const SizedBox(width: 60, child: Text('按钮:', style: TextStyle(fontSize: 12))),
+            ...['left', 'right', 'middle'].map((btn) {
+              final label = btn == 'left' ? '左键' : (btn == 'right' ? '右键' : '中键');
+              final selected = event.button == btn;
+              return Padding(padding: const EdgeInsets.only(right: 6), child: MouseRegion(cursor: SystemMouseCursors.click, child: GestureDetector(
+                onTap: () => setState(() {
+                  _events[index] = MacroEvent(
+                    type: event.type, timestampMs: event.timestampMs,
+                    button: btn, x: event.x, y: event.y,
+                  );
+                }),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: selected ? accent.withValues(alpha:0.2) : Colors.transparent,
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: selected ? accent : accent.withValues(alpha:0.3)),
+                  ),
+                  child: Text(label, style: TextStyle(fontSize: 11, color: selected ? accent : null, fontWeight: selected ? FontWeight.w600 : FontWeight.normal)),
+                ),
+              )));
+            }),
+          ]),
+        ],
+        if (event.type == MacroEventType.keyPress || event.type == MacroEventType.keyRelease) ...[
+          Row(children: [
+            const SizedBox(width: 60, child: Text('按键:', style: TextStyle(fontSize: 12))),
+            SizedBox(width: 120, child: TextBox(controller: keyCtrl, placeholder: 'Key')),
+          ]),
+        ],
+        if (event.type == MacroEventType.scroll) ...[
+          Row(children: [
+            const SizedBox(width: 60, child: Text('滚动量:', style: TextStyle(fontSize: 12))),
+            SizedBox(width: 80, child: TextBox(controller: scrollCtrl, placeholder: '0')),
+          ]),
+        ],
+        const SizedBox(height: 8),
+        // Apply button
+        Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+          FilledButton(onPressed: () {
+            final newTime = int.tryParse(timeCtrl.text) ?? event.timestampMs;
+            MacroEvent newEvent;
+            switch (event.type) {
+              case MacroEventType.click:
+              case MacroEventType.mouseDown:
+              case MacroEventType.mouseUp:
+                newEvent = MacroEvent(
+                  type: event.type, timestampMs: newTime,
+                  button: event.button,
+                  x: int.tryParse(xCtrl.text) ?? event.x,
+                  y: int.tryParse(yCtrl.text) ?? event.y,
+                );
+                break;
+              case MacroEventType.keyPress:
+              case MacroEventType.keyRelease:
+                newEvent = MacroEvent(
+                  type: event.type, timestampMs: newTime,
+                  key: keyCtrl.text.isNotEmpty ? keyCtrl.text : event.key,
+                );
+                break;
+              case MacroEventType.scroll:
+                newEvent = MacroEvent(
+                  type: event.type, timestampMs: newTime,
+                  scrollDx: event.scrollDx,
+                  scrollDy: double.tryParse(scrollCtrl.text) ?? event.scrollDy,
+                );
+                break;
+              case MacroEventType.wait:
+                newEvent = MacroEvent(type: event.type, timestampMs: newTime);
+                break;
+            }
+            setState(() {
+              _events[index] = newEvent;
+              _editingIndex = null;
+            });
+          }, child: const Text('应用')),
+        ]),
+      ]),
     );
   }
 }

@@ -4,6 +4,8 @@ library;
 import 'dart:convert';
 
 enum MacroEventType {
+  mouseDown,
+  mouseUp,
   click,
   keyPress,
   keyRelease,
@@ -64,6 +66,7 @@ class MacroModel {
   int repeatCount; // 0 = infinite
   double speed; // 0.1 ~ 10.0
   DateTime createdAt;
+  String? hotkey; // Per-macro hotkey, e.g. "Alt+F3"
 
   MacroModel({
     required this.id,
@@ -72,6 +75,7 @@ class MacroModel {
     this.repeatCount = 1,
     this.speed = 1.0,
     DateTime? createdAt,
+    this.hotkey,
   })  : events = events ?? [],
         createdAt = createdAt ?? DateTime.now();
 
@@ -93,6 +97,7 @@ class MacroModel {
       createdAt: json['createdAt'] != null
           ? DateTime.parse(json['createdAt'] as String)
           : DateTime.now(),
+      hotkey: json['hotkey'] as String?,
     );
   }
 
@@ -103,6 +108,7 @@ class MacroModel {
         'repeatCount': repeatCount,
         'speed': speed,
         'createdAt': createdAt.toIso8601String(),
+        if (hotkey != null) 'hotkey': hotkey,
       };
 
   String toJsonString() => jsonEncode(toJson());
@@ -116,6 +122,8 @@ class MacroModel {
     List<MacroEvent>? events,
     int? repeatCount,
     double? speed,
+    // Use Object? to distinguish "not provided" from "explicitly null"
+    Object? hotkey = _notProvided,
   }) {
     return MacroModel(
       id: id,
@@ -124,6 +132,9 @@ class MacroModel {
       repeatCount: repeatCount ?? this.repeatCount,
       speed: speed ?? this.speed,
       createdAt: createdAt,
+      hotkey: hotkey == _notProvided ? this.hotkey : hotkey as String?,
     );
   }
+
+  static const _notProvided = Object();
 }

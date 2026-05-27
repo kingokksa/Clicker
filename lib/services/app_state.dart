@@ -89,7 +89,8 @@ class AppState extends ChangeNotifier {
   List<MacroModel> get macros => List.unmodifiable(_macros);
   List<String> get profiles => List.unmodifiable(_profiles);
   bool get isClickerRunning => _clickerStatus == ClickerStatus.running;
-  bool get isRecording => _macroStatus == MacroStatus.recording;
+  bool get isRecording => _macroStatus == MacroStatus.recording || _macroStatus == MacroStatus.paused;
+  bool get isPaused => _macroStatus == MacroStatus.paused;
   bool get isPlaying => _macroStatus == MacroStatus.playing;
   PlatformInput get platformInput => _platformInput;
   WindowDetectService get windowDetectService => _windowDetectService;
@@ -232,11 +233,13 @@ class AppState extends ChangeNotifier {
       };
       _hotkeyService.onStartStopRecording = () async {
         if (_macroService.isRecording) {
-          _macroService.stopRecording();
+          // Pause hook immediately so no more events captured
+          _macroService.pauseRecording();
+          notifyListeners();
         } else {
           await _macroService.startRecording();
+          notifyListeners();
         }
-        notifyListeners();
       };
       _hotkeyService.onEmergencyStop = () {
         _clickService.stop();
@@ -247,6 +250,13 @@ class AppState extends ChangeNotifier {
       _hotkeyService.onPlayMacro = () {
         if (_macros.isNotEmpty && !_macroService.isPlaying) {
           _macroService.playMacro(_macros.first);
+        }
+      };
+      _hotkeyService.onPlayMacroById = (macroId) {
+        if (_macroService.isPlaying) return;
+        final macro = _macros.where((m) => m.id == macroId).firstOrNull;
+        if (macro != null) {
+          _macroService.playMacro(macro);
         }
       };
       _hotkeyService.onHoldTriggerStart = () {
@@ -275,6 +285,9 @@ class AppState extends ChangeNotifier {
 
       // Load macros
       _macros = await _storage.loadAllMacros();
+
+      // Register per-macro hotkeys
+      await _hotkeyService.reregisterAllMacroHotkeys(_macros);
 
       _isInitialized = true;
       notifyListeners();
@@ -402,6 +415,7 @@ class AppState extends ChangeNotifier {
     final macro = _macroService.stopRecording(name: name);
     await _storage.saveMacro(macro);
     _macros.insert(0, macro);
+    await _hotkeyService.reregisterAllMacroHotkeys(_macros);
     notifyListeners();
   }
 
@@ -416,6 +430,7 @@ class AppState extends ChangeNotifier {
   Future<void> deleteMacro(MacroModel macro) async {
     await _storage.deleteMacro(macro.id);
     _macros.removeWhere((m) => m.id == macro.id);
+    await _hotkeyService.reregisterAllMacroHotkeys(_macros);
     notifyListeners();
   }
 
@@ -432,6 +447,18 @@ class AppState extends ChangeNotifier {
   Future<void> saveMacroFromBuilder(MacroModel macro) async {
     await _storage.saveMacro(macro);
     _macros.insert(0, macro);
+    notifyListeners();
+  }
+
+  Future<void> updateMacro(MacroModel macro) async {
+    final idx = _macros.indexWhere((m) => m.id == macro.id);
+    if (idx >= 0) {
+      _macros[idx] = macro;
+    } else {
+      _macros.insert(0, macro);
+    }
+    await _storage.saveMacro(macro);
+    await _hotkeyService.reregisterAllMacroHotkeys(_macros);
     notifyListeners();
   }
 

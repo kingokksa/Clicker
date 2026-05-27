@@ -32,12 +32,13 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
   @override
   void initState() {
     super.initState();
-    _platformChannel.setMethodCallHandler(_handleMethodCall);
+    // Don't set handler here — we register it only when picking coords
+    // to avoid overwriting other pages' handlers on the shared channel.
   }
 
   @override
   void dispose() {
-    _platformChannel.setMethodCallHandler(null);
+    // Don't clear handler — other pages may still need it.
     super.dispose();
   }
 
@@ -86,6 +87,8 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
     final config = state.clickerConfig;
     if (config.targetHwnd == 0) return;
     setState(() => _pickingCoords = true);
+    // Register handler before starting overlay to receive callbacks
+    _platformChannel.setMethodCallHandler(_handleMethodCall);
     try {
       await _platformChannel.invokeMethod('startWindowPickOverlay', [config.targetHwnd]);
     } catch (_) {
