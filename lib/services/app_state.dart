@@ -43,6 +43,7 @@ class AppState extends ChangeNotifier {
   bool _alwaysOnTop = true;
   bool _minimizeToTray = true;
   bool _floatingAlwaysOnTop = true;
+  bool _uiAnimations = true;
 
   // Status
   ClickerStatus _clickerStatus = ClickerStatus.idle;
@@ -78,6 +79,7 @@ class AppState extends ChangeNotifier {
   bool get minimizeToTray => _minimizeToTray;
   bool get hasAskedMinimizeToTray => _storage.hasAskedMinimizeToTray;
   bool get floatingAlwaysOnTop => _floatingAlwaysOnTop;
+  bool get uiAnimations => _uiAnimations;
   ClickService get clickService => _clickService;
   ClickerStatus get clickerStatus => _clickerStatus;
   MacroStatus get macroStatus => _macroStatus;
@@ -128,6 +130,7 @@ class AppState extends ChangeNotifier {
       _alwaysOnTop = _storage.alwaysOnTop;
       _minimizeToTray = _storage.minimizeToTray;
       _floatingAlwaysOnTop = _storage.floatingAlwaysOnTop;
+      _uiAnimations = _storage.uiAnimations;
       _profiles = _storage.listProfiles();
 
       // Apply always-on-top setting on startup
@@ -496,6 +499,12 @@ class AppState extends ChangeNotifier {
   void setFloatingAlwaysOnTop(bool value) {
     _floatingAlwaysOnTop = value;
     _storage.setFloatingAlwaysOnTop(value);
+    notifyListeners();
+  }
+
+  void setUiAnimations(bool value) {
+    _uiAnimations = value;
+    _storage.setUiAnimations(value);
     notifyListeners();
   }
 

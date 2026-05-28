@@ -224,6 +224,7 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
     }
 
     final plugins = PluginRegistry.instance.enabledPlugins;
+    final appState = context.watch<AppState>();
     final totalPages = 1 + plugins.length + 2; // ClickerPage + plugins + PluginPage + SettingsPage
 
     // _currentIndex is the index into effectiveItems (separators excluded)
@@ -239,14 +240,23 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
     return DragToResizeArea(
       resizeEdgeSize: 6,
       child: Column(children: [
-        _GlassTitleBar(isDark: isDark, isMaximized: _isMaximized, onFloatingMode: _switchToFloating),
+        _GlassTitleBar(isDark: isDark, isMaximized: _isMaximized, onFloatingMode: _switchToFloating, animations: appState.uiAnimations),
         Expanded(child: Row(children: [
           // Custom sidebar — avoids NavigationView's AnimatedSwitcher overhead
           _buildSidebar(isDark, plugins, pageIndex),
           // Page content — rendered directly without AnimatedSwitcher
           Expanded(child: ColoredBox(
             color: FluentTheme.of(context).scaffoldBackgroundColor,
-            child: currentPage,
+            child: AnimatedSwitcher(
+              duration: appState.uiAnimations ? const Duration(milliseconds: 200) : Duration.zero,
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              transitionBuilder: (child, animation) => FadeTransition(
+                opacity: animation,
+                child: child,
+              ),
+              child: KeyedSubtree(key: ValueKey(pageIndex), child: currentPage),
+            ),
           )),
         ])),
       ]),
@@ -297,29 +307,81 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
 
   Widget _buildSidebarItem(_SidebarItem item, int selectedIndex, AccentColor accent, bool isDark) {
     final selected = item.index == selectedIndex;
-    final hoverColor = isDark ? const Color(0xFF303050) : const Color(0xFFE0E0F0);
     final selectedBg = accent.withValues(alpha: 0.15);
+    final state = context.watch<AppState>();
+    final animations = state.uiAnimations;
 
     return Tooltip(
       message: item.label,
-      child: GestureDetector(
+      child: _SidebarItemButton(
+        item: item,
+        selected: selected,
+        selectedBg: selectedBg,
+        accent: accent,
+        isDark: isDark,
+        animations: animations,
         onTap: () => setState(() => _currentIndex = item.index),
-        child: MouseRegion(
-          cursor: SystemMouseCursors.click,
-          child: Container(
-            width: 50,
-            height: 42,
-            margin: const EdgeInsets.symmetric(vertical: 2, horizontal: 4),
-            decoration: BoxDecoration(
-              color: selected ? selectedBg : Colors.transparent,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Center(child: Icon(
-              item.icon,
-              size: 16,
-              color: selected ? accent : (isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80)),
-            )),
+      ),
+    );
+  }
+}
+
+class _SidebarItemButton extends StatefulWidget {
+  final _SidebarItem item;
+  final bool selected;
+  final Color selectedBg;
+  final AccentColor accent;
+  final bool isDark;
+  final bool animations;
+  final VoidCallback onTap;
+  const _SidebarItemButton({
+    required this.item,
+    required this.selected,
+    required this.selectedBg,
+    required this.accent,
+    required this.isDark,
+    required this.animations,
+    required this.onTap,
+  });
+  @override
+  State<_SidebarItemButton> createState() => _SidebarItemButtonState();
+}
+
+class _SidebarItemButtonState extends State<_SidebarItemButton> {
+  bool _hovering = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final hoverColor = widget.isDark ? const Color(0xFF303050) : const Color(0xFFE0E0F0);
+    final bgColor = widget.selected
+      ? widget.selectedBg
+      : (_hovering ? hoverColor : Colors.transparent);
+    final iconColor = widget.selected
+      ? widget.accent
+      : (widget.isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80));
+
+    return GestureDetector(
+      onTap: widget.onTap,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovering = true),
+        onExit: (_) => setState(() => _hovering = false),
+        child: AnimatedContainer(
+          duration: widget.animations ? const Duration(milliseconds: 200) : Duration.zero,
+          curve: Curves.easeOutCubic,
+          width: 50,
+          height: 42,
+          margin: const EdgeInsets.symmetric(vertical: 2, horizontal: 4),
+          decoration: BoxDecoration(
+            color: bgColor,
+            borderRadius: BorderRadius.circular(6),
           ),
+          child: Center(child: AnimatedScale(
+            duration: widget.animations ? const Duration(milliseconds: 200) : Duration.zero,
+            curve: Curves.easeOutCubic,
+            scale: widget.selected ? 1.15 : 1.0,
+            child: Icon(widget.item.icon, size: 16, color: iconColor),
+          )),
         ),
       ),
     );
@@ -339,8 +401,9 @@ class _GlassTitleBar extends StatelessWidget {
   final bool isDark;
   final bool isMaximized;
   final VoidCallback onFloatingMode;
+  final bool animations;
   static const _platformChannel = MethodChannel('com.clicker.pro/platform');
-  const _GlassTitleBar({required this.isDark, required this.isMaximized, required this.onFloatingMode});
+  const _GlassTitleBar({required this.isDark, required this.isMaximized, required this.onFloatingMode, required this.animations});
 
   @override
   Widget build(BuildContext context) {
@@ -378,21 +441,21 @@ class _GlassTitleBar extends StatelessWidget {
           )),
           const Spacer(),
           // Always-on-top toggle
-          _TopMostButton(isDark: isDark, isPinned: state.alwaysOnTop, onToggle: () {
+          _TopMostButton(isDark: isDark, isPinned: state.alwaysOnTop, animations: animations, onToggle: () {
             final v = !state.alwaysOnTop;
             state.setAlwaysOnTop(v);
             windowManager.setAlwaysOnTop(v);
           }),
-          // Floating window button
           _WindowButton(
             icon: FluentIcons.back_to_window,
             isDark: isDark,
+            animations: animations,
             tooltip: '悬浮窗',
             onPressed: onFloatingMode,
           ),
-          _WindowButton(icon: FluentIcons.chrome_minimize, isDark: isDark, onPressed: () => _platformChannel.invokeMethod('minimizeWindow')),
-          _MaximizeButton(isDark: isDark, isMaximized: isMaximized),
-          _WindowButton(icon: FluentIcons.chrome_close, isDark: isDark, isClose: true, onPressed: () => windowManager.close()),
+          _WindowButton(icon: FluentIcons.chrome_minimize, isDark: isDark, animations: animations, onPressed: () => _platformChannel.invokeMethod('minimizeWindow')),
+          _MaximizeButton(isDark: isDark, isMaximized: isMaximized, animations: animations),
+          _WindowButton(icon: FluentIcons.chrome_close, isDark: isDark, animations: animations, isClose: true, onPressed: () => windowManager.close()),
         ]),
       ),
     );
@@ -404,14 +467,33 @@ class _GlassTitleBar extends StatelessWidget {
 class _TopMostButton extends StatefulWidget {
   final bool isDark;
   final bool isPinned;
+  final bool animations;
   final VoidCallback onToggle;
-  const _TopMostButton({required this.isDark, required this.isPinned, required this.onToggle});
+  const _TopMostButton({required this.isDark, required this.isPinned, required this.animations, required this.onToggle});
   @override
   State<_TopMostButton> createState() => _TopMostButtonState();
 }
 
-class _TopMostButtonState extends State<_TopMostButton> {
+class _TopMostButtonState extends State<_TopMostButton> with SingleTickerProviderStateMixin {
   bool _hovering = false;
+  late final AnimationController _scaleCtrl;
+  late final Animation<double> _scaleAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _scaleCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 150));
+    _scaleAnim = Tween<double>(begin: 1.0, end: 0.9).animate(
+      CurvedAnimation(parent: _scaleCtrl, curve: Curves.easeOutCubic),
+    );
+  }
+
+  @override
+  void dispose() {
+    _scaleCtrl.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final accent = FluentTheme.of(context).accentColor;
@@ -423,14 +505,22 @@ class _TopMostButtonState extends State<_TopMostButton> {
       child: GestureDetector(
         onTap: widget.onToggle,
         child: MouseRegion(
-          onEnter: (_) => setState(() => _hovering = true),
-          onExit: (_) => setState(() => _hovering = false),
+          onEnter: (_) => setState(() { _hovering = true; _scaleCtrl.forward(); }),
+          onExit: (_) => setState(() { _hovering = false; _scaleCtrl.reverse(); }),
           child: Container(
             width: 36, height: 36, color: bgColor,
-            child: Center(child: Icon(
-              widget.isPinned ? FluentIcons.pinned_fill : FluentIcons.pinned,
-              size: 10,
-              color: widget.isPinned ? accent : (widget.isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80)),
+            child: Center(child: ScaleTransition(
+              scale: widget.animations ? _scaleAnim : const AlwaysStoppedAnimation(1.0),
+              child: AnimatedSwitcher(
+                duration: widget.animations ? const Duration(milliseconds: 200) : Duration.zero,
+                transitionBuilder: (child, animation) => FadeTransition(opacity: animation, child: child),
+                child: Icon(
+                  widget.isPinned ? FluentIcons.pinned_fill : FluentIcons.pinned,
+                  key: ValueKey(widget.isPinned),
+                  size: 10,
+                  color: widget.isPinned ? accent : (widget.isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80)),
+                ),
+              ),
             )),
           ),
         ),
@@ -443,15 +533,34 @@ class _WindowButton extends StatefulWidget {
   final IconData icon;
   final bool isDark;
   final bool isClose;
+  final bool animations;
   final String? tooltip;
   final VoidCallback onPressed;
-  const _WindowButton({required this.icon, required this.isDark, this.isClose = false, this.tooltip, required this.onPressed});
+  const _WindowButton({required this.icon, required this.isDark, this.isClose = false, required this.animations, this.tooltip, required this.onPressed});
   @override
   State<_WindowButton> createState() => _WindowButtonState();
 }
 
-class _WindowButtonState extends State<_WindowButton> {
+class _WindowButtonState extends State<_WindowButton> with SingleTickerProviderStateMixin {
   bool _hovering = false;
+  late final AnimationController _scaleCtrl;
+  late final Animation<double> _scaleAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _scaleCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 150));
+    _scaleAnim = Tween<double>(begin: 1.0, end: 0.9).animate(
+      CurvedAnimation(parent: _scaleCtrl, curve: Curves.easeOutCubic),
+    );
+  }
+
+  @override
+  void dispose() {
+    _scaleCtrl.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final bgColor = widget.isClose
@@ -462,14 +571,17 @@ class _WindowButtonState extends State<_WindowButton> {
       child: GestureDetector(
         onTap: widget.onPressed,
         child: MouseRegion(
-          onEnter: (_) => setState(() => _hovering = true),
-          onExit: (_) => setState(() => _hovering = false),
+          onEnter: (_) => setState(() { _hovering = true; _scaleCtrl.forward(); }),
+          onExit: (_) => setState(() { _hovering = false; _scaleCtrl.reverse(); }),
           child: Container(
-            width: 46, height: 36, color: bgColor,
-            child: Center(child: Icon(widget.icon, size: 10,
-              color: _hovering && widget.isClose ? Colors.white : (widget.isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80)),
-            )),
-          ),
+              width: 46, height: 36, color: bgColor,
+              child: Center(child: ScaleTransition(
+                scale: widget.animations ? _scaleAnim : const AlwaysStoppedAnimation(1.0),
+                child: Icon(widget.icon, size: 10,
+                  color: _hovering && widget.isClose ? Colors.white : (widget.isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80)),
+                ),
+              )),
+            ),
         ),
       ),
     );
@@ -479,14 +591,32 @@ class _WindowButtonState extends State<_WindowButton> {
 class _MaximizeButton extends StatefulWidget {
   final bool isDark;
   final bool isMaximized;
-  const _MaximizeButton({required this.isDark, required this.isMaximized});
+  final bool animations;
+  const _MaximizeButton({required this.isDark, required this.isMaximized, required this.animations});
   @override
   State<_MaximizeButton> createState() => _MaximizeButtonState();
 }
 
-class _MaximizeButtonState extends State<_MaximizeButton> {
+class _MaximizeButtonState extends State<_MaximizeButton> with SingleTickerProviderStateMixin {
   bool _hovering = false;
+  late final AnimationController _scaleCtrl;
+  late final Animation<double> _scaleAnim;
   static const _platformChannel = MethodChannel('com.clicker.pro/platform');
+
+  @override
+  void initState() {
+    super.initState();
+    _scaleCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 150));
+    _scaleAnim = Tween<double>(begin: 1.0, end: 0.9).animate(
+      CurvedAnimation(parent: _scaleCtrl, curve: Curves.easeOutCubic),
+    );
+  }
+
+  @override
+  void dispose() {
+    _scaleCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -500,17 +630,24 @@ class _MaximizeButtonState extends State<_MaximizeButton> {
         }
       },
       child: MouseRegion(
-        onEnter: (_) => setState(() => _hovering = true),
-        onExit: (_) => setState(() => _hovering = false),
+        onEnter: (_) => setState(() { _hovering = true; _scaleCtrl.forward(); }),
+        onExit: (_) => setState(() { _hovering = false; _scaleCtrl.reverse(); }),
         child: Container(
-          width: 46, height: 36,
-          color: _hovering ? (widget.isDark ? const Color(0xFF404060) : const Color(0xFFE0E0F0)) : Colors.transparent,
-          child: Center(
-            child: widget.isMaximized
-              ? _RestoreIcon(color: color)
-              : _MaximizeIcon(color: color),
+            width: 46, height: 36,
+            color: _hovering ? (widget.isDark ? const Color(0xFF404060) : const Color(0xFFE0E0F0)) : Colors.transparent,
+            child: Center(
+              child: ScaleTransition(
+                scale: widget.animations ? _scaleAnim : const AlwaysStoppedAnimation(1.0),
+                child: AnimatedSwitcher(
+                  duration: widget.animations ? const Duration(milliseconds: 200) : Duration.zero,
+                  transitionBuilder: (child, animation) => FadeTransition(opacity: animation, child: child),
+                  child: widget.isMaximized
+                    ? _RestoreIcon(key: const ValueKey('restore'), color: color)
+                    : _MaximizeIcon(key: const ValueKey('maximize'), color: color),
+                ),
+              ),
+            ),
           ),
-        ),
       ),
     );
   }
@@ -520,14 +657,14 @@ class _MaximizeButtonState extends State<_MaximizeButton> {
 
 class _MaximizeIcon extends StatelessWidget {
   final Color color;
-  const _MaximizeIcon({required this.color});
+  const _MaximizeIcon({super.key, required this.color});
   @override
   Widget build(BuildContext context) => CustomPaint(size: const Size(10, 10), painter: _RectPainter(color: color));
 }
 
 class _RestoreIcon extends StatelessWidget {
   final Color color;
-  const _RestoreIcon({required this.color});
+  const _RestoreIcon({super.key, required this.color});
   @override
   Widget build(BuildContext context) => CustomPaint(size: const Size(10, 10), painter: _RestorePainter(color: color));
 }

@@ -1880,16 +1880,13 @@ bool FlutterWindow::OnCreate() {
           PostQuitMessage(0);
           result->Success(flutter::EncodableValue(true));
         } else if (call.method_name() == "maximizeWindow") {
-          // Use PostMessage to avoid blocking the platform thread.
-          // ShowWindow(SW_MAXIMIZE) is synchronous and waits for WM_SIZE
-          // handling to complete, causing ~1s delay.
-          PostMessage(GetHandle(), WM_SYSCOMMAND, SC_MAXIMIZE, 0);
+          ShowWindow(GetHandle(), SW_MAXIMIZE);
           result->Success(flutter::EncodableValue(true));
         } else if (call.method_name() == "unmaximizeWindow") {
-          PostMessage(GetHandle(), WM_SYSCOMMAND, SC_RESTORE, 0);
+          ShowWindow(GetHandle(), SW_RESTORE);
           result->Success(flutter::EncodableValue(true));
         } else if (call.method_name() == "minimizeWindow") {
-          PostMessage(GetHandle(), WM_SYSCOMMAND, SC_MINIMIZE, 0);
+          ShowWindow(GetHandle(), SW_MINIMIZE);
           result->Success(flutter::EncodableValue(true));
         } else {
           result->NotImplemented();
@@ -1965,8 +1962,11 @@ bool FlutterWindow::OnCreate() {
   // We keep WS_THICKFRAME for resize and WS_MAXIMIZEBOX/WS_MINIMIZEBOX
   // for window state transitions.
   LONG style = GetWindowLong(hwnd, GWL_STYLE);
-  style &= ~(WS_CAPTION | WS_SYSMENU);  // Remove caption and system menu
+  style &= ~(WS_CAPTION | WS_SYSMENU);
   SetWindowLong(hwnd, GWL_STYLE, style);
+
+  BOOL disableTransitions = FALSE;
+  DwmSetWindowAttribute(hwnd, DWMWA_TRANSITIONS_FORCEDISABLED, &disableTransitions, sizeof(disableTransitions));
 
   return true;
 }

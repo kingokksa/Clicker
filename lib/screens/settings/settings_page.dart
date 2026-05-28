@@ -146,6 +146,11 @@ class SettingsPage extends StatelessWidget {
           windowManager.setAlwaysOnTop(v);
         }),
       ]),
+      const Divider(style: DividerThemeData(horizontalMargin: EdgeInsets.zero)),
+      Row(children: [
+        const Expanded(child: Text('界面动效', style: TextStyle(fontSize: 13))),
+        ToggleSwitch(checked: state.uiAnimations, onChanged: (v) => state.setUiAnimations(v)),
+      ]),
     ]);
   }
 

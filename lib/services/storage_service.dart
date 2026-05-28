@@ -21,6 +21,7 @@ class StorageService {
   static const _keyMinimizeToTray = 'minimize_to_tray';
   static const _keyFloatingAlwaysOnTop = 'floating_always_on_top';
   static const _keyAccentColor = 'accent_color';
+  static const _keyUiAnimations = 'ui_animations';
   static const _keyProfiles = 'profiles';
   static const _keyHoldTriggerKeys = 'hold_trigger_keys';
 
@@ -119,6 +120,12 @@ class StorageService {
 
   Future<void> setAccentColorValue(int value) async {
     await _prefs.setInt(_keyAccentColor, value);
+  }
+
+  bool get uiAnimations => _prefs.getBool(_keyUiAnimations) ?? true;
+
+  Future<void> setUiAnimations(bool value) async {
+    await _prefs.setBool(_keyUiAnimations, value);
   }
 
   // ─── Profiles ─────────────────────────────────────────────
