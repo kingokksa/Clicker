@@ -1,0 +1,289 @@
+warning: in the working copy of 'windows/runner/flutter_window.cpp', LF will be replaced by CRLF the next time Git touches it
+diff --git a/windows/runner/flutter_window.cpp b/windows/runner/flutter_window.cpp
+index ed6cb65..c522769 100644
+--- a/windows/runner/flutter_window.cpp
++++ b/windows/runner/flutter_window.cpp
+@@ -35,6 +35,104 @@ static int64_t GetInt64(const flutter::EncodableValue& val) {
+   return 0;
+ }
+ 
++// ─── Hidden Command Execution ──────────────────────────────
++// Run a command without showing a console window.
++// Uses CreateProcess with CREATE_NO_WINDOW instead of _popen,
++// which would flash a visible terminal on screen.
++// Returns the command's exit code, and captures stdout into 'output'.
++static int _runCommandHidden(const std::string& cmd, std::string& output) {
++  output.clear();
++
++  // Create pipes for stdout
++  SECURITY_ATTRIBUTES sa = {};
++  sa.nLength = sizeof(SECURITY_ATTRIBUTES);
++  sa.bInheritHandle = TRUE;
++  sa.lpSecurityDescriptor = nullptr;
++
++  HANDLE hReadPipe = nullptr, hWritePipe = nullptr;
++  if (!CreatePipe(&hReadPipe, &hWritePipe, &sa, 0)) return -1;
++  SetHandleInformation(hReadPipe, HANDLE_FLAG_INHERIT, 0);
++
++  // Build command line: cmd /C <command>
++  std::string fullCmd = "cmd /C " + cmd;
++  // CreateProcessW needs a mutable wchar_t*
++  int wLen = MultiByteToWideChar(CP_UTF8, 0, fullCmd.c_str(), -1, nullptr, 0);
++  std::vector<wchar_t> cmdLine(wLen);
++  MultiByteToWideChar(CP_UTF8, 0, fullCmd.c_str(), -1, cmdLine.data(), wLen);
++
++  STARTUPINFOW si = {};
++  si.cb = sizeof(STARTUPINFOW);
++  si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
++  si.hStdOutput = hWritePipe;
++  si.hStdError = hWritePipe;
++  si.wShowWindow = SW_HIDE;
++
++  PROCESS_INFORMATION pi = {};
++  DWORD creationFlags = CREATE_NO_WINDOW;
++
++  BOOL ok = CreateProcessW(
++    nullptr, cmdLine.data(), nullptr, nullptr, TRUE,
++    creationFlags, nullptr, nullptr, &si, &pi);
++
++  if (!ok) {
++    CloseHandle(hReadPipe);
++    CloseHandle(hWritePipe);
++    return -1;
++  }
++
++  CloseHandle(hWritePipe); // Close write end so ReadFile can detect EOF
++
++  // Read output
++  char buf[256];
++  DWORD bytesRead = 0;
++  while (ReadFile(hReadPipe, buf, sizeof(buf) - 1, &bytesRead, nullptr) && bytesRead > 0) {
++    buf[bytesRead] = '\0';
++    output += buf;
++  }
++
++  CloseHandle(hReadPipe);
++
++  WaitForSingleObject(pi.hProcess, INFINITE);
++  DWORD exitCode = 1;
++  GetExitCodeProcess(pi.hProcess, &exitCode);
++  CloseHandle(pi.hProcess);
++  CloseHandle(pi.hThread);
++
++  return static_cast<int>(exitCode);
++}
++
++// Simplified version that ignores output
++static int _runCommandHidden(const std::string& cmd) {
++  std::string unused;
++  return _runCommandHidden(cmd, unused);
++}
++
++// ─── Fast Clicker State ────────────────────────────────────
++// Defined early so MessageHandler can check g_clicker.running.
++// Function implementations are further down in the file.
++
++static struct {
++  volatile bool running = false;
++  volatile bool stop_requested = false;
++  volatile uint64_t generation = 0;
++  int interval_ms = 10;
++  int x = -1;
++  int y = -1;
++  int button = 0;
++  volatile int click_count = 0;
++  int target_count = -1;
++  flutter::MethodChannel<flutter::EncodableValue>* channel = nullptr;
++  bool background_mode = false;
++  HWND target_hwnd = nullptr;
++  int client_x = 0;
++  int client_y = 0;
++  bool is_keyboard = false;
++  int key_vk = 0;
++  int key_action_mode = 0;
++  int combo_keys[8] = {};
++  int combo_key_count = 0;
++} g_clicker;
++
+ // ─── OCR Fallback Methods ──────────────────────────────────
+ // Save BGRA pixels to a temp BMP file (shared by fallback methods)
+ static std::string _ocrSaveTempBmp(const std::vector<uint8_t>& pixels, int w, int h) {
+@@ -114,16 +212,11 @@ static bool _ocrFallbackPython(const std::vector<uint8_t>& pixels, int w, int h,
+   std::string ocrText;
+   for (const char* pyCmd : {"python", "python3", "py"}) {
+     std::string cmd = std::string(pyCmd) + " \"" + pyPath + "\"";
+-    FILE* pipe = _popen(cmd.c_str(), "r");
+-    if (pipe) {
+-      char buffer[256];
+-      ocrText.clear();
+-      while (fgets(buffer, sizeof(buffer), pipe)) {
+-        ocrText += buffer;
+-      }
+-      int ret = _pclose(pipe);
+-      if (ret == 0 && ocrText.find("PYTHON_OCR_ERROR:") == std::string::npos && !ocrText.empty()) {
+-        // Trim
++    std::string output;
++    int ret = _runCommandHidden(cmd, output);
++    if (ret == 0) {
++      ocrText = output;
++      if (ocrText.find("PYTHON_OCR_ERROR:") == std::string::npos && !ocrText.empty()) {
+         while (!ocrText.empty() && (ocrText.back() == '\n' || ocrText.back() == '\r' || ocrText.back() == ' '))
+           ocrText.pop_back();
+         remove(bmpPath.c_str());
+@@ -174,14 +267,7 @@ static bool _ocrFallbackPowerShell(const std::vector<uint8_t>& pixels, int w, in
+ 
+   std::string cmd = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"" + ps1Path + "\"";
+   std::string ocrText;
+-  char buffer[256];
+-  FILE* pipe = _popen(cmd.c_str(), "r");
+-  if (pipe) {
+-    while (fgets(buffer, sizeof(buffer), pipe)) {
+-      ocrText += buffer;
+-    }
+-    _pclose(pipe);
+-  }
++  _runCommandHidden(cmd, ocrText);
+ 
+   remove(bmpPath.c_str());
+   remove(ps1Path.c_str());
+@@ -1273,13 +1359,9 @@ bool FlutterWindow::OnCreate() {
+             flutter::EncodableMap toolMap;
+             // Check Tesseract via 'where' command
+             {
+-              bool tessOk = false;
+-              FILE* pipe = _popen("where tesseract 2>nul", "r");
+-              if (pipe) {
+-                char buf[256];
+-                if (fgets(buf, sizeof(buf), pipe)) tessOk = true;
+-                _pclose(pipe);
+-              }
++              std::string output;
++              int ret = _runCommandHidden("where tesseract 2>nul", output);
++              bool tessOk = (ret == 0 && !output.empty());
+               toolMap[flutter::EncodableValue("tesseract")] = flutter::EncodableValue(tessOk);
+             }
+             // Check Python + pytesseract
+@@ -1287,11 +1369,8 @@ bool FlutterWindow::OnCreate() {
+               bool pyOk = false;
+               for (const char* pyCmd : {"python", "python3", "py"}) {
+                 std::string cmd = std::string(pyCmd) + " -c \"import pytesseract\" 2>nul";
+-                FILE* pipe = _popen(cmd.c_str(), "r");
+-                if (pipe) {
+-                  int ret = _pclose(pipe);
+-                  if (ret == 0) { pyOk = true; break; }
+-                }
++                int ret = _runCommandHidden(cmd);
++                if (ret == 0) { pyOk = true; break; }
+               }
+               toolMap[flutter::EncodableValue("python")] = flutter::EncodableValue(pyOk);
+             }
+@@ -1315,22 +1394,12 @@ bool FlutterWindow::OnCreate() {
+             std::thread([result_ptr]() {
+               bool ok = false;
+               {
+-                FILE* pipe = _popen("winget install --id UB-Mannheim.TesseractOCR -e --accept-source-agreements --accept-package-agreements 2>&1", "r");
+-                if (pipe) {
+-                  char buf[256];
+-                  while (fgets(buf, sizeof(buf), pipe)) {}
+-                  int ret = _pclose(pipe);
+-                  ok = (ret == 0);
+-                }
++                int ret = _runCommandHidden("winget install --id UB-Mannheim.TesseractOCR -e --accept-source-agreements --accept-package-agreements 2>&1");
++                ok = (ret == 0);
+               }
+               if (!ok) {
+-                FILE* pipe = _popen("choco install tesseract -y 2>&1", "r");
+-                if (pipe) {
+-                  char buf[256];
+-                  while (fgets(buf, sizeof(buf), pipe)) {}
+-                  int ret = _pclose(pipe);
+-                  ok = (ret == 0);
+-                }
++                int ret = _runCommandHidden("choco install tesseract -y 2>&1");
++                ok = (ret == 0);
+               }
+               if (ok) result_ptr->Success();
+               else result_ptr->Error("INSTALL_FAILED", "Failed to install Tesseract OCR. Please install manually from https://github.com/UB-Mannheim/tesseract/wiki");
+@@ -1342,17 +1411,12 @@ bool FlutterWindow::OnCreate() {
+             std::thread([result_ptr]() {
+               bool ok = false;
+               {
+-                FILE* pipe = _popen("winget install --id Python.Python.3.12 -e --accept-source-agreements --accept-package-agreements 2>&1", "r");
+-                if (pipe) {
+-                  char buf[256];
+-                  while (fgets(buf, sizeof(buf), pipe)) {}
+-                  int ret = _pclose(pipe);
+-                  ok = (ret == 0);
+-                }
++                int ret = _runCommandHidden("winget install --id Python.Python.3.12 -e --accept-source-agreements --accept-package-agreements 2>&1");
++                ok = (ret == 0);
+               }
+-              _popen("python -m pip install pytesseract Pillow 2>&1", "r");
+-              _popen("python3 -m pip install pytesseract Pillow 2>&1", "r");
+-              _popen("py -m pip install pytesseract Pillow 2>&1", "r");
++              _runCommandHidden("python -m pip install pytesseract Pillow 2>&1");
++              _runCommandHidden("python3 -m pip install pytesseract Pillow 2>&1");
++              _runCommandHidden("py -m pip install pytesseract Pillow 2>&1");
+               if (ok) result_ptr->Success();
+               else result_ptr->Error("INSTALL_FAILED", "Failed to install Python. Please install manually from https://python.org");
+               delete result_ptr;
+@@ -1373,14 +1437,14 @@ bool FlutterWindow::OnCreate() {
+           if (tool == "tesseract") {
+             auto result_ptr = result.release();
+             std::thread([result_ptr]() {
+-              _popen("winget uninstall --id UB-Mannheim.TesseractOCR -e 2>&1", "r");
++              _runCommandHidden("winget uninstall --id UB-Mannheim.TesseractOCR -e 2>&1");
+               result_ptr->Success();
+               delete result_ptr;
+             }).detach();
+           } else if (tool == "python") {
+             auto result_ptr = result.release();
+             std::thread([result_ptr]() {
+-              _popen("python -m pip uninstall pytesseract Pillow -y 2>&1", "r");
++              _runCommandHidden("python -m pip uninstall pytesseract Pillow -y 2>&1");
+               result_ptr->Success();
+               delete result_ptr;
+             }).detach();
+@@ -2065,7 +2129,10 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
+     // Stop the clicker IMMEDIATELY in C++ for start/stop and emergency stop
+     // hotkeys, without waiting for the Dart round-trip. This eliminates
+     // 20-50ms of latency that makes 1ms clicking feel unresponsive.
+-    if (id == 1 || id == 3) {  // startStopClicker or emergencyStop
++    // Only stop if the clicker is actually running — otherwise the
++    // onStopClickerImmediate event would set a guard in Dart that prevents
++    // toggle() from starting the clicker.
++    if ((id == 1 || id == 3) && g_clicker.running) {
+       StopFastClicker();
+ 
+       // Also notify Dart to stop immediately (for keyboard mode which uses
+@@ -2297,29 +2364,7 @@ void FlutterWindow::ShowTrayMenu() {
+ //   no timeKillEvent with TIME_KILL_SYNCHRONOUS).
+ // - Simple Sleep loop with timeBeginPeriod(1) for 1ms precision.
+ // - Minimum interval: 1ms. Sub-ms is physically impossible with SendInput.
+-
+-static struct {
+-  volatile bool running = false;
+-  volatile bool stop_requested = false;
+-  volatile uint64_t generation = 0;
+-  int interval_ms = 10;           // milliseconds per click (min 1)
+-  int x = -1;
+-  int y = -1;
+-  int button = 0;                 // 0=left, 1=right, 2=middle (mouse only)
+-  volatile int click_count = 0;
+-  int target_count = -1;
+-  flutter::MethodChannel<flutter::EncodableValue>* channel = nullptr;
+-  bool background_mode = false;
+-  HWND target_hwnd = nullptr;
+-  int client_x = 0;
+-  int client_y = 0;
+-  // Keyboard mode fields
+-  bool is_keyboard = false;       // true = keyboard mode, false = mouse mode
+-  int key_vk = 0;                 // Virtual key code for keyboard repeat
+-  int key_action_mode = 0;        // 0=repeat, 1=hold, 2=combo
+-  int combo_keys[8] = {};         // VK codes for combo mode
+-  int combo_key_count = 0;
+-} g_clicker;
++// Note: g_clicker struct is defined earlier in the file (before MessageHandler).
+ 
+ static void SendOneClick() {
+   if (g_clicker.is_keyboard) {

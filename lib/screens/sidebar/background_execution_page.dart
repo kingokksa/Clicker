@@ -7,6 +7,7 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../services/app_state.dart';
+import '../../services/system_tray_service.dart';
 
 class WindowInfo {
   final int hwnd;
@@ -29,21 +30,23 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
   bool _loading = false;
   bool _pickingCoords = false;
 
+  // Unregister function for the external platform channel handler
+  VoidCallback? _unregisterHandler;
+
   @override
   void initState() {
     super.initState();
-    // Don't set handler here — we register it only when picking coords
-    // to avoid overwriting other pages' handlers on the shared channel.
   }
 
   @override
   void dispose() {
-    // Don't clear handler — other pages may still need it.
+    _unregisterHandler?.call();
+    _unregisterHandler = null;
     super.dispose();
   }
 
   Future<dynamic> _handleMethodCall(MethodCall call) async {
-    if (!mounted) return;
+    if (!mounted) return null;
     switch (call.method) {
       case 'onOverlayWindowPick':
         final args = call.arguments as Map;
@@ -53,10 +56,12 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
         final config = state.clickerConfig;
         state.setClickerConfig(config.copyWith(targetClientX: x, targetClientY: y));
         if (mounted) setState(() => _pickingCoords = false);
-        break;
+        return true; // handled
       case 'onOverlayCancelled':
         if (mounted) setState(() => _pickingCoords = false);
-        break;
+        return true; // handled
+      default:
+        return null; // not handled
     }
   }
 
@@ -87,8 +92,9 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
     final config = state.clickerConfig;
     if (config.targetHwnd == 0) return;
     setState(() => _pickingCoords = true);
-    // Register handler before starting overlay to receive callbacks
-    _platformChannel.setMethodCallHandler(_handleMethodCall);
+    // Register handler via SystemTrayService to avoid overwriting other handlers
+    _unregisterHandler?.call();
+    _unregisterHandler = SystemTrayService().registerExternalHandler(_handleMethodCall);
     try {
       await _platformChannel.invokeMethod('startWindowPickOverlay', [config.targetHwnd]);
     } catch (_) {

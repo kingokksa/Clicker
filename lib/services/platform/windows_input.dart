@@ -39,13 +39,8 @@ class WindowsInput extends PlatformInput {
       if (field.isNotEmpty) {
         _keyController.add(field);
       } else {
-        // Numeric IDs (100+) are used for per-macro hotkeys
         _keyController.add(id.toString());
       }
-    } else if (call.method == 'onStopClickerImmediate') {
-      // C++ requests immediate stop (for keyboard mode which uses Dart Timers).
-      // Emit a special event that the click service listens to.
-      _keyController.add('__stop_immediate__');
     }
   }
 
@@ -170,8 +165,20 @@ class WindowsInput extends PlatformInput {
     final p = calloc<INPUT>();
     p.ref.type = INPUT_MOUSE;
     p.ref.mi.dwFlags = flags;
-    SendInput(1, p, sizeOf<INPUT>());
+    final result = SendInput(1, p, sizeOf<INPUT>());
     calloc.free(p);
+    if (result == 0) {
+      _mouseEventFallback(flags);
+    }
+  }
+
+  static final _user32 = DynamicLibrary.open('user32.dll');
+  static final _mouseEventPtr = _user32.lookupFunction<
+      Void Function(Uint32, Int32, Int32, Uint32, IntPtr),
+      void Function(int, int, int, int, int)>('mouse_event');
+
+  void _mouseEventFallback(int flags) {
+    _mouseEventPtr(flags, 0, 0, 0, 0);
   }
 
   // ── Keyboard ─────────────────────────────────────────────

@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/app_state.dart';
 import '../../services/macro_service.dart';
 import '../../services/screen_monitor_service.dart';
+import '../../services/system_tray_service.dart';
 import '../../services/vision_service.dart';
 import '../../services/vision_plugin.dart';
 import '../../services/vision_plugin_manager.dart';
@@ -53,7 +54,10 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
   Completer<(int, int)>? _pickCompleter;
   bool _overlayActive = false;
 
-  // Platform channel for overlay
+  // Unregister function for the external platform channel handler
+  VoidCallback? _unregisterOverlayHandler;
+
+  // Platform channel for invokeMethod calls (not for setMethodCallHandler)
   static const _platformChannel = MethodChannel('com.clicker.pro/platform');
 
   @override
@@ -454,47 +458,54 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
   }
 
   void _registerOverlayHandler() {
-    _platformChannel.setMethodCallHandler((call) async {
-      if (!mounted) return;
-      switch (call.method) {
-        case 'onOverlayClick':
-          final args = call.arguments as Map;
-          final x = args['x'] as int;
-          final y = args['y'] as int;
-          await _handleOverlayClick(x, y);
-          break;
-        case 'onOverlayWindowPick':
-          final args = call.arguments as Map;
-          final x = args['x'] as int;
-          final y = args['y'] as int;
-          await _handleOverlayClick(x, y);
-          break;
-        case 'onOverlayAreaSelected':
-          final args = call.arguments as Map;
-          final x1 = args['x1'] as int;
-          final y1 = args['y1'] as int;
-          final x2 = args['x2'] as int;
-          final y2 = args['y2'] as int;
-          await _platformChannel.invokeMethod('stopOverlay');
-          _overlayActive = false;
-          if (_areaSelectCompleter != null && !_areaSelectCompleter!.isCompleted) {
-            _areaSelectCompleter!.complete((x1, y1, x2, y2));
-          }
-          if (mounted) setState(() {});
-          break;
-        case 'onOverlayCancelled':
-          await _platformChannel.invokeMethod('stopOverlay');
-          _overlayActive = false;
-          if (_areaSelectCompleter != null && !_areaSelectCompleter!.isCompleted) {
-            _areaSelectCompleter!.completeError('cancelled');
-          }
-          if (_pickCompleter != null && !_pickCompleter!.isCompleted) {
-            _pickCompleter!.completeError('cancelled');
-          }
-          if (mounted) setState(() {});
-          break;
-      }
-    });
+    // Unregister previous handler if any
+    _unregisterOverlayHandler?.call();
+
+    _unregisterOverlayHandler = SystemTrayService().registerExternalHandler(
+      (call) async {
+        if (!mounted) return null;
+        switch (call.method) {
+          case 'onOverlayClick':
+            final args = call.arguments as Map;
+            final x = args['x'] as int;
+            final y = args['y'] as int;
+            await _handleOverlayClick(x, y);
+            return true; // handled
+          case 'onOverlayWindowPick':
+            final args = call.arguments as Map;
+            final x = args['x'] as int;
+            final y = args['y'] as int;
+            await _handleOverlayClick(x, y);
+            return true; // handled
+          case 'onOverlayAreaSelected':
+            final args = call.arguments as Map;
+            final x1 = args['x1'] as int;
+            final y1 = args['y1'] as int;
+            final x2 = args['x2'] as int;
+            final y2 = args['y2'] as int;
+            await _platformChannel.invokeMethod('stopOverlay');
+            _overlayActive = false;
+            if (_areaSelectCompleter != null && !_areaSelectCompleter!.isCompleted) {
+              _areaSelectCompleter!.complete((x1, y1, x2, y2));
+            }
+            if (mounted) setState(() {});
+            return true; // handled
+          case 'onOverlayCancelled':
+            await _platformChannel.invokeMethod('stopOverlay');
+            _overlayActive = false;
+            if (_areaSelectCompleter != null && !_areaSelectCompleter!.isCompleted) {
+              _areaSelectCompleter!.completeError('cancelled');
+            }
+            if (_pickCompleter != null && !_pickCompleter!.isCompleted) {
+              _pickCompleter!.completeError('cancelled');
+            }
+            if (mounted) setState(() {});
+            return true; // handled
+          default:
+            return null; // not handled — let other handlers process
+        }
+      },
+    );
   }
 
   Future<TemplateData?> _captureTemplate() async {
@@ -517,7 +528,8 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     if (_overlayActive) {
       _platformChannel.invokeMethod('stopOverlay');
     }
-    _platformChannel.setMethodCallHandler(null);
+    _unregisterOverlayHandler?.call();
+    _unregisterOverlayHandler = null;
     _monitor.dispose();
     super.dispose();
   }

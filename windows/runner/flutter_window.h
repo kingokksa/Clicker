@@ -45,6 +45,7 @@ class FlutterWindow : public Win32Window {
   NOTIFYICONDATAW tray_icon_data_ = {};
   bool tray_icon_created_ = false;
   UINT tray_callback_msg_ = 0;
+  UINT clicker_stopped_msg_ = 0;
   HMENU tray_menu_ = nullptr;
 
   void InitSystemTray();

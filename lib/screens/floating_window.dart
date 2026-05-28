@@ -40,7 +40,8 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener {
     final isRunning = state.isClickerRunning;
     final accent = state.accentColor;
 
-    return Container(
+    return ExcludeSemantics(
+      child: Container(
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF1E1E36).withValues(alpha:0.95) : const Color(0xFFFAFAFF).withValues(alpha:0.95),
         borderRadius: BorderRadius.circular(12),
@@ -194,7 +195,7 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener {
           ],
         ),
       ),
-    );
+    ));
   }
 
   Widget _miniButton({required IconData icon, required bool isDark, bool active = false, required VoidCallback onPressed}) {

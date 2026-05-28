@@ -18,6 +18,7 @@ class HotkeyService {
   // Hold-trigger state
   bool _holdTriggerActive = false;
   Timer? _holdTriggerPollTimer;
+  DateTime? _lastHoldTriggerTime;
 
   // Per-macro hotkeys: field id → macro id
   final Map<int, String> _macroHotkeyIds = {};
@@ -32,8 +33,7 @@ class HotkeyService {
   void Function()? onPlayMacro;
   void Function()? onHoldTriggerStart;
   void Function()? onHoldTriggerStop;
-  void Function()? onStopImmediate; // Called from C++ for instant stop
-  void Function(String macroId)? onPlayMacroById; // Play specific macro by ID
+  void Function(String macroId)? onPlayMacroById;
 
   HotkeyService(this._input);
 
@@ -65,21 +65,19 @@ class HotkeyService {
   }
 
   void _handleKeyEvent(String field) {
-    // Check if it's a macro hotkey (numeric ID as string)
+    print('[HotkeyService] received: $field');
     final fieldId = int.tryParse(field);
     if (fieldId != null && fieldId >= _macroHotkeyBaseId) {
       final macroId = _macroHotkeyIds[fieldId];
       if (macroId != null) {
+        print('[HotkeyService] → playMacroById: $macroId');
         onPlayMacroById?.call(macroId);
         return;
       }
     }
     switch (field) {
-      case '__stop_immediate__':
-        // C++ requested immediate stop — bypass toggle, just stop
-        onStopImmediate?.call();
-        break;
       case 'startStopClicker':
+        print('[HotkeyService] → toggle clicker');
         onStartStopClicker?.call();
         break;
       case 'startStopRecording':
@@ -100,17 +98,17 @@ class HotkeyService {
   /// Hold-trigger: when the hotkey fires, start clicking and poll key state.
   /// When the key is released, stop clicking.
   void _handleHoldTrigger() {
-    if (_holdTriggerActive) return; // Already active, ignore repeat
+    _lastHoldTriggerTime = DateTime.now();
+
+    if (_holdTriggerActive) return;
     _holdTriggerActive = true;
     onHoldTriggerStart?.call();
 
-    // Poll the physical key state to detect release
     _holdTriggerPollTimer?.cancel();
-    _holdTriggerPollTimer = Timer.periodic(const Duration(milliseconds: 50), (_) async {
-      if (!Platform.isWindows) return;
-      final winInput = _input as WindowsInput;
-      final stillHeld = await winInput.isHotkeyStillHeld(_config.holdTrigger);
-      if (!stillHeld) {
+    _holdTriggerPollTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      if (!_holdTriggerActive) return;
+      final elapsed = DateTime.now().difference(_lastHoldTriggerTime!);
+      if (elapsed.inMilliseconds > 300) {
         _holdTriggerActive = false;
         _holdTriggerPollTimer?.cancel();
         _holdTriggerPollTimer = null;

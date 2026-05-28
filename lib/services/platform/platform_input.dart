@@ -48,7 +48,7 @@ abstract class PlatformInput {
   void stopListening();
 
   /// Callback for native fast clicker stopped event.
-  void Function(int count)? onFastClickerStopped;
+  void Function(int count, int generation)? onFastClickerStopped;
 
   /// Callback for key capture result (from C++ captureKey).
   void Function(String keyName)? onKeyCaptured;

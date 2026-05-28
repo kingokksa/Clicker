@@ -194,8 +194,8 @@ class AppState extends ChangeNotifier {
       };
 
       // Native fast clicker stop callback
-      _platformInput.onFastClickerStopped = (count) {
-        _clickService.handleNativeClickerStopped(count);
+      _platformInput.onFastClickerStopped = (count, generation) {
+        _clickService.handleNativeClickerStopped(count, generation: generation);
       };
 
       // Wire platform input reference to system tray service for callback forwarding
@@ -225,11 +225,6 @@ class AppState extends ChangeNotifier {
       // Hotkey actions
       _hotkeyService.onStartStopClicker = () {
         _clickService.toggle();
-      };
-      _hotkeyService.onStopImmediate = () {
-        // Called directly from C++ for instant stop — no toggle, just stop
-        _clickService.stopImmediate();
-        notifyListeners();
       };
       _hotkeyService.onStartStopRecording = () async {
         if (_macroService.isRecording) {

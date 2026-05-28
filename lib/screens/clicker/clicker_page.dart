@@ -665,7 +665,7 @@ class ClickerPage extends StatelessWidget {
         Row(children: [
           const Text('触发键:', style: TextStyle(fontSize: 13)),
           const SizedBox(width: 8),
-          _buildHotkeySelector(context, currentKey: hotkeyConfig.holdTrigger, onChanged: (k) => state.setHotkeyConfig(hotkeyConfig.copyWith(holdTrigger: k))),
+          Expanded(child: _buildHotkeySelector(context, currentKey: hotkeyConfig.holdTrigger, onChanged: (k) => state.setHotkeyConfig(hotkeyConfig.copyWith(holdTrigger: k)))),
         ]),
       ],
     ]);
@@ -747,7 +747,8 @@ class ClickerPage extends StatelessWidget {
     final elapsedStr = elapsed != null
         ? (elapsed.inHours > 0 ? '${elapsed.inHours}h ${elapsed.inMinutes % 60}m' : (elapsed.inMinutes > 0 ? '${elapsed.inMinutes}m ${elapsed.inSeconds % 60}s' : '${elapsed.inSeconds}s'))
         : '';
-    return Container(
+    return ExcludeSemantics(
+      child: Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(color: const Color(0xFF00E676).withValues(alpha:0.08), borderRadius: BorderRadius.circular(8),
         border: Border.all(color: const Color(0xFF00E676).withValues(alpha:0.3))),
@@ -764,7 +765,7 @@ class ClickerPage extends StatelessWidget {
         const Spacer(),
         Text('${state.clickerConfig.intervalMs}ms/次', style: TextStyle(color: const Color(0xFF00E676).withValues(alpha:0.7), fontSize: 12)),
       ]),
-    );
+    ));
   }
 }
 

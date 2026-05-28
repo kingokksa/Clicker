@@ -37,7 +37,8 @@ class _ClickerAppState extends State<ClickerApp> {
           if (!state.isInitialized) {
             return FluentApp(
               debugShowCheckedModeBanner: false,
-              home: const ScaffoldPage(
+              home: ExcludeSemantics(
+                child: ScaffoldPage(
                 content: Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -49,6 +50,7 @@ class _ClickerAppState extends State<ClickerApp> {
                   ),
                 ),
               ),
+            ),
             );
           }
 
@@ -82,6 +84,9 @@ class _ClickerAppState extends State<ClickerApp> {
               ),
             ),
             themeMode: isDark ? ThemeMode.dark : ThemeMode.light,
+            builder: (context, child) {
+              return ExcludeSemantics(child: child!);
+            },
             home: const HomeScreen(),
           );
         },

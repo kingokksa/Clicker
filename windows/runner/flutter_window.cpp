@@ -3,6 +3,7 @@
 
 #include <dwmapi.h>
 #include <mmsystem.h>
+#include <sstream>
 #include <optional>
 #include <algorithm>
 #include <vector>
@@ -17,6 +18,18 @@
 
 #pragma comment(lib, "winmm.lib")
 #pragma comment(lib, "dwmapi.lib")
+
+// Debug logging macro — outputs to Visual Studio Output window and debug log
+#define CLICKER_DEBUG 0
+#if CLICKER_DEBUG
+#define DBG_LOG(msg) do { \
+  std::ostringstream _dbg_ss; \
+  _dbg_ss << "[CLICKER] " << msg << std::endl; \
+  OutputDebugStringA(_dbg_ss.str().c_str()); \
+} while(0)
+#else
+#define DBG_LOG(msg) ((void)0)
+#endif
 
 #include "flutter/generated_plugin_registrant.h"
 #include "flutter/standard_method_codec.h"
@@ -34,6 +47,109 @@ static int64_t GetInt64(const flutter::EncodableValue& val) {
   if (const auto* p = std::get_if<int32_t>(&val)) return static_cast<int64_t>(*p);
   return 0;
 }
+
+// ─── Hidden Command Execution ──────────────────────────────
+// Run a command without showing a console window.
+// Uses CreateProcess with CREATE_NO_WINDOW instead of _popen,
+// which would flash a visible terminal on screen.
+// Returns the command's exit code, and captures stdout into 'output'.
+static int _runCommandHidden(const std::string& cmd, std::string& output) {
+  output.clear();
+
+  // Create pipes for stdout
+  SECURITY_ATTRIBUTES sa = {};
+  sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+  sa.bInheritHandle = TRUE;
+  sa.lpSecurityDescriptor = nullptr;
+
+  HANDLE hReadPipe = nullptr, hWritePipe = nullptr;
+  if (!CreatePipe(&hReadPipe, &hWritePipe, &sa, 0)) return -1;
+  SetHandleInformation(hReadPipe, HANDLE_FLAG_INHERIT, 0);
+
+  // Build command line: cmd /C <command>
+  std::string fullCmd = "cmd /C " + cmd;
+  // CreateProcessW needs a mutable wchar_t*
+  int wLen = MultiByteToWideChar(CP_UTF8, 0, fullCmd.c_str(), -1, nullptr, 0);
+  std::vector<wchar_t> cmdLine(wLen);
+  MultiByteToWideChar(CP_UTF8, 0, fullCmd.c_str(), -1, cmdLine.data(), wLen);
+
+  STARTUPINFOW si = {};
+  si.cb = sizeof(STARTUPINFOW);
+  si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+  si.hStdOutput = hWritePipe;
+  si.hStdError = hWritePipe;
+  si.wShowWindow = SW_HIDE;
+
+  PROCESS_INFORMATION pi = {};
+  DWORD creationFlags = CREATE_NO_WINDOW;
+
+  BOOL ok = CreateProcessW(
+    nullptr, cmdLine.data(), nullptr, nullptr, TRUE,
+    creationFlags, nullptr, nullptr, &si, &pi);
+
+  if (!ok) {
+    CloseHandle(hReadPipe);
+    CloseHandle(hWritePipe);
+    return -1;
+  }
+
+  CloseHandle(hWritePipe); // Close write end so ReadFile can detect EOF
+
+  // Read output
+  char buf[256];
+  DWORD bytesRead = 0;
+  while (ReadFile(hReadPipe, buf, sizeof(buf) - 1, &bytesRead, nullptr) && bytesRead > 0) {
+    buf[bytesRead] = '\0';
+    output += buf;
+  }
+
+  CloseHandle(hReadPipe);
+
+  WaitForSingleObject(pi.hProcess, INFINITE);
+  DWORD exitCode = 1;
+  GetExitCodeProcess(pi.hProcess, &exitCode);
+  CloseHandle(pi.hProcess);
+  CloseHandle(pi.hThread);
+
+  return static_cast<int>(exitCode);
+}
+
+// Simplified version that ignores output
+static int _runCommandHidden(const std::string& cmd) {
+  std::string unused;
+  return _runCommandHidden(cmd, unused);
+}
+
+// ─── Fast Clicker State ────────────────────────────────────
+// Defined early so MessageHandler can check g_clicker.running.
+// Function implementations are further down in the file.
+
+static struct {
+  volatile bool running = false;
+  volatile bool stop_requested = false;
+  volatile uint64_t generation = 0;
+  int interval_ms = 10;
+  int x = -1;
+  int y = -1;
+  int button = 0;
+  volatile int click_count = 0;
+  int target_count = -1;
+  flutter::MethodChannel<flutter::EncodableValue>* channel = nullptr;
+  bool background_mode = false;
+  HWND target_hwnd = nullptr;
+  int client_x = 0;
+  int client_y = 0;
+  bool is_keyboard = false;
+  int key_vk = 0;
+  int key_action_mode = 0;
+  int combo_keys[8] = {};
+  int combo_key_count = 0;
+  HWND self_hwnd = nullptr;
+  int dart_generation = 0;
+} g_clicker;
+
+static volatile UINT g_clicker_stopped_msg = 0;
+static volatile UINT g_perform_click_msg = 0;
 
 // ─── OCR Fallback Methods ──────────────────────────────────
 // Save BGRA pixels to a temp BMP file (shared by fallback methods)
@@ -114,16 +230,11 @@ static bool _ocrFallbackPython(const std::vector<uint8_t>& pixels, int w, int h,
   std::string ocrText;
   for (const char* pyCmd : {"python", "python3", "py"}) {
     std::string cmd = std::string(pyCmd) + " \"" + pyPath + "\"";
-    FILE* pipe = _popen(cmd.c_str(), "r");
-    if (pipe) {
-      char buffer[256];
-      ocrText.clear();
-      while (fgets(buffer, sizeof(buffer), pipe)) {
-        ocrText += buffer;
-      }
-      int ret = _pclose(pipe);
-      if (ret == 0 && ocrText.find("PYTHON_OCR_ERROR:") == std::string::npos && !ocrText.empty()) {
-        // Trim
+    std::string output;
+    int ret = _runCommandHidden(cmd, output);
+    if (ret == 0) {
+      ocrText = output;
+      if (ocrText.find("PYTHON_OCR_ERROR:") == std::string::npos && !ocrText.empty()) {
         while (!ocrText.empty() && (ocrText.back() == '\n' || ocrText.back() == '\r' || ocrText.back() == ' '))
           ocrText.pop_back();
         remove(bmpPath.c_str());
@@ -174,14 +285,7 @@ static bool _ocrFallbackPowerShell(const std::vector<uint8_t>& pixels, int w, in
 
   std::string cmd = "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"" + ps1Path + "\"";
   std::string ocrText;
-  char buffer[256];
-  FILE* pipe = _popen(cmd.c_str(), "r");
-  if (pipe) {
-    while (fgets(buffer, sizeof(buffer), pipe)) {
-      ocrText += buffer;
-    }
-    _pclose(pipe);
-  }
+  _runCommandHidden(cmd, ocrText);
 
   remove(bmpPath.c_str());
   remove(ps1Path.c_str());
@@ -284,27 +388,27 @@ static DWORD WINAPI HoldTriggerThreadFunc(LPVOID param);
 static void SendHoldTriggerAction(HoldTriggerEntry* entry) {
   if (entry->is_keyboard) {
     if (entry->key_action_mode == 0) {
-      INPUT inputs[2] = {};
-      inputs[0].type = INPUT_KEYBOARD;
-      inputs[0].ki.wVk = static_cast<WORD>(entry->key_vk);
-      inputs[1].type = INPUT_KEYBOARD;
-      inputs[1].ki.wVk = static_cast<WORD>(entry->key_vk);
-      inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
-      SendInput(2, inputs, sizeof(INPUT));
+      if (g_clicker.self_hwnd && g_perform_click_msg) {
+        WPARAM wp = (WPARAM)((1 << 16) | entry->key_vk);
+        PostMessage(g_clicker.self_hwnd, g_perform_click_msg, wp, 0);
+      } else {
+        keybd_event(static_cast<BYTE>(entry->key_vk), 0, 0, 0);
+        keybd_event(static_cast<BYTE>(entry->key_vk), 0, KEYEVENTF_KEYUP, 0);
+      }
     } else if (entry->key_action_mode == 2) {
       int n = entry->combo_key_count;
       if (n > 8) n = 8;
-      INPUT inputs[16] = {};
-      for (int i = 0; i < n; i++) {
-        inputs[i].type = INPUT_KEYBOARD;
-        inputs[i].ki.wVk = static_cast<WORD>(entry->combo_keys[i]);
+      if (g_clicker.self_hwnd && g_perform_click_msg) {
+        WPARAM wp = (WPARAM)((2 << 16) | n);
+        LPARAM lp = 0;
+        for (int i = 0; i < n && i < 8; i++) {
+          lp |= ((LPARAM)(entry->combo_keys[i] & 0xFF) << (i * 8));
+        }
+        PostMessage(g_clicker.self_hwnd, g_perform_click_msg, wp, lp);
+      } else {
+        for (int i = 0; i < n; i++) keybd_event(static_cast<BYTE>(entry->combo_keys[i]), 0, 0, 0);
+        for (int i = 0; i < n; i++) keybd_event(static_cast<BYTE>(entry->combo_keys[i]), 0, KEYEVENTF_KEYUP, 0);
       }
-      for (int i = 0; i < n; i++) {
-        inputs[n + i].type = INPUT_KEYBOARD;
-        inputs[n + i].ki.wVk = static_cast<WORD>(entry->combo_keys[i]);
-        inputs[n + i].ki.dwFlags = KEYEVENTF_KEYUP;
-      }
-      SendInput(n * 2, inputs, sizeof(INPUT));
     }
   } else {
     if (entry->background_mode && entry->target_hwnd) {
@@ -315,16 +419,18 @@ static void SendHoldTriggerAction(HoldTriggerEntry* entry) {
       else if (entry->mouse_button == 2) { msg_down = WM_MBUTTONDOWN; msg_up = WM_MBUTTONUP; }
       PostMessage(entry->target_hwnd, msg_down, MK_LBUTTON, lp);
       PostMessage(entry->target_hwnd, msg_up, 0, lp);
+    }
+
+    DWORD flags_down = MOUSEEVENTF_LEFTDOWN, flags_up = MOUSEEVENTF_LEFTUP;
+    if (entry->mouse_button == 1) { flags_down = MOUSEEVENTF_RIGHTDOWN; flags_up = MOUSEEVENTF_RIGHTUP; }
+    else if (entry->mouse_button == 2) { flags_down = MOUSEEVENTF_MIDDLEDOWN; flags_up = MOUSEEVENTF_MIDDLEUP; }
+
+    if (g_clicker.self_hwnd && g_perform_click_msg) {
+      WPARAM wp = (WPARAM)((0 << 16) | (flags_down & 0xFFFF));
+      PostMessage(g_clicker.self_hwnd, g_perform_click_msg, wp, (LPARAM)flags_up);
     } else {
-      INPUT inputs[2] = {};
-      DWORD flags_down = MOUSEEVENTF_LEFTDOWN, flags_up = MOUSEEVENTF_LEFTUP;
-      if (entry->mouse_button == 1) { flags_down = MOUSEEVENTF_RIGHTDOWN; flags_up = MOUSEEVENTF_RIGHTUP; }
-      else if (entry->mouse_button == 2) { flags_down = MOUSEEVENTF_MIDDLEDOWN; flags_up = MOUSEEVENTF_MIDDLEUP; }
-      inputs[0].type = INPUT_MOUSE;
-      inputs[0].mi.dwFlags = flags_down;
-      inputs[1].type = INPUT_MOUSE;
-      inputs[1].mi.dwFlags = flags_up;
-      SendInput(2, inputs, sizeof(INPUT));
+      mouse_event(flags_down, 0, 0, 0, 0);
+      mouse_event(flags_up, 0, 0, 0, 0);
     }
   }
 }
@@ -738,6 +844,11 @@ bool FlutterWindow::OnCreate() {
   // Initialize hold trigger critical section
   InitializeCriticalSection(&g_hold_trigger_cs);
   g_hold_trigger_cs_initialized = true;
+
+  clicker_stopped_msg_ = RegisterWindowMessageW(L"ClickerStoppedCallback");
+  g_clicker_stopped_msg = clicker_stopped_msg_;
+
+  g_perform_click_msg = RegisterWindowMessageW(L"ClickerPerformClick");
 
   HWND hwnd = GetHandle();
 
@@ -1273,13 +1384,9 @@ bool FlutterWindow::OnCreate() {
             flutter::EncodableMap toolMap;
             // Check Tesseract via 'where' command
             {
-              bool tessOk = false;
-              FILE* pipe = _popen("where tesseract 2>nul", "r");
-              if (pipe) {
-                char buf[256];
-                if (fgets(buf, sizeof(buf), pipe)) tessOk = true;
-                _pclose(pipe);
-              }
+              std::string output;
+              int ret = _runCommandHidden("where tesseract 2>nul", output);
+              bool tessOk = (ret == 0 && !output.empty());
               toolMap[flutter::EncodableValue("tesseract")] = flutter::EncodableValue(tessOk);
             }
             // Check Python + pytesseract
@@ -1287,11 +1394,8 @@ bool FlutterWindow::OnCreate() {
               bool pyOk = false;
               for (const char* pyCmd : {"python", "python3", "py"}) {
                 std::string cmd = std::string(pyCmd) + " -c \"import pytesseract\" 2>nul";
-                FILE* pipe = _popen(cmd.c_str(), "r");
-                if (pipe) {
-                  int ret = _pclose(pipe);
-                  if (ret == 0) { pyOk = true; break; }
-                }
+                int ret = _runCommandHidden(cmd);
+                if (ret == 0) { pyOk = true; break; }
               }
               toolMap[flutter::EncodableValue("python")] = flutter::EncodableValue(pyOk);
             }
@@ -1315,22 +1419,12 @@ bool FlutterWindow::OnCreate() {
             std::thread([result_ptr]() {
               bool ok = false;
               {
-                FILE* pipe = _popen("winget install --id UB-Mannheim.TesseractOCR -e --accept-source-agreements --accept-package-agreements 2>&1", "r");
-                if (pipe) {
-                  char buf[256];
-                  while (fgets(buf, sizeof(buf), pipe)) {}
-                  int ret = _pclose(pipe);
-                  ok = (ret == 0);
-                }
+                int ret = _runCommandHidden("winget install --id UB-Mannheim.TesseractOCR -e --accept-source-agreements --accept-package-agreements 2>&1");
+                ok = (ret == 0);
               }
               if (!ok) {
-                FILE* pipe = _popen("choco install tesseract -y 2>&1", "r");
-                if (pipe) {
-                  char buf[256];
-                  while (fgets(buf, sizeof(buf), pipe)) {}
-                  int ret = _pclose(pipe);
-                  ok = (ret == 0);
-                }
+                int ret = _runCommandHidden("choco install tesseract -y 2>&1");
+                ok = (ret == 0);
               }
               if (ok) result_ptr->Success();
               else result_ptr->Error("INSTALL_FAILED", "Failed to install Tesseract OCR. Please install manually from https://github.com/UB-Mannheim/tesseract/wiki");
@@ -1342,17 +1436,12 @@ bool FlutterWindow::OnCreate() {
             std::thread([result_ptr]() {
               bool ok = false;
               {
-                FILE* pipe = _popen("winget install --id Python.Python.3.12 -e --accept-source-agreements --accept-package-agreements 2>&1", "r");
-                if (pipe) {
-                  char buf[256];
-                  while (fgets(buf, sizeof(buf), pipe)) {}
-                  int ret = _pclose(pipe);
-                  ok = (ret == 0);
-                }
+                int ret = _runCommandHidden("winget install --id Python.Python.3.12 -e --accept-source-agreements --accept-package-agreements 2>&1");
+                ok = (ret == 0);
               }
-              _popen("python -m pip install pytesseract Pillow 2>&1", "r");
-              _popen("python3 -m pip install pytesseract Pillow 2>&1", "r");
-              _popen("py -m pip install pytesseract Pillow 2>&1", "r");
+              _runCommandHidden("python -m pip install pytesseract Pillow 2>&1");
+              _runCommandHidden("python3 -m pip install pytesseract Pillow 2>&1");
+              _runCommandHidden("py -m pip install pytesseract Pillow 2>&1");
               if (ok) result_ptr->Success();
               else result_ptr->Error("INSTALL_FAILED", "Failed to install Python. Please install manually from https://python.org");
               delete result_ptr;
@@ -1373,14 +1462,14 @@ bool FlutterWindow::OnCreate() {
           if (tool == "tesseract") {
             auto result_ptr = result.release();
             std::thread([result_ptr]() {
-              _popen("winget uninstall --id UB-Mannheim.TesseractOCR -e 2>&1", "r");
+              _runCommandHidden("winget uninstall --id UB-Mannheim.TesseractOCR -e 2>&1");
               result_ptr->Success();
               delete result_ptr;
             }).detach();
           } else if (tool == "python") {
             auto result_ptr = result.release();
             std::thread([result_ptr]() {
-              _popen("python -m pip uninstall pytesseract Pillow -y 2>&1", "r");
+              _runCommandHidden("python -m pip uninstall pytesseract Pillow -y 2>&1");
               result_ptr->Success();
               delete result_ptr;
             }).detach();
@@ -1498,22 +1587,43 @@ bool FlutterWindow::OnCreate() {
           int keyVk = 0;
           int keyActionMode = 0;
           std::vector<int> comboKeys;
+          int dartGeneration = 0;
           if (args->size() >= 12) {
             const auto* kbPtr = std::get_if<bool>(&args->at(9));
             isKeyboard = kbPtr ? *kbPtr : false;
             keyVk = GetInt(args->at(10));
             keyActionMode = GetInt(args->at(11));
-            // combo keys start at index 12
-            for (size_t i = 12; i < args->size(); i++) {
+            // combo keys start at index 12, last arg is dartGeneration
+            for (size_t i = 12; i < args->size() - 1; i++) {
               comboKeys.push_back(GetInt(args->at(i)));
             }
+            // Last argument is Dart-side generation counter
+            if (args->size() > 12) {
+              dartGeneration = GetInt(args->at(args->size() - 1));
+            }
           }
+          g_clicker.dart_generation = dartGeneration;
           StartFastClicker(intervalUs, x, y, button, targetCount, bgMode, targetHwnd, clientX, clientY,
               isKeyboard, keyVk, keyActionMode, comboKeys);
-          result->Success(flutter::EncodableValue(true));
+          result->Success(flutter::EncodableValue(static_cast<int>(g_clicker.generation)));
         } else if (call.method_name() == "stopFastClicker") {
           StopFastClicker();
           result->Success(flutter::EncodableValue(true));
+        } else if (call.method_name() == "getClickCount") {
+          result->Success(flutter::EncodableValue(g_clicker.click_count));
+        } else if (call.method_name() == "getClickerDebugInfo") {
+          result->Success(flutter::EncodableValue(flutter::EncodableMap{
+            {flutter::EncodableValue("running"), flutter::EncodableValue(g_clicker.running ? 1 : 0)},
+            {flutter::EncodableValue("stop_requested"), flutter::EncodableValue(g_clicker.stop_requested ? 1 : 0)},
+            {flutter::EncodableValue("click_count"), flutter::EncodableValue(g_clicker.click_count)},
+            {flutter::EncodableValue("generation"), flutter::EncodableValue(static_cast<int>(g_clicker.generation))},
+            {flutter::EncodableValue("thread_alive"), flutter::EncodableValue(clicker_thread_ ? 1 : 0)},
+            {flutter::EncodableValue("interval_ms"), flutter::EncodableValue(g_clicker.interval_ms)},
+            {flutter::EncodableValue("x"), flutter::EncodableValue(g_clicker.x)},
+            {flutter::EncodableValue("y"), flutter::EncodableValue(g_clicker.y)},
+            {flutter::EncodableValue("button"), flutter::EncodableValue(g_clicker.button)},
+            {flutter::EncodableValue("is_keyboard"), flutter::EncodableValue(g_clicker.is_keyboard ? 1 : 0)},
+          }));
         } else if (call.method_name() == "enableAutoStart") {
           // Add to Windows startup registry
           HKEY hKey;
@@ -2062,23 +2172,10 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   if (message == WM_HOTKEY) {
     int id = static_cast<int>(wparam);
 
-    // Stop the clicker IMMEDIATELY in C++ for start/stop and emergency stop
-    // hotkeys, without waiting for the Dart round-trip. This eliminates
-    // 20-50ms of latency that makes 1ms clicking feel unresponsive.
-    if (id == 1 || id == 3) {  // startStopClicker or emergencyStop
+    if ((id == 1 || id == 3) && g_clicker.running) {
       StopFastClicker();
-
-      // Also notify Dart to stop immediately (for keyboard mode which uses
-      // Dart Timers, not the native clicker thread). This bypasses the normal
-      // onHotkey → toggle() path which has extra latency.
-      if (hotkey_channel_) {
-        hotkey_channel_->InvokeMethod(
-            "onStopClickerImmediate",
-            std::make_unique<flutter::EncodableValue>(id));
-      }
     }
 
-    // Notify Dart for normal hotkey handling (toggle, UI updates, etc.)
     if (hotkey_channel_) {
       hotkey_channel_->InvokeMethod(
           "onHotkey",
@@ -2091,17 +2188,56 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   if (tray_callback_msg_ != 0 && message == tray_callback_msg_) {
     switch (LOWORD(lparam)) {
       case WM_LBUTTONUP: {
-        // Left click: show main window
         if (platform_channel_) {
           platform_channel_->InvokeMethod("onTrayIconClick", nullptr);
         }
         break;
       }
       case WM_RBUTTONUP: {
-        // Right click: show context menu
         ShowTrayMenu();
         break;
       }
+    }
+    return 0;
+  }
+
+  if (clicker_stopped_msg_ != 0 && message == clicker_stopped_msg_) {
+    if (platform_channel_) {
+      platform_channel_->InvokeMethod("onFastClickerStopped",
+        std::make_unique<flutter::EncodableValue>(flutter::EncodableMap{
+          {flutter::EncodableValue("count"), flutter::EncodableValue(g_clicker.click_count)},
+          {flutter::EncodableValue("generation"), flutter::EncodableValue(g_clicker.dart_generation)},
+        }));
+    }
+    return 0;
+  }
+
+  if (g_perform_click_msg != 0 && message == g_perform_click_msg) {
+    if (!g_clicker.running) return 0;
+    int click_type = (int)(wparam >> 16);
+    if (click_type == 0) {
+      DWORD flags_down = (DWORD)(wparam & 0xFFFF);
+      DWORD flags_up = (DWORD)lparam;
+      mouse_event(flags_down, 0, 0, 0, 0);
+      mouse_event(flags_up, 0, 0, 0, 0);
+    } else if (click_type == 1) {
+      BYTE vk = (BYTE)(wparam & 0xFF);
+      keybd_event(vk, 0, 0, 0);
+      keybd_event(vk, 0, KEYEVENTF_KEYUP, 0);
+    } else if (click_type == 2) {
+      int n = (int)(wparam & 0xFF);
+      BYTE vks[8];
+      for (int i = 0; i < n && i < 8; i++) {
+        vks[i] = (BYTE)((lparam >> (i * 8)) & 0xFF);
+      }
+      for (int i = 0; i < n; i++) keybd_event(vks[i], 0, 0, 0);
+      for (int i = 0; i < n; i++) keybd_event(vks[i], 0, KEYEVENTF_KEYUP, 0);
+    } else if (click_type == 3) {
+      BYTE vk = (BYTE)(wparam & 0xFF);
+      keybd_event(vk, 0, 0, 0);
+    } else if (click_type == 4) {
+      BYTE vk = (BYTE)(wparam & 0xFF);
+      keybd_event(vk, 0, KEYEVENTF_KEYUP, 0);
     }
     return 0;
   }
@@ -2297,62 +2433,41 @@ void FlutterWindow::ShowTrayMenu() {
 //   no timeKillEvent with TIME_KILL_SYNCHRONOUS).
 // - Simple Sleep loop with timeBeginPeriod(1) for 1ms precision.
 // - Minimum interval: 1ms. Sub-ms is physically impossible with SendInput.
-
-static struct {
-  volatile bool running = false;
-  volatile bool stop_requested = false;
-  volatile uint64_t generation = 0;
-  int interval_ms = 10;           // milliseconds per click (min 1)
-  int x = -1;
-  int y = -1;
-  int button = 0;                 // 0=left, 1=right, 2=middle (mouse only)
-  volatile int click_count = 0;
-  int target_count = -1;
-  flutter::MethodChannel<flutter::EncodableValue>* channel = nullptr;
-  bool background_mode = false;
-  HWND target_hwnd = nullptr;
-  int client_x = 0;
-  int client_y = 0;
-  // Keyboard mode fields
-  bool is_keyboard = false;       // true = keyboard mode, false = mouse mode
-  int key_vk = 0;                 // Virtual key code for keyboard repeat
-  int key_action_mode = 0;        // 0=repeat, 1=hold, 2=combo
-  int combo_keys[8] = {};         // VK codes for combo mode
-  int combo_key_count = 0;
-} g_clicker;
+// Note: g_clicker struct is defined earlier in the file (before MessageHandler).
 
 static void SendOneClick() {
   if (g_clicker.is_keyboard) {
-    // Keyboard repeat mode: press and release the key
     if (g_clicker.key_action_mode == 0) {
-      INPUT inputs[2] = {};
-      inputs[0].type = INPUT_KEYBOARD;
-      inputs[0].ki.wVk = static_cast<WORD>(g_clicker.key_vk);
-      inputs[1].type = INPUT_KEYBOARD;
-      inputs[1].ki.wVk = static_cast<WORD>(g_clicker.key_vk);
-      inputs[1].ki.dwFlags = KEYEVENTF_KEYUP;
-      SendInput(2, inputs, sizeof(INPUT));
+      if (g_clicker.self_hwnd && g_perform_click_msg) {
+        WPARAM wp = (WPARAM)((1 << 16) | g_clicker.key_vk);
+        PostMessage(g_clicker.self_hwnd, g_perform_click_msg, wp, 0);
+      } else {
+        keybd_event(static_cast<BYTE>(g_clicker.key_vk), 0, 0, 0);
+        keybd_event(static_cast<BYTE>(g_clicker.key_vk), 0, KEYEVENTF_KEYUP, 0);
+      }
     } else if (g_clicker.key_action_mode == 2) {
-      // Combo mode: press all keys down, then release all
       int n = g_clicker.combo_key_count;
       if (n > 8) n = 8;
-      INPUT inputs[16] = {};
-      for (int i = 0; i < n; i++) {
-        inputs[i].type = INPUT_KEYBOARD;
-        inputs[i].ki.wVk = static_cast<WORD>(g_clicker.combo_keys[i]);
+      if (g_clicker.self_hwnd && g_perform_click_msg) {
+        WPARAM wp = (WPARAM)((2 << 16) | n);
+        LPARAM lp = 0;
+        for (int i = 0; i < n && i < 8; i++) {
+          lp |= ((LPARAM)(g_clicker.combo_keys[i] & 0xFF) << (i * 8));
+        }
+        PostMessage(g_clicker.self_hwnd, g_perform_click_msg, wp, lp);
+      } else {
+        for (int i = 0; i < n; i++) {
+          keybd_event(static_cast<BYTE>(g_clicker.combo_keys[i]), 0, 0, 0);
+        }
+        for (int i = 0; i < n; i++) {
+          keybd_event(static_cast<BYTE>(g_clicker.combo_keys[i]), 0, KEYEVENTF_KEYUP, 0);
+        }
       }
-      for (int i = 0; i < n; i++) {
-        inputs[n + i].type = INPUT_KEYBOARD;
-        inputs[n + i].ki.wVk = static_cast<WORD>(g_clicker.combo_keys[i]);
-        inputs[n + i].ki.dwFlags = KEYEVENTF_KEYUP;
-      }
-      SendInput(n * 2, inputs, sizeof(INPUT));
     }
     g_clicker.click_count++;
     return;
   }
 
-  // Mouse mode
   if (g_clicker.background_mode && g_clicker.target_hwnd) {
     LPARAM lp = MAKELPARAM(static_cast<WORD>(g_clicker.client_x),
                             static_cast<WORD>(g_clicker.client_y));
@@ -2366,24 +2481,28 @@ static void SendOneClick() {
     }
     PostMessage(g_clicker.target_hwnd, msg_down, wp, lp);
     PostMessage(g_clicker.target_hwnd, msg_up, 0, lp);
-    g_clicker.click_count++;
-  } else {
+  }
+
+  {
     if (g_clicker.x >= 0 && g_clicker.y >= 0) {
       SetCursorPos(g_clicker.x, g_clicker.y);
     }
-    INPUT inputs[2] = {};
+
     DWORD flags_down = MOUSEEVENTF_LEFTDOWN;
     DWORD flags_up = MOUSEEVENTF_LEFTUP;
     if (g_clicker.button == 1) { flags_down = MOUSEEVENTF_RIGHTDOWN; flags_up = MOUSEEVENTF_RIGHTUP; }
     else if (g_clicker.button == 2) { flags_down = MOUSEEVENTF_MIDDLEDOWN; flags_up = MOUSEEVENTF_MIDDLEUP; }
 
-    inputs[0].type = INPUT_MOUSE;
-    inputs[0].mi.dwFlags = flags_down;
-    inputs[1].type = INPUT_MOUSE;
-    inputs[1].mi.dwFlags = flags_up;
-    SendInput(2, inputs, sizeof(INPUT));
-    g_clicker.click_count++;
+    if (g_clicker.self_hwnd && g_perform_click_msg) {
+      WPARAM wp2 = (WPARAM)((0 << 16) | (flags_down & 0xFFFF));
+      PostMessage(g_clicker.self_hwnd, g_perform_click_msg, wp2, (LPARAM)flags_up);
+    } else {
+      mouse_event(flags_down, 0, 0, 0, 0);
+      mouse_event(flags_up, 0, 0, 0, 0);
+    }
   }
+
+  g_clicker.click_count++;
 }
 
 static bool IsCurrentGeneration(uint64_t gen) {
@@ -2403,31 +2522,34 @@ static DWORD WINAPI ClickerThreadFunc(LPVOID param) {
 
   // Keyboard hold mode: press key once, wait for stop, then release
   if (g_clicker.is_keyboard && g_clicker.key_action_mode == 1) {
-    INPUT inputs[1] = {};
-    inputs[0].type = INPUT_KEYBOARD;
-    inputs[0].ki.wVk = static_cast<WORD>(g_clicker.key_vk);
-    SendInput(1, inputs, sizeof(INPUT));
+    if (g_clicker.self_hwnd && g_perform_click_msg) {
+      WPARAM wp = (WPARAM)((3 << 16) | g_clicker.key_vk);
+      PostMessage(g_clicker.self_hwnd, g_perform_click_msg, wp, 0);
+    } else {
+      keybd_event(static_cast<BYTE>(g_clicker.key_vk), 0, 0, 0);
+    }
     g_clicker.click_count++;
 
-    // Wait until stopped
     while (IsCurrentGeneration(my_generation) && !g_clicker.stop_requested) {
       Sleep(sleep_ms);
     }
 
-    // Release the key
-    INPUT up = {};
-    up.type = INPUT_KEYBOARD;
-    up.ki.wVk = static_cast<WORD>(g_clicker.key_vk);
-    up.ki.dwFlags = KEYEVENTF_KEYUP;
-    SendInput(1, &up, sizeof(INPUT));
+    if (g_clicker.self_hwnd && g_perform_click_msg) {
+      WPARAM wp = (WPARAM)((4 << 16) | g_clicker.key_vk);
+      PostMessage(g_clicker.self_hwnd, g_perform_click_msg, wp, 0);
+    } else {
+      keybd_event(static_cast<BYTE>(g_clicker.key_vk), 0, KEYEVENTF_KEYUP, 0);
+    }
   } else {
     // Normal repeat/combo/mouse mode
+    int loop_count = 0;
     while (IsCurrentGeneration(my_generation) && !g_clicker.stop_requested) {
       if (g_clicker.target_count > 0 && g_clicker.click_count >= g_clicker.target_count) {
         g_clicker.stop_requested = true;
         break;
       }
       SendOneClick();
+      loop_count++;
       Sleep(sleep_ms);
     }
   }
@@ -2436,14 +2558,8 @@ static DWORD WINAPI ClickerThreadFunc(LPVOID param) {
 
   g_clicker.running = false;
 
-  // Notify Dart when thread exits. Only notify if our generation is still
-  // current (i.e., no new StartFastClicker was called). If generation
-  // changed, a new thread was started and will handle its own notification.
-  if (IsCurrentGeneration(my_generation) && g_clicker.channel) {
-    g_clicker.channel->InvokeMethod("onFastClickerStopped",
-      std::make_unique<flutter::EncodableValue>(flutter::EncodableMap{
-        {flutter::EncodableValue("count"), flutter::EncodableValue(g_clicker.click_count)},
-      }));
+  if (IsCurrentGeneration(my_generation) && g_clicker.self_hwnd && g_clicker_stopped_msg) {
+    PostMessage(g_clicker.self_hwnd, g_clicker_stopped_msg, 0, 0);
   }
 
   return 0;
@@ -2453,13 +2569,10 @@ void FlutterWindow::StartFastClicker(int intervalUs, int x, int y, int button, i
     bool bgMode, HWND targetHwnd, int clientX, int clientY,
     bool isKeyboard, int keyVk, int keyActionMode,
     const std::vector<int>& comboKeys) {
-  // Invalidate any running thread by bumping generation.
   g_clicker.generation++;
   g_clicker.stop_requested = true;
   g_clicker.running = false;
 
-  // Clean up old thread handle.
-  // Old thread exits quickly because it checks generation every loop.
   if (clicker_thread_) {
     WaitForSingleObject(clicker_thread_, 100);
     CloseHandle(clicker_thread_);
@@ -2484,6 +2597,7 @@ void FlutterWindow::StartFastClicker(int intervalUs, int x, int y, int button, i
   g_clicker.target_hwnd = targetHwnd;
   g_clicker.client_x = clientX;
   g_clicker.client_y = clientY;
+  g_clicker.self_hwnd = GetHandle();
   // Keyboard mode
   g_clicker.is_keyboard = isKeyboard;
   g_clicker.key_vk = keyVk;
@@ -2498,20 +2612,16 @@ void FlutterWindow::StartFastClicker(int intervalUs, int x, int y, int button, i
   g_clicker.generation++;
 
   clicker_thread_ = CreateThread(nullptr, 0, ClickerThreadFunc, this, 0, nullptr);
-  clicker_running_ = true;
+  if (!clicker_thread_) {
+    g_clicker.running = false;
+    g_clicker.stop_requested = true;
+    OutputDebugStringA("[StartFastClicker] CreateThread FAILED!");
+  }
+  clicker_running_ = (clicker_thread_ != nullptr);
 }
 
 void FlutterWindow::StopFastClicker() {
-  // Signal the thread to stop. The thread checks this flag on every loop
-  // iteration and will exit within 1ms (the Sleep duration).
   g_clicker.stop_requested = true;
   g_clicker.running = false;
-
-  // No timer to kill — we use a simple Sleep loop now.
-  // No WaitForSingleObject — that would block the platform thread.
   clicker_running_ = false;
-
-  // The thread will send onFastClickerStopped when it exits.
-  // Do NOT bump generation here — the thread needs to see its generation
-  // is still current so it sends the notification to Dart.
 }

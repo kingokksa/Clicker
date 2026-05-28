@@ -1,0 +1,494 @@
+diff --git a/windows/runner/flutter_window.cpp b/windows/runner/flutter_window.cpp
+index 37db69d..ed6cb65 100644
+--- a/windows/runner/flutter_window.cpp
++++ b/windows/runner/flutter_window.cpp
+@@ -6,6 +6,7 @@
+ #include <optional>
+ #include <algorithm>
+ #include <vector>
++#include <thread>
+ 
+ // C++/WinRT for Windows OCR
+ #include <winrt/Windows.Foundation.h>
+@@ -982,62 +983,64 @@ bool FlutterWindow::OnCreate() {
+           ReleaseDC(nullptr, hdcScreen);
+ 
+           // Template matching using normalized cross-correlation (simplified: sum of absolute differences)
+-          // Search for the template in the region
+-          flutter::EncodableList matches;
++          // Run on a background thread to avoid blocking the platform thread.
+           int searchW = regionW - tplW + 1;
+           int searchH = regionH - tplH + 1;
+           if (searchW <= 0 || searchH <= 0) {
+-            result->Success(flutter::EncodableValue(matches));
++            result->Success(flutter::EncodableValue(flutter::EncodableList()));
+             return;
+           }
+ 
+-          // Sample step for performance (skip pixels for large searches)
+-          int step = 1;
+-          if (searchW * searchH > 500000) step = 2;
+-          if (searchW * searchH > 2000000) step = 3;
+-
+-          double bestScore = 0;
+-          int bestX = -1, bestY = -1;
+-
+-          for (int sy = 0; sy < searchH; sy += step) {
+-            for (int sx = 0; sx < searchW; sx += step) {
+-              double totalDiff = 0;
+-              int sampleCount = 0;
+-              // Sample every 2nd pixel for speed
+-              for (int ty = 0; ty < tplH; ty += 2) {
+-                for (int tx = 0; tx < tplW; tx += 2) {
+-                  int rIdx = ((sy + ty) * regionW + (sx + tx)) * 4;
+-                  int tIdx = (ty * tplW + tx) * 4;
+-                  if (rIdx + 3 >= (int)regionPixels.size() || tIdx + 3 >= (int)tplData.size()) continue;
+-                  // BGRA comparison
+-                  int db = abs((int)regionPixels[rIdx] - (int)tplData[tIdx]);
+-                  int dg = abs((int)regionPixels[rIdx+1] - (int)tplData[tIdx+1]);
+-                  int dr = abs((int)regionPixels[rIdx+2] - (int)tplData[tIdx+2]);
+-                  totalDiff += (db + dg + dr) / (255.0 * 3.0);
+-                  sampleCount++;
++          auto result_ptr = result.release();
++          std::thread([result_ptr, regionPixels=std::move(regionPixels), tplData=std::move(tplData),
++                       regionX, regionY, regionW, regionH, tplW, tplH, threshold, searchW, searchH]() {
++            // Sample step for performance (skip pixels for large searches)
++            int step = 1;
++            if (searchW * searchH > 500000) step = 2;
++            if (searchW * searchH > 2000000) step = 3;
++
++            double bestScore = 0;
++            int bestX = -1, bestY = -1;
++
++            for (int sy = 0; sy < searchH; sy += step) {
++              for (int sx = 0; sx < searchW; sx += step) {
++                double totalDiff = 0;
++                int sampleCount = 0;
++                for (int ty = 0; ty < tplH; ty += 2) {
++                  for (int tx = 0; tx < tplW; tx += 2) {
++                    int rIdx = ((sy + ty) * regionW + (sx + tx)) * 4;
++                    int tIdx = (ty * tplW + tx) * 4;
++                    if (rIdx + 3 >= (int)regionPixels.size() || tIdx + 3 >= (int)tplData.size()) continue;
++                    int db = abs((int)regionPixels[rIdx] - (int)tplData[tIdx]);
++                    int dg = abs((int)regionPixels[rIdx+1] - (int)tplData[tIdx+1]);
++                    int dr = abs((int)regionPixels[rIdx+2] - (int)tplData[tIdx+2]);
++                    totalDiff += (db + dg + dr) / (255.0 * 3.0);
++                    sampleCount++;
++                  }
++                }
++                if (sampleCount == 0) continue;
++                double score = 1.0 - (totalDiff / sampleCount);
++                if (score >= threshold && score > bestScore) {
++                  bestScore = score;
++                  bestX = regionX + sx;
++                  bestY = regionY + sy;
+                 }
+-              }
+-              if (sampleCount == 0) continue;
+-              double score = 1.0 - (totalDiff / sampleCount);
+-              if (score >= threshold && score > bestScore) {
+-                bestScore = score;
+-                bestX = regionX + sx;
+-                bestY = regionY + sy;
+               }
+             }
+-          }
+-
+-          if (bestX >= 0 && bestY >= 0) {
+-            flutter::EncodableMap match;
+-            match[flutter::EncodableValue("x")] = flutter::EncodableValue(bestX);
+-            match[flutter::EncodableValue("y")] = flutter::EncodableValue(bestY);
+-            match[flutter::EncodableValue("width")] = flutter::EncodableValue(tplW);
+-            match[flutter::EncodableValue("height")] = flutter::EncodableValue(tplH);
+-            match[flutter::EncodableValue("score")] = flutter::EncodableValue(bestScore);
+-            matches.push_back(flutter::EncodableValue(match));
+-          }
+ 
+-          result->Success(flutter::EncodableValue(matches));
++            flutter::EncodableList matches;
++            if (bestX >= 0 && bestY >= 0) {
++              flutter::EncodableMap match;
++              match[flutter::EncodableValue("x")] = flutter::EncodableValue(bestX);
++              match[flutter::EncodableValue("y")] = flutter::EncodableValue(bestY);
++              match[flutter::EncodableValue("width")] = flutter::EncodableValue(tplW);
++              match[flutter::EncodableValue("height")] = flutter::EncodableValue(tplH);
++              match[flutter::EncodableValue("score")] = flutter::EncodableValue(bestScore);
++              matches.push_back(flutter::EncodableValue(match));
++            }
++            result_ptr->Success(flutter::EncodableValue(matches));
++            delete result_ptr;
++          }).detach();
+         } else if (call.method_name() == "ocrRegion") {
+           // OCR a screen region using Windows.Media.Ocr (C++/WinRT)
+           // Args: [x, y, w, h, language]
+@@ -1091,102 +1094,103 @@ bool FlutterWindow::OnCreate() {
+             rgba[i*4+3] = pixels[i*4+3]; // A
+           }
+ 
+-          // Use C++/WinRT to call Windows.Media.Ocr directly
+-          try {
+-            // Initialize WinRT (safe to call multiple times)
+-            winrt::init_apartment(winrt::apartment_type::single_threaded);
+-
+-            // Create SoftwareBitmap from pixel data
+-            auto softwareBitmap = winrt::Windows::Graphics::Imaging::SoftwareBitmap(
+-              winrt::Windows::Graphics::Imaging::BitmapPixelFormat::Rgba8,
+-              ocrW, ocrH,
+-              winrt::Windows::Graphics::Imaging::BitmapAlphaMode::Premultiplied);
+-
+-            // Copy pixel data into the bitmap via DataWriter
+-            {
+-              auto dataWriter = winrt::Windows::Storage::Streams::DataWriter();
+-              dataWriter.WriteBytes(winrt::array_view<uint8_t const>(rgba));
+-              auto buffer = dataWriter.DetachBuffer();
+-              softwareBitmap.CopyFromBuffer(buffer);
+-            }
++          // Run OCR on a background thread to avoid blocking the platform thread.
++          // Screen capture is done on the platform thread (GDI requires it),
++          // but OCR processing is CPU-intensive and must not freeze the UI.
++          auto result_ptr = result.release();
++          std::thread([result_ptr, rgba=std::move(rgba), pixels=std::move(pixels),
++                       ocrX, ocrY, ocrW, ocrH, lang]() {
++            try {
++              // Initialize WinRT on this background thread (multi-threaded apartment for background use)
++              winrt::init_apartment(winrt::apartment_type::multi_threaded);
++
++              auto softwareBitmap = winrt::Windows::Graphics::Imaging::SoftwareBitmap(
++                winrt::Windows::Graphics::Imaging::BitmapPixelFormat::Rgba8,
++                ocrW, ocrH,
++                winrt::Windows::Graphics::Imaging::BitmapAlphaMode::Premultiplied);
++
++              {
++                auto dataWriter = winrt::Windows::Storage::Streams::DataWriter();
++                dataWriter.WriteBytes(winrt::array_view<uint8_t const>(rgba));
++                auto buffer = dataWriter.DetachBuffer();
++                softwareBitmap.CopyFromBuffer(buffer);
++              }
+ 
+-            // Try to create OCR engine with the requested language
+-            winrt::Windows::Media::Ocr::OcrEngine ocrEngine = nullptr;
+-            if (lang != "en" && lang != "") {
+-              try {
+-                auto language = winrt::Windows::Globalization::Language(winrt::to_hstring(lang));
+-                ocrEngine = winrt::Windows::Media::Ocr::OcrEngine::TryCreateFromLanguage(language);
+-              } catch (...) {
+-                // Fall back to user profile languages
++              winrt::Windows::Media::Ocr::OcrEngine ocrEngine = nullptr;
++              if (lang != "en" && lang != "") {
++                try {
++                  auto language = winrt::Windows::Globalization::Language(winrt::to_hstring(lang));
++                  ocrEngine = winrt::Windows::Media::Ocr::OcrEngine::TryCreateFromLanguage(language);
++                } catch (...) {}
++              }
++              if (ocrEngine == nullptr) {
++                ocrEngine = winrt::Windows::Media::Ocr::OcrEngine::TryCreateFromUserProfileLanguages();
++              }
++              if (ocrEngine == nullptr) {
++                result_ptr->Error("OCR_NOT_AVAILABLE", "Windows OCR engine not available. Install OCR language pack from Windows Settings > Time & Language > Language & region.");
++                delete result_ptr;
++                return;
+               }
+-            }
+-            if (ocrEngine == nullptr) {
+-              ocrEngine = winrt::Windows::Media::Ocr::OcrEngine::TryCreateFromUserProfileLanguages();
+-            }
+-            if (ocrEngine == nullptr) {
+-              result->Error("OCR_NOT_AVAILABLE", "Windows OCR engine not available. Install OCR language pack from Windows Settings > Time & Language > Language & region.");
+-              return;
+-            }
+ 
+-            // Perform OCR
+-            auto ocrResult = ocrEngine.RecognizeAsync(softwareBitmap).get();
+-            auto ocrText = winrt::to_string(ocrResult.Text());
+-
+-            flutter::EncodableMap resultMap;
+-            resultMap[flutter::EncodableValue("text")] = flutter::EncodableValue(ocrText);
+-            resultMap[flutter::EncodableValue("x")] = flutter::EncodableValue(ocrX);
+-            resultMap[flutter::EncodableValue("y")] = flutter::EncodableValue(ocrY);
+-            resultMap[flutter::EncodableValue("width")] = flutter::EncodableValue(ocrW);
+-            resultMap[flutter::EncodableValue("height")] = flutter::EncodableValue(ocrH);
+-            result->Success(flutter::EncodableValue(resultMap));
+-          } catch (const winrt::hresult_error& ex) {
+-            // WinRT failed, try fallback methods
+-            std::string winrtError = winrt::to_string(ex.message());
+-            std::string ocrText;
+-            bool fallbackOk = _ocrFallbackPython(pixels, ocrW, ocrH, lang, ocrText)
+-                           || _ocrFallbackPowerShell(pixels, ocrW, ocrH, lang, ocrText);
+-            if (fallbackOk) {
+-              flutter::EncodableMap resultMap;
+-              resultMap[flutter::EncodableValue("text")] = flutter::EncodableValue(ocrText);
+-              resultMap[flutter::EncodableValue("x")] = flutter::EncodableValue(ocrX);
+-              resultMap[flutter::EncodableValue("y")] = flutter::EncodableValue(ocrY);
+-              resultMap[flutter::EncodableValue("width")] = flutter::EncodableValue(ocrW);
+-              resultMap[flutter::EncodableValue("height")] = flutter::EncodableValue(ocrH);
+-              result->Success(flutter::EncodableValue(resultMap));
+-            } else {
+-              result->Error("OCR_ERROR", ("WinRT: " + winrtError + ". Fallback methods also failed.").c_str());
+-            }
+-          } catch (const std::exception& ex) {
+-            std::string ocrText;
+-            bool fallbackOk = _ocrFallbackPython(pixels, ocrW, ocrH, lang, ocrText)
+-                           || _ocrFallbackPowerShell(pixels, ocrW, ocrH, lang, ocrText);
+-            if (fallbackOk) {
+-              flutter::EncodableMap resultMap;
+-              resultMap[flutter::EncodableValue("text")] = flutter::EncodableValue(ocrText);
+-              resultMap[flutter::EncodableValue("x")] = flutter::EncodableValue(ocrX);
+-              resultMap[flutter::EncodableValue("y")] = flutter::EncodableValue(ocrY);
+-              resultMap[flutter::EncodableValue("width")] = flutter::EncodableValue(ocrW);
+-              resultMap[flutter::EncodableValue("height")] = flutter::EncodableValue(ocrH);
+-              result->Success(flutter::EncodableValue(resultMap));
+-            } else {
+-              result->Error("OCR_ERROR", ex.what());
+-            }
+-          } catch (...) {
+-            std::string ocrText;
+-            bool fallbackOk = _ocrFallbackPython(pixels, ocrW, ocrH, lang, ocrText)
+-                           || _ocrFallbackPowerShell(pixels, ocrW, ocrH, lang, ocrText);
+-            if (fallbackOk) {
++              auto ocrResult = ocrEngine.RecognizeAsync(softwareBitmap).get();
++              auto ocrText = winrt::to_string(ocrResult.Text());
++
+               flutter::EncodableMap resultMap;
+               resultMap[flutter::EncodableValue("text")] = flutter::EncodableValue(ocrText);
+               resultMap[flutter::EncodableValue("x")] = flutter::EncodableValue(ocrX);
+               resultMap[flutter::EncodableValue("y")] = flutter::EncodableValue(ocrY);
+               resultMap[flutter::EncodableValue("width")] = flutter::EncodableValue(ocrW);
+               resultMap[flutter::EncodableValue("height")] = flutter::EncodableValue(ocrH);
+-              result->Success(flutter::EncodableValue(resultMap));
+-            } else {
+-              result->Error("OCR_ERROR", "All OCR methods failed");
++              result_ptr->Success(flutter::EncodableValue(resultMap));
++            } catch (const winrt::hresult_error& ex) {
++              std::string winrtError = winrt::to_string(ex.message());
++              std::string ocrText;
++              bool fallbackOk = _ocrFallbackPython(pixels, ocrW, ocrH, lang, ocrText)
++                             || _ocrFallbackPowerShell(pixels, ocrW, ocrH, lang, ocrText);
++              if (fallbackOk) {
++                flutter::EncodableMap resultMap;
++                resultMap[flutter::EncodableValue("text")] = flutter::EncodableValue(ocrText);
++                resultMap[flutter::EncodableValue("x")] = flutter::EncodableValue(ocrX);
++                resultMap[flutter::EncodableValue("y")] = flutter::EncodableValue(ocrY);
++                resultMap[flutter::EncodableValue("width")] = flutter::EncodableValue(ocrW);
++                resultMap[flutter::EncodableValue("height")] = flutter::EncodableValue(ocrH);
++                result_ptr->Success(flutter::EncodableValue(resultMap));
++              } else {
++                result_ptr->Error("OCR_ERROR", ("WinRT: " + winrtError + ". Fallback methods also failed.").c_str());
++              }
++            } catch (const std::exception& ex) {
++              std::string ocrText;
++              bool fallbackOk = _ocrFallbackPython(pixels, ocrW, ocrH, lang, ocrText)
++                             || _ocrFallbackPowerShell(pixels, ocrW, ocrH, lang, ocrText);
++              if (fallbackOk) {
++                flutter::EncodableMap resultMap;
++                resultMap[flutter::EncodableValue("text")] = flutter::EncodableValue(ocrText);
++                resultMap[flutter::EncodableValue("x")] = flutter::EncodableValue(ocrX);
++                resultMap[flutter::EncodableValue("y")] = flutter::EncodableValue(ocrY);
++                resultMap[flutter::EncodableValue("width")] = flutter::EncodableValue(ocrW);
++                resultMap[flutter::EncodableValue("height")] = flutter::EncodableValue(ocrH);
++                result_ptr->Success(flutter::EncodableValue(resultMap));
++              } else {
++                result_ptr->Error("OCR_ERROR", ex.what());
++              }
++            } catch (...) {
++              std::string ocrText;
++              bool fallbackOk = _ocrFallbackPython(pixels, ocrW, ocrH, lang, ocrText)
++                             || _ocrFallbackPowerShell(pixels, ocrW, ocrH, lang, ocrText);
++              if (fallbackOk) {
++                flutter::EncodableMap resultMap;
++                resultMap[flutter::EncodableValue("text")] = flutter::EncodableValue(ocrText);
++                resultMap[flutter::EncodableValue("x")] = flutter::EncodableValue(ocrX);
++                resultMap[flutter::EncodableValue("y")] = flutter::EncodableValue(ocrY);
++                resultMap[flutter::EncodableValue("width")] = flutter::EncodableValue(ocrW);
++                resultMap[flutter::EncodableValue("height")] = flutter::EncodableValue(ocrH);
++                result_ptr->Success(flutter::EncodableValue(resultMap));
++              } else {
++                result_ptr->Error("OCR_ERROR", "All OCR methods failed");
++              }
+             }
+-          }
++            delete result_ptr;
++          }).detach();
+         } else if (call.method_name() == "sendClick") {
+           // Send a mouse click at (x, y)
+           // Args: [x, y, button]  button: 0=left, 1=right, 2=middle
+@@ -1261,33 +1265,39 @@ bool FlutterWindow::OnCreate() {
+           result->Success();
+ 
+         } else if (call.method_name() == "checkOcrTools") {
+-          // Check if Tesseract and Python+pytesseract are available (fast checks)
+-          flutter::EncodableMap toolMap;
+-          // Check Tesseract via 'where' command (fast, no process launch)
+-          {
+-            bool tessOk = false;
+-            FILE* pipe = _popen("where tesseract 2>nul", "r");
+-            if (pipe) {
+-              char buf[256];
+-              if (fgets(buf, sizeof(buf), pipe)) tessOk = true;
+-              _pclose(pipe);
+-            }
+-            toolMap[flutter::EncodableValue("tesseract")] = flutter::EncodableValue(tessOk);
+-          }
+-          // Check Python + pytesseract
+-          {
+-            bool pyOk = false;
+-            for (const char* pyCmd : {"python", "python3", "py"}) {
+-              std::string cmd = std::string(pyCmd) + " -c \"import pytesseract\" 2>nul";
+-              FILE* pipe = _popen(cmd.c_str(), "r");
++          // Check if Tesseract and Python+pytesseract are available.
++          // Run checks on a background thread to avoid blocking the platform thread,
++          // which would freeze the entire UI.
++          auto result_ptr = result.release();
++          std::thread([result_ptr]() {
++            flutter::EncodableMap toolMap;
++            // Check Tesseract via 'where' command
++            {
++              bool tessOk = false;
++              FILE* pipe = _popen("where tesseract 2>nul", "r");
+               if (pipe) {
+-                int ret = _pclose(pipe);
+-                if (ret == 0) { pyOk = true; break; }
++                char buf[256];
++                if (fgets(buf, sizeof(buf), pipe)) tessOk = true;
++                _pclose(pipe);
+               }
++              toolMap[flutter::EncodableValue("tesseract")] = flutter::EncodableValue(tessOk);
+             }
+-            toolMap[flutter::EncodableValue("python")] = flutter::EncodableValue(pyOk);
+-          }
+-          result->Success(flutter::EncodableValue(toolMap));
++            // Check Python + pytesseract
++            {
++              bool pyOk = false;
++              for (const char* pyCmd : {"python", "python3", "py"}) {
++                std::string cmd = std::string(pyCmd) + " -c \"import pytesseract\" 2>nul";
++                FILE* pipe = _popen(cmd.c_str(), "r");
++                if (pipe) {
++                  int ret = _pclose(pipe);
++                  if (ret == 0) { pyOk = true; break; }
++                }
++              }
++              toolMap[flutter::EncodableValue("python")] = flutter::EncodableValue(pyOk);
++            }
++            result_ptr->Success(flutter::EncodableValue(toolMap));
++            delete result_ptr;
++          }).detach();
+ 
+         } else if (call.method_name() == "installOcrTool") {
+           // Install OCR tool: "tesseract" or "python"
+@@ -1300,49 +1310,53 @@ bool FlutterWindow::OnCreate() {
+           }
+ 
+           if (tool == "tesseract") {
+-            // Install Tesseract via winget, fallback to chocolatey, fallback to direct download
+-            bool ok = false;
+-            // Try winget first
+-            {
+-              FILE* pipe = _popen("winget install --id UB-Mannheim.TesseractOCR -e --accept-source-agreements --accept-package-agreements 2>&1", "r");
+-              if (pipe) {
+-                char buf[256];
+-                while (fgets(buf, sizeof(buf), pipe)) {}
+-                int ret = _pclose(pipe);
+-                ok = (ret == 0);
++            // Install Tesseract via winget, fallback to chocolatey — run on background thread
++            auto result_ptr = result.release();
++            std::thread([result_ptr]() {
++              bool ok = false;
++              {
++                FILE* pipe = _popen("winget install --id UB-Mannheim.TesseractOCR -e --accept-source-agreements --accept-package-agreements 2>&1", "r");
++                if (pipe) {
++                  char buf[256];
++                  while (fgets(buf, sizeof(buf), pipe)) {}
++                  int ret = _pclose(pipe);
++                  ok = (ret == 0);
++                }
+               }
+-            }
+-            if (!ok) {
+-              // Try chocolatey
+-              FILE* pipe = _popen("choco install tesseract -y 2>&1", "r");
+-              if (pipe) {
+-                char buf[256];
+-                while (fgets(buf, sizeof(buf), pipe)) {}
+-                int ret = _pclose(pipe);
+-                ok = (ret == 0);
++              if (!ok) {
++                FILE* pipe = _popen("choco install tesseract -y 2>&1", "r");
++                if (pipe) {
++                  char buf[256];
++                  while (fgets(buf, sizeof(buf), pipe)) {}
++                  int ret = _pclose(pipe);
++                  ok = (ret == 0);
++                }
+               }
+-            }
+-            if (ok) result->Success();
+-            else result->Error("INSTALL_FAILED", "Failed to install Tesseract OCR. Please install manually from https://github.com/UB-Mannheim/tesseract/wiki");
++              if (ok) result_ptr->Success();
++              else result_ptr->Error("INSTALL_FAILED", "Failed to install Tesseract OCR. Please install manually from https://github.com/UB-Mannheim/tesseract/wiki");
++              delete result_ptr;
++            }).detach();
+           } else if (tool == "python") {
+-            // Install Python + pytesseract + Pillow
+-            bool ok = false;
+-            // Try winget for Python
+-            {
+-              FILE* pipe = _popen("winget install --id Python.Python.3.12 -e --accept-source-agreements --accept-package-agreements 2>&1", "r");
+-              if (pipe) {
+-                char buf[256];
+-                while (fgets(buf, sizeof(buf), pipe)) {}
+-                int ret = _pclose(pipe);
+-                ok = (ret == 0);
++            // Install Python + pytesseract + Pillow — run on background thread
++            auto result_ptr = result.release();
++            std::thread([result_ptr]() {
++              bool ok = false;
++              {
++                FILE* pipe = _popen("winget install --id Python.Python.3.12 -e --accept-source-agreements --accept-package-agreements 2>&1", "r");
++                if (pipe) {
++                  char buf[256];
++                  while (fgets(buf, sizeof(buf), pipe)) {}
++                  int ret = _pclose(pipe);
++                  ok = (ret == 0);
++                }
+               }
+-            }
+-            // Install pytesseract + Pillow via pip
+-            _popen("python -m pip install pytesseract Pillow 2>&1", "r");
+-            _popen("python3 -m pip install pytesseract Pillow 2>&1", "r");
+-            _popen("py -m pip install pytesseract Pillow 2>&1", "r");
+-            if (ok) result->Success();
+-            else result->Error("INSTALL_FAILED", "Failed to install Python. Please install manually from https://python.org");
++              _popen("python -m pip install pytesseract Pillow 2>&1", "r");
++              _popen("python3 -m pip install pytesseract Pillow 2>&1", "r");
++              _popen("py -m pip install pytesseract Pillow 2>&1", "r");
++              if (ok) result_ptr->Success();
++              else result_ptr->Error("INSTALL_FAILED", "Failed to install Python. Please install manually from https://python.org");
++              delete result_ptr;
++            }).detach();
+           } else {
+             result->Error("INVALID_TOOL", "Unknown tool: " + tool);
+           }
+@@ -1357,11 +1371,19 @@ bool FlutterWindow::OnCreate() {
+           }
+ 
+           if (tool == "tesseract") {
+-            _popen("winget uninstall --id UB-Mannheim.TesseractOCR -e 2>&1", "r");
+-            result->Success();
++            auto result_ptr = result.release();
++            std::thread([result_ptr]() {
++              _popen("winget uninstall --id UB-Mannheim.TesseractOCR -e 2>&1", "r");
++              result_ptr->Success();
++              delete result_ptr;
++            }).detach();
+           } else if (tool == "python") {
+-            _popen("python -m pip uninstall pytesseract Pillow -y 2>&1", "r");
+-            result->Success();
++            auto result_ptr = result.release();
++            std::thread([result_ptr]() {
++              _popen("python -m pip uninstall pytesseract Pillow -y 2>&1", "r");
++              result_ptr->Success();
++              delete result_ptr;
++            }).detach();
+           } else {
+             result->Error("INVALID_TOOL", "Unknown tool: " + tool);
+           }

@@ -20,13 +20,19 @@ class ClickService {
   int _clickCount = 0;
   int _targetCount = 0;
   Timer? _timer;
+  Timer? _uiUpdateTimer;
   DateTime? _startTime;
   Duration? _durationLimit;
   final Random _random = Random();
+  int _nativeGeneration = 0;
 
   // Native fast clicker channel
   static const _platformChannel = MethodChannel('com.clicker.pro/platform');
   bool _usingNativeClicker = false;
+
+  static void _log(String msg) {
+    print('[ClickService] $msg');
+  }
 
   // Callbacks
   void Function(ClickerStatus status, int count)? onStatusChanged;
@@ -40,17 +46,29 @@ class ClickService {
   bool get isRunning => _status == ClickerStatus.running;
 
   /// Called from AppState when the native clicker thread reports it stopped.
-  void handleNativeClickerStopped(int count) {
+  void handleNativeClickerStopped(int count, {int? generation}) {
+    if (generation != null && generation != _nativeGeneration) {
+      _log('ignoring stale onFastClickerStopped (gen=$generation, current=$_nativeGeneration)');
+      return;
+    }
     _clickCount = count;
     _usingNativeClicker = false;
     _timer?.cancel();
     _timer = null;
-    // Update status to idle. This is safe even if Dart's stop() was already
-    // called — setting idle twice is harmless. If a new session started
-    // (status is running from a new start()), we don't overwrite it.
+    _uiUpdateTimer?.cancel();
+    _uiUpdateTimer = null;
     if (_status == ClickerStatus.running) {
       _status = ClickerStatus.idle;
       onStatusChanged?.call(_status, _clickCount);
+    }
+  }
+
+  Future<int> _fetchNativeClickCount() async {
+    try {
+      final count = await _platformChannel.invokeMethod<int>('getClickCount');
+      return count ?? _clickCount;
+    } on PlatformException {
+      return _clickCount;
     }
   }
 
@@ -82,29 +100,49 @@ class ClickService {
     }
 
     _status = ClickerStatus.running;
+    _startUiUpdateTimer();
     onStatusChanged?.call(_status, _clickCount);
+    _log('start: interval=${_config.intervalMs}ms, mode=${_config.clickMode.name}, repeat=${_config.repeatMode.name}');
 
     _scheduleClick();
+  }
+
+  void _startUiUpdateTimer() {
+    _uiUpdateTimer?.cancel();
+    _uiUpdateTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+      if (_status == ClickerStatus.running) {
+        if (_usingNativeClicker) {
+          _fetchNativeClickCount().then((count) {
+            _clickCount = count;
+          });
+        }
+        onStatusChanged?.call(_status, _clickCount);
+      }
+    });
   }
 
   void _scheduleClick() {
     if (_status != ClickerStatus.running) return;
 
-    final delayUs = _getDelayUs();
+    final baseUs = (_config.intervalMs * 1000).round();
 
-    // Fast clicking (mouse or keyboard): use native Win32 thread for maximum
-    // speed and instant stop. Minimum interval is 10ms.
-    if (delayUs < 50000) {
+    if (baseUs <= 50000) {
+      _log('using native fast clicker (base=${baseUs}us)');
       _startNativeFastClicker();
       return;
     }
 
-    // Slow mode (>= 50ms): one-shot timer, await each action
+    final delayUs = _getDelayUs();
+    _log('using Dart timer mode (delay=${delayUs}us)');
+
     _timer = Timer(Duration(microseconds: delayUs), () async {
       if (_status != ClickerStatus.running) return;
-      await _performAction();
+      try {
+        await _performAction();
+      } catch (e) {
+        _log('action error: $e');
+      }
       _clickCount++;
-      onStatusChanged?.call(_status, _clickCount);
       if (_shouldStop()) { stop(); return; }
       _scheduleClick();
     });
@@ -115,21 +153,16 @@ class ClickService {
   /// Supports both mouse and keyboard modes. Minimum interval: 10ms.
   void _startNativeFastClicker() {
     _usingNativeClicker = true;
+    _nativeGeneration++;
+    final myGen = _nativeGeneration;
+    _log('starting native clicker, dart gen=$myGen');
     int x = _config.positionMode == PositionMode.fixed ? _config.fixedX : -1;
     int y = _config.positionMode == PositionMode.fixed ? _config.fixedY : -1;
     int button = _config.mouseButton == MouseButton.right ? 1
         : (_config.mouseButton == MouseButton.middle ? 2 : 0);
     int targetCount = _targetCount > 0 ? _targetCount : -1;
-    // Enforce minimum 10ms interval
     int intervalUs = (_config.intervalMs * 1000).round();
     if (intervalUs < 10000) intervalUs = 10000;
-
-    // UI update timer — poll count every 500ms to avoid UI lag
-    _timer = Timer.periodic(const Duration(milliseconds: 500), (_) {
-      if (_status == ClickerStatus.running) {
-        onStatusChanged?.call(_status, _clickCount);
-      }
-    });
 
     try {
       final bgMode = _config.backgroundExecutionEnabled;
@@ -137,7 +170,6 @@ class ClickService {
       final cx = _config.targetClientX;
       final cy = _config.targetClientY;
 
-      // Keyboard mode parameters
       final isKeyboard = _config.clickMode == ClickMode.keyboard;
       int keyVk = 0;
       int keyActionMode = 0;
@@ -161,12 +193,15 @@ class ClickService {
         }
       }
 
-      _platformChannel.invokeMethod<bool>('startFastClicker', [
+      _platformChannel.invokeMethod<int>('startFastClicker', [
         intervalUs, x, y, button, targetCount,
         bgMode, hwnd, cx, cy,
         isKeyboard, keyVk, keyActionMode,
         ...comboKeys,
-      ]);
+        myGen,
+      ]).then((gen) {
+        _log('native clicker started, cpp gen=$gen');
+      });
     } on PlatformException catch (e) {
       _usingNativeClicker = false;
       onError?.call('原生点击器启动失败: ${e.message}');
@@ -354,20 +389,22 @@ class ClickService {
   void stop() {
     _timer?.cancel();
     _timer = null;
+    _uiUpdateTimer?.cancel();
+    _uiUpdateTimer = null;
 
-    // Stop native fast clicker if running
     if (_usingNativeClicker) {
       _usingNativeClicker = false;
       _platformChannel.invokeMethod<bool>('stopFastClicker');
+      _fetchNativeClickCount().then((count) {
+        _clickCount = count;
+      });
     }
 
-    // Release held key if in keyboard hold mode
     if (_config.clickMode == ClickMode.keyboard &&
         _config.keyActionMode == KeyActionMode.hold) {
       _input.keyRelease(_config.keyToRepeat);
     }
 
-    // Release combo keys if still held
     if (_config.clickMode == ClickMode.keyboard &&
         _config.keyActionMode == KeyActionMode.combo) {
       for (final key in _config.comboKeys.reversed) {
@@ -375,7 +412,6 @@ class ClickService {
       }
     }
 
-    // Sound feedback on stop
     if (_config.soundFeedbackEnabled && _clickCount > 0) {
       SystemSound.play(SystemSoundType.click);
     }
@@ -398,22 +434,8 @@ class ClickService {
     return _clickCount / (elapsed / 1000);
   }
 
-  DateTime? _lastImmediateStop;
-
-  /// Called from C++ via hotkey service for instant stop.
-  void stopImmediate() {
-    stop();
-    _lastImmediateStop = DateTime.now();
-  }
-
   void toggle() {
-    // If an immediate stop happened very recently (< 200ms), don't restart.
-    // This prevents the normal onHotkey → toggle() from re-starting
-    // the clicker after C++ just stopped it.
-    if (_lastImmediateStop != null &&
-        DateTime.now().difference(_lastImmediateStop!) < const Duration(milliseconds: 200)) {
-      return;
-    }
+    _log('toggle: current status=$_status');
     if (_status == ClickerStatus.running) {
       stop();
     } else {
