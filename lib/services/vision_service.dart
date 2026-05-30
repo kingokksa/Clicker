@@ -7,7 +7,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui';
 import 'package:flutter/services.dart';
-import 'package:path_provider/path_provider.dart';
+import 'app_paths.dart';
 import 'vision_plugin.dart';
 import 'vision_plugin_manager.dart';
 
@@ -45,10 +45,8 @@ class VisionService {
   /// Save a screenshot of a screen region to a file
   Future<String?> saveScreenshot(int x, int y, int w, int h) async {
     try {
-      final dir = await getApplicationSupportDirectory();
-      final path = '${dir.path}\\screenshots';
-      await Directory(path).create(recursive: true);
-      final filePath = '$path\\${DateTime.now().millisecondsSinceEpoch}.bmp';
+      final dir = await AppPaths.getScreenshotsDir();
+      final filePath = '$dir\\${DateTime.now().millisecondsSinceEpoch}.bmp';
       await _channel.invokeMethod<bool>('saveScreenshot', [x, y, w, h, filePath]);
       return filePath;
     } on PlatformException {

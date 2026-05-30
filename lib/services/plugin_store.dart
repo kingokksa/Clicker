@@ -6,7 +6,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:path_provider/path_provider.dart';
+import 'app_paths.dart';
 import 'plugin_system.dart';
 import 'plugin_registry.dart';
 import 'native_plugin_loader.dart';
@@ -251,8 +251,8 @@ class PluginStore extends ChangeNotifier {
       if (response.statusCode != 200) return false;
 
       // Save to temp file
-      final tempDir = await getTemporaryDirectory();
-      final zipPath = '${tempDir.path}${Platform.pathSeparator}${entry.id}.zip';
+      final tempDir = await AppPaths.getTempDir();
+      final zipPath = '$tempDir${Platform.pathSeparator}${entry.id}.zip';
       await File(zipPath).writeAsBytes(response.bodyBytes);
 
       // Install from zip

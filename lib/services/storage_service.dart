@@ -5,9 +5,9 @@ library;
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
+import 'app_paths.dart';
 import '../models/clicker_config.dart';
 import '../models/hold_trigger_key.dart';
 import '../models/hotkey_config.dart';
@@ -30,8 +30,7 @@ class StorageService {
 
   Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
-    final appDir = await getApplicationDocumentsDirectory();
-    _macrosDir = '${appDir.path}/macros';
+    _macrosDir = await AppPaths.getMacrosDir();
     await Directory(_macrosDir).create(recursive: true);
   }
 

@@ -233,6 +233,7 @@ class _PluginPageState extends State<PluginPage> {
       'record2': FluentIcons.record2,
       'color': FluentIcons.color,
       'remote': FluentIcons.remote,
+      'machine_learning': FluentIcons.machine_learning,
     };
     final icon = iconMap[entry.icon] ?? FluentIcons.puzzle;
 
@@ -312,8 +313,21 @@ class _PluginPageState extends State<PluginPage> {
           else if (isEnabled)
             Button(
               onPressed: () async {
-                await PluginStore.instance.uninstallPlugin(entry);
-                setState(() {});
+                final confirmed = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => ContentDialog(
+                    title: const Text('确认卸载'),
+                    content: Text('确定要卸载「${entry.name}」吗？相关文件将被删除。'),
+                    actions: [
+                      Button(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+                      FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('卸载')),
+                    ],
+                  ),
+                );
+                if (confirmed == true) {
+                  await PluginStore.instance.uninstallPlugin(entry);
+                  setState(() {});
+                }
               },
               style: ButtonStyle(
                 padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
@@ -353,11 +367,13 @@ class _PluginPageState extends State<PluginPage> {
                 backgroundColor: WidgetStatePropertyAll(accent.withValues(alpha: 0.15)),
                 padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
               ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(FluentIcons.download, size: 12, color: accent),
-                const SizedBox(width: 4),
-                Text('安装', style: TextStyle(color: accent, fontSize: 12)),
-              ]),
+              child: _isInstalling
+                ? const SizedBox(width: 14, height: 14, child: ProgressRing(strokeWidth: 2))
+                : Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(FluentIcons.download, size: 12, color: accent),
+                    const SizedBox(width: 4),
+                    Text('安装', style: TextStyle(color: accent, fontSize: 12)),
+                  ]),
             ),
         ]),
       ),
@@ -749,14 +765,26 @@ PLUGIN_EXPORT void PLUGIN_CALL plugin_dispose(void) {
             } : null,
           ),
           const SizedBox(width: 6),
-          if (manifest.source != PluginSource.builtin)
-            IconButton(
-              icon: Icon(FluentIcons.delete, size: 12, color: Colors.red.withValues(alpha: 0.7)),
-              onPressed: () async {
+          IconButton(
+            icon: Icon(FluentIcons.delete, size: 12, color: Colors.red.withValues(alpha: 0.7)),
+            onPressed: () async {
+              final confirmed = await showDialog<bool>(
+                context: context,
+                builder: (ctx) => ContentDialog(
+                  title: const Text('确认卸载'),
+                  content: Text('确定要卸载「${manifest.name}」吗？相关文件将被删除。'),
+                  actions: [
+                    Button(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+                    FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('卸载')),
+                  ],
+                ),
+              );
+              if (confirmed == true) {
                 await PluginRegistry.instance.uninstallPlugin(manifest.id);
                 setState(() {});
-              },
-            ),
+              }
+            },
+          ),
         ]),
       ),
     );

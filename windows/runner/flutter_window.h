@@ -84,7 +84,14 @@ class FlutterWindow : public Win32Window {
 // Uses color-key transparency: magenta background is transparent,
 // crosshair and selection rectangle are drawn in visible colors.
 
-enum class OverlayMode { None, Crosshair, AreaSelect, WindowPick };
+enum class OverlayMode { None, Crosshair, AreaSelect, WindowPick, DetectionBox };
+
+struct DetectionBox {
+  int x, y, w, h;
+  float confidence;
+  int class_id;
+  char class_name[64];
+};
 
 struct OverlayState {
   HWND hwnd = nullptr;
@@ -93,7 +100,8 @@ struct OverlayState {
   POINT dragStart = {};
   POINT dragCurrent = {};
   flutter::MethodChannel<flutter::EncodableValue>* channel = nullptr;
-  HWND target_window = nullptr;  // For WindowPick mode: the window to pick coordinates from
+  HWND target_window = nullptr;
+  std::vector<DetectionBox> detection_boxes;
 };
 
 // Global overlay state (needed for WndProc)

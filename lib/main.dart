@@ -12,17 +12,18 @@ import 'services/plugins/hold_trigger_plugin.dart';
 import 'services/plugins/image_recognition_plugin.dart';
 import 'services/plugins/theme_center_plugin.dart';
 import 'services/plugins/background_execution_plugin.dart';
+import 'services/plugins/ai_tracker_plugin.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Register all plugins before app starts
   final registry = PluginRegistry.instance;
   registry.registerPlugin(MacroPlugin());
   registry.registerPlugin(HoldTriggerPlugin());
   registry.registerPlugin(ImageRecognitionPlugin());
   registry.registerPlugin(ThemeCenterPlugin());
   registry.registerPlugin(BackgroundExecutionPlugin());
+  registry.registerPlugin(AiTrackerPlugin());
   await registry.loadState();
 
   // Configure window for desktop

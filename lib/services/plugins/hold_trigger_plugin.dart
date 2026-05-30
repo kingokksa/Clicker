@@ -19,11 +19,11 @@ class HoldTriggerPlugin extends ClickerPlugin {
   );
 
   @override
-  Future<void> initialize() async {}
+  Future<void> onInitialize() async {}
 
   @override
-  Future<void> dispose() async {}
+  Future<void> onDispose() async {}
 
   @override
-  Widget buildPage(BuildContext context) => const HoldTriggerPage();
+  Widget onCreatePage(BuildContext context) => const HoldTriggerPage();
 }

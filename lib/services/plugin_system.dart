@@ -1,11 +1,13 @@
 /// Clicker plugin system — supports both built-in Dart plugins and
 /// external native plugins (.dll/.so/.dylib) loaded via FFI.
+/// Built-in Dart plugins use lazy initialization: code is compiled in
+/// but resources (pages, services) are only created when enabled and
+/// released when disabled.
 library;
 
 import 'package:fluent_ui/fluent_ui.dart';
 import 'native_plugin_loader.dart';
 
-/// Plugin categories
 enum PluginCategory {
   core('核心', 'core'),
   click('点击增强', 'click'),
@@ -26,14 +28,12 @@ enum PluginCategory {
   }
 }
 
-/// Plugin source type
 enum PluginSource {
-  builtin,   // Compiled into the app
-  local,     // Installed from local directory/zip
-  store,     // Installed from plugin store (future)
+  builtin,
+  local,
+  store,
 }
 
-/// Unified plugin manifest — works for both built-in and native plugins
 class ClickerPluginManifest {
   final String id;
   final String name;
@@ -43,7 +43,7 @@ class ClickerPluginManifest {
   final IconData icon;
   final PluginCategory category;
   final PluginSource source;
-  final List<String> platforms;     // Supported platforms
+  final List<String> platforms;
   final bool supportsCurrentPlatform;
 
   const ClickerPluginManifest({
@@ -60,7 +60,6 @@ class ClickerPluginManifest {
   });
 }
 
-/// Abstract plugin interface — built-in Dart plugins implement this
 abstract class ClickerPlugin {
   ClickerPluginManifest get manifest;
 
@@ -78,15 +77,39 @@ abstract class ClickerPlugin {
     onStateChanged?.call();
   }
 
+  bool _isInitialized = false;
+  bool get isInitialized => _isInitialized;
+
   VoidCallback? onStateChanged;
 
-  Future<void> initialize();
-  Future<void> dispose();
-  Widget buildPage(BuildContext context);
+  Widget? _cachedPage;
+
+  Future<void> initialize() async {
+    if (_isInitialized) return;
+    _isInitialized = true;
+    await onInitialize();
+  }
+
+  Future<void> dispose() async {
+    if (!_isInitialized) return;
+    _isInitialized = false;
+    _cachedPage = null;
+    await onDispose();
+  }
+
+  Future<void> onInitialize();
+  Future<void> onDispose();
+  Future<void> onUninstall() async {}
+
+  Widget buildPage(BuildContext context) {
+    _cachedPage ??= onCreatePage(context);
+    return _cachedPage!;
+  }
+
+  Widget onCreatePage(BuildContext context);
   Widget? buildSettings(BuildContext context) => null;
 }
 
-/// Native plugin wrapper — wraps a LoadedNativePlugin as a ClickerPlugin
 class NativeClickerPlugin extends ClickerPlugin {
   final LoadedNativePlugin _nativePlugin;
 
@@ -114,7 +137,7 @@ class NativeClickerPlugin extends ClickerPlugin {
   }
 
   @override
-  Future<void> initialize() async {
+  Future<void> onInitialize() async {
     if (!_nativePlugin.isLoaded) {
       _nativePlugin.load();
     }
@@ -122,12 +145,12 @@ class NativeClickerPlugin extends ClickerPlugin {
   }
 
   @override
-  Future<void> dispose() async {
+  Future<void> onDispose() async {
     _nativePlugin.unload();
   }
 
   @override
-  Widget buildPage(BuildContext context) {
+  Widget onCreatePage(BuildContext context) {
     return _NativePluginPage(plugin: this);
   }
 
@@ -145,7 +168,6 @@ class NativeClickerPlugin extends ClickerPlugin {
   }
 }
 
-/// Simple page widget for native plugins
 class _NativePluginPage extends StatelessWidget {
   final NativeClickerPlugin plugin;
   const _NativePluginPage({required this.plugin});

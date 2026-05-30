@@ -3,18 +3,27 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ffi';
+import 'dart:io';
+import 'package:ffi/ffi.dart';
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http/http.dart' as http;
+import 'package:archive/archive.dart';
 import '../../services/app_state.dart';
 import '../../services/macro_service.dart';
 import '../../services/screen_monitor_service.dart';
-import '../../services/system_tray_service.dart';
 import '../../services/vision_service.dart';
 import '../../services/vision_plugin.dart';
 import '../../services/vision_plugin_manager.dart';
 import '../../services/platform/windows_input.dart';
+import '../../services/app_paths.dart';
+import '../../services/plugin_registry.dart';
+import '../../services/plugin_system.dart';
+import '../../services/plugins/ai_tracker_plugin.dart';
+import '../../services/screen_overlay_service.dart';
 
 class ImageRecognitionPage extends StatefulWidget {
   const ImageRecognitionPage({super.key});
@@ -46,18 +55,8 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
   // Conditional triggers
   final List<_TriggerEntry> _triggers = [];
   Timer? _triggerCheckTimer;
-  final Map<String, DateTime> _triggerLastFired = {}; // debounce
+  final Map<String, DateTime> _triggerLastFired = {};
 
-  // Area selection state (shared by all overlay operations)
-  Completer<(int, int, int, int)>? _areaSelectCompleter;
-  // Click pick state
-  Completer<(int, int)>? _pickCompleter;
-  bool _overlayActive = false;
-
-  // Unregister function for the external platform channel handler
-  VoidCallback? _unregisterOverlayHandler;
-
-  // Platform channel for invokeMethod calls (not for setMethodCallHandler)
   static const _platformChannel = MethodChannel('com.clicker.pro/platform');
 
   @override
@@ -66,11 +65,6 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     _monitor.onLogEntry = (_) { if (mounted) setState(() {}); };
     _monitor.onMonitoringChanged = (_) { if (mounted) setState(() {}); };
 
-    // Register overlay handler
-    _registerOverlayHandler();
-
-    // Defer heavy initialization with a small delay so the loading
-    // animation renders before we start blocking the platform thread.
     Future.delayed(const Duration(milliseconds: 100), () {
       if (mounted) _initAndLoad();
     });
@@ -406,106 +400,12 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     }
   }
 
-  Future<void> _handleOverlayClick(int x, int y) async {
-    try {
-      await _platformChannel.invokeMethod('stopOverlay');
-      _overlayActive = false;
-      if (_pickCompleter != null && !_pickCompleter!.isCompleted) {
-        _pickCompleter!.complete((x, y));
-      }
-    } on PlatformException {
-      // ignore
-    }
-  }
-
   Future<(int, int, int, int)?> _startAreaSelect() async {
-    _areaSelectCompleter = Completer<(int, int, int, int)>();
-    _overlayActive = true;
-    // Re-register handler to ensure we receive overlay callbacks
-    _registerOverlayHandler();
-    try {
-      await _platformChannel.invokeMethod('startAreaSelectOverlay');
-      // Wait for user to complete selection
-      return await _areaSelectCompleter!.future;
-    } on PlatformException {
-      _overlayActive = false;
-      _areaSelectCompleter = null;
-      return null;
-    } catch (e) {
-      _overlayActive = false;
-      _areaSelectCompleter = null;
-      return null;
-    }
+    return ScreenOverlayService.instance.startAreaSelect();
   }
 
   Future<(int, int)?> _startPick() async {
-    _pickCompleter = Completer<(int, int)>();
-    _overlayActive = true;
-    // Re-register handler to ensure we receive overlay callbacks
-    _registerOverlayHandler();
-    try {
-      await _platformChannel.invokeMethod('startPickOverlay');
-      return await _pickCompleter!.future;
-    } on PlatformException {
-      _overlayActive = false;
-      _pickCompleter = null;
-      return null;
-    } catch (e) {
-      _overlayActive = false;
-      _pickCompleter = null;
-      return null;
-    }
-  }
-
-  void _registerOverlayHandler() {
-    // Unregister previous handler if any
-    _unregisterOverlayHandler?.call();
-
-    _unregisterOverlayHandler = SystemTrayService().registerExternalHandler(
-      (call) async {
-        if (!mounted) return null;
-        switch (call.method) {
-          case 'onOverlayClick':
-            final args = call.arguments as Map;
-            final x = args['x'] as int;
-            final y = args['y'] as int;
-            await _handleOverlayClick(x, y);
-            return true; // handled
-          case 'onOverlayWindowPick':
-            final args = call.arguments as Map;
-            final x = args['x'] as int;
-            final y = args['y'] as int;
-            await _handleOverlayClick(x, y);
-            return true; // handled
-          case 'onOverlayAreaSelected':
-            final args = call.arguments as Map;
-            final x1 = args['x1'] as int;
-            final y1 = args['y1'] as int;
-            final x2 = args['x2'] as int;
-            final y2 = args['y2'] as int;
-            await _platformChannel.invokeMethod('stopOverlay');
-            _overlayActive = false;
-            if (_areaSelectCompleter != null && !_areaSelectCompleter!.isCompleted) {
-              _areaSelectCompleter!.complete((x1, y1, x2, y2));
-            }
-            if (mounted) setState(() {});
-            return true; // handled
-          case 'onOverlayCancelled':
-            await _platformChannel.invokeMethod('stopOverlay');
-            _overlayActive = false;
-            if (_areaSelectCompleter != null && !_areaSelectCompleter!.isCompleted) {
-              _areaSelectCompleter!.completeError('cancelled');
-            }
-            if (_pickCompleter != null && !_pickCompleter!.isCompleted) {
-              _pickCompleter!.completeError('cancelled');
-            }
-            if (mounted) setState(() {});
-            return true; // handled
-          default:
-            return null; // not handled — let other handlers process
-        }
-      },
-    );
+    return ScreenOverlayService.instance.startPick();
   }
 
   Future<TemplateData?> _captureTemplate() async {
@@ -525,11 +425,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
   @override
   void dispose() {
     _stopTriggerChecker();
-    if (_overlayActive) {
-      _platformChannel.invokeMethod('stopOverlay');
-    }
-    _unregisterOverlayHandler?.call();
-    _unregisterOverlayHandler = null;
+    ScreenOverlayService.instance.stopOverlay();
     _monitor.dispose();
     super.dispose();
   }
@@ -587,11 +483,14 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
           _tabChip('区域监控', _selectedTab == 0, () => setState(() => _selectedTab = 0)),
           const SizedBox(width: 6),
           _tabChip('条件触发', _selectedTab == 1, () => setState(() => _selectedTab = 1)),
+          const SizedBox(width: 6),
+          _tabChip('AI检测', _selectedTab == 2, () => setState(() => _selectedTab = 2)),
         ]),
         const SizedBox(height: 16),
 
         if (_selectedTab == 0) ..._buildRegionMonitor(isDark, state),
         if (_selectedTab == 1) ..._buildTriggers(isDark, state),
+        if (_selectedTab == 2) _AiTrackerTab(onAreaSelect: _startAreaSelect),
       ],
     );
   }
@@ -1145,6 +1044,1288 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
       case MonitorLogLevel.error: return Colors.red;
     }
   }
+}
+
+class _AiTrackerTab extends StatefulWidget {
+  final Future<(int, int, int, int)?> Function() onAreaSelect;
+  const _AiTrackerTab({required this.onAreaSelect});
+
+  @override
+  State<_AiTrackerTab> createState() => _AiTrackerTabState();
+}
+
+class _AiTrackerTabState extends State<_AiTrackerTab> {
+  bool _checking = true;
+  bool _downloading = false;
+  String _downloadStatus = '';
+  double _downloadProgress = 0;
+  String _downloadSize = '';
+  String _errorMsg = '';
+  String _currentSource = 'GitHub';
+
+  bool _onnxExists = false;
+  bool _modelExists = false;
+
+  String _pluginDir = '';
+
+  static const _ortVersion = '1.21.0';
+  static const _ortGithubUrl =
+      'https://github.com/microsoft/onnxruntime/releases/download/v$_ortVersion/onnxruntime-win-x64-$_ortVersion.zip';
+  static const _modelGithubUrl =
+      'https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11n.onnx';
+
+  static const _mirrors = <String, String>{
+    'GitHub': '',
+    'ghfast.top': 'https://ghfast.top/',
+    'gh-proxy.com': 'https://gh-proxy.com/',
+    'ghproxy.net': 'https://ghproxy.net/',
+  };
+
+  String _selectedMirror = 'GitHub';
+
+  static const _cocoClasses = [
+    'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat',
+    'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat',
+    'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack',
+    'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball',
+    'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket',
+    'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple',
+    'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair',
+    'couch', 'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse',
+    'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink', 'refrigerator',
+    'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush',
+  ];
+
+  static const _cocoClassZh = <String, String>{
+    'person': '人', 'bicycle': '自行车', 'car': '汽车', 'motorcycle': '摩托车',
+    'airplane': '飞机', 'bus': '公交车', 'train': '火车', 'truck': '卡车', 'boat': '船',
+    'traffic light': '红绿灯', 'fire hydrant': '消防栓', 'stop sign': '停车标志',
+    'parking meter': '停车计时器', 'bench': '长椅', 'bird': '鸟', 'cat': '猫',
+    'dog': '狗', 'horse': '马', 'sheep': '羊', 'cow': '牛', 'elephant': '大象',
+    'bear': '熊', 'zebra': '斑马', 'giraffe': '长颈鹿', 'backpack': '背包',
+    'umbrella': '雨伞', 'handbag': '手提包', 'tie': '领带', 'suitcase': '行李箱',
+    'frisbee': '飞盘', 'skis': '滑雪板', 'snowboard': '单板', 'sports ball': '球',
+    'kite': '风筝', 'baseball bat': '棒球棒', 'baseball glove': '棒球手套',
+    'skateboard': '滑板', 'surfboard': '冲浪板', 'tennis racket': '网球拍',
+    'bottle': '瓶子', 'wine glass': '酒杯', 'cup': '杯子', 'fork': '叉子',
+    'knife': '刀', 'spoon': '勺子', 'bowl': '碗', 'banana': '香蕉', 'apple': '苹果',
+    'sandwich': '三明治', 'orange': '橙子', 'broccoli': '西兰花', 'carrot': '胡萝卜',
+    'hot dog': '热狗', 'pizza': '披萨', 'donut': '甜甜圈', 'cake': '蛋糕', 'chair': '椅子',
+    'couch': '沙发', 'potted plant': '盆栽', 'bed': '床', 'dining table': '餐桌',
+    'toilet': '马桶', 'tv': '电视', 'laptop': '笔记本电脑', 'mouse': '鼠标',
+    'remote': '遥控器', 'keyboard': '键盘', 'cell phone': '手机', 'microwave': '微波炉',
+    'oven': '烤箱', 'toaster': '烤面包机', 'sink': '水槽', 'refrigerator': '冰箱',
+    'book': '书', 'clock': '时钟', 'vase': '花瓶', 'scissors': '剪刀',
+    'teddy bear': '泰迪熊', 'hair drier': '吹风机', 'toothbrush': '牙刷',
+  };
+
+  final List<String> _targetClasses = [];
+  double _confidence = 0.5;
+  int _checkIntervalMs = 500;
+  bool _autoClick = true;
+  bool _showTrackBox = false;
+  bool _detecting = false;
+  Timer? _detectTimer;
+  int _detectRegionX = 0;
+  int _detectRegionY = 0;
+  int _detectRegionW = 0;
+  int _detectRegionH = 0;
+  bool _hasRegion = false;
+  final List<_DetectionResult> _lastResults = [];
+  int _detectionCount = 0;
+  int _clickCount = 0;
+
+  static const _platformChannel = MethodChannel('com.clicker.pro/platform');
+
+  @override
+  void initState() {
+    super.initState();
+    _checkDependencies();
+  }
+
+  @override
+  void dispose() {
+    _stopDetection();
+    super.dispose();
+  }
+
+  Future<String> _getPluginDir() async {
+    final path = await AppPaths.getPluginDir('ai_tracker');
+    final dir = Directory(path);
+    if (!await dir.exists()) await dir.create(recursive: true);
+    return path;
+  }
+
+  bool _dllDeployed = false;
+
+  Future<void> _checkDependencies() async {
+    setState(() => _checking = true);
+    final dir = await _getPluginDir();
+    _pluginDir = dir;
+
+    _onnxExists = await File('$dir\\onnxruntime.dll').exists();
+    _modelExists = await File('$dir\\models\\yolo11n.onnx').exists();
+    _dllDeployed = await _deployNativePlugin();
+
+    setState(() => _checking = false);
+  }
+
+  Future<bool> _deployNativePlugin() async {
+    final dir = _pluginDir;
+    final windowsDir = Directory('$dir\\windows');
+    if (!await windowsDir.exists()) await windowsDir.create(recursive: true);
+
+    final exePath = Platform.resolvedExecutable;
+    final exeDir = File(exePath).parent.path;
+
+    final pluginDir = await AppPaths.getPluginDir('ai_tracker');
+
+    final dllDest = File('$dir\\windows\\ai_tracker.dll');
+    final manifestDest = File('$dir\\manifest.json');
+
+    final dllSources = [
+      '$exeDir\\plugins\\ai_tracker\\windows\\ai_tracker.dll',
+      '$exeDir\\data\\plugins\\ai_tracker\\windows\\ai_tracker.dll',
+      '$pluginDir\\windows\\ai_tracker.dll',
+    ];
+
+    final manifestSources = [
+      '$exeDir\\plugins\\ai_tracker\\manifest.json',
+      '$exeDir\\data\\plugins\\ai_tracker\\manifest.json',
+      '$pluginDir\\manifest.json',
+    ];
+
+    bool dllOk = await dllDest.exists();
+    bool manifestOk = await manifestDest.exists();
+
+    if (!dllOk) {
+      for (final src in dllSources) {
+        final srcFile = File(src);
+        if (await srcFile.exists()) {
+          try {
+            await srcFile.copy(dllDest.path);
+            dllOk = true;
+            break;
+          } catch (_) {}
+        }
+      }
+    }
+
+    if (!manifestOk) {
+      for (final src in manifestSources) {
+        final srcFile = File(src);
+        if (await srcFile.exists()) {
+          try {
+            await srcFile.copy(manifestDest.path);
+            manifestOk = true;
+            break;
+          } catch (_) {}
+        }
+      }
+    }
+
+    return dllOk && manifestOk;
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+
+  Future<String> _resolveUrl(String url) async {
+    if (_selectedMirror != 'GitHub') return url;
+
+    final client = http.Client();
+    try {
+      final request = http.Request('GET', Uri.parse(url));
+      request.followRedirects = false;
+      final response = await client.send(request);
+
+      if (response.statusCode == 302 || response.statusCode == 301) {
+        final location = response.headers['location'];
+        if (location != null) return location;
+      }
+
+      return url;
+    } finally {
+      client.close();
+    }
+  }
+
+  Future<void> _downloadWithProgress({
+    required String url,
+    required String savePath,
+    required String label,
+  }) async {
+    final client = http.Client();
+    try {
+      final request = http.Request('GET', Uri.parse(url));
+      request.followRedirects = true;
+      final response = await client.send(request);
+
+      if (response.statusCode != 200) {
+        throw Exception('HTTP ${response.statusCode}');
+      }
+
+      final total = response.contentLength ?? 0;
+      int received = 0;
+      final sink = File(savePath).openWrite();
+
+      await response.stream.forEach((chunk) {
+        sink.add(chunk);
+        received += chunk.length;
+        if (total > 0) {
+          final progress = received / total;
+          setState(() {
+            _downloadProgress = progress;
+            _downloadSize = '${_formatBytes(received)} / ${_formatBytes(total)}';
+            _downloadStatus = '$label ${_formatBytes(received)} / ${_formatBytes(total)}';
+          });
+        } else {
+          setState(() {
+            _downloadSize = _formatBytes(received);
+            _downloadStatus = '$label ${_formatBytes(received)}';
+          });
+        }
+      });
+
+      await sink.close();
+
+      final file = File(savePath);
+      if (!await file.exists()) throw Exception('文件保存失败');
+      final fileSize = await file.length();
+      if (fileSize < 1024) {
+        try {
+          final content = await file.readAsString();
+          if (content.contains('<!DOCTYPE') || content.contains('<html')) {
+            await file.delete();
+            throw Exception('下载到的是网页而非文件，可能链接已失效');
+          }
+        } catch (e) {
+          if (e.toString().contains('网页而非文件')) rethrow;
+        }
+        throw Exception('文件过小(${_formatBytes(fileSize)})，下载可能不完整');
+      }
+    } finally {
+      client.close();
+    }
+  }
+
+  Future<String> _tryDownloadWithFallback({
+    required String githubUrl,
+    required String savePath,
+    required String label,
+  }) async {
+    final mirrors = _mirrors.keys.toList();
+    final startIndex = mirrors.indexOf(_selectedMirror);
+    final order = startIndex >= 0
+        ? [...mirrors.sublist(startIndex), ...mirrors.sublist(0, startIndex)]
+        : mirrors;
+
+    String? lastError;
+
+    for (final mirror in order) {
+      final prefix = _mirrors[mirror] ?? '';
+      final url = prefix.isEmpty ? githubUrl : '$prefix$githubUrl';
+
+      setState(() {
+        _currentSource = mirror;
+        _downloadStatus = '$label [源: $mirror]';
+      });
+
+      try {
+        final realUrl = await _resolveUrl(url);
+        await _downloadWithProgress(
+          url: realUrl,
+          savePath: savePath,
+          label: '$label [源: $mirror]',
+        );
+        setState(() => _selectedMirror = mirror);
+        return mirror;
+      } catch (e) {
+        lastError = e.toString().replaceFirst('Exception: ', '');
+        final file = File(savePath);
+        if (await file.exists()) {
+          try { await file.delete(); } catch (_) {}
+        }
+        if (mirror != order.last) {
+          setState(() {
+            _downloadStatus = '源 $mirror 失败，尝试下一个镜像...';
+          });
+          await Future.delayed(const Duration(milliseconds: 500));
+        }
+      }
+    }
+
+    throw Exception('所有下载源均失败，最后一个错误: $lastError');
+  }
+
+  Future<void> _extractZip(String zipPath, String destDir) async {
+    final bytes = await File(zipPath).readAsBytes();
+    final archive = ZipDecoder().decodeBytes(bytes);
+
+    for (final file in archive) {
+      final filePath = '$destDir\\${file.name}';
+      if (file.isFile) {
+        final outFile = File(filePath);
+        await outFile.parent.create(recursive: true);
+        await outFile.writeAsBytes(file.content as List<int>);
+      } else {
+        await Directory(filePath).create(recursive: true);
+      }
+    }
+  }
+
+  Future<File?> _findFileRecursive(Directory dir, String fileName) async {
+    if (!await dir.exists()) return null;
+    try {
+      await for (final entity in dir.list(recursive: true)) {
+        if (entity is File && entity.path.endsWith('\\$fileName')) {
+          return entity;
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<void> _downloadOnnxRuntime() async {
+    setState(() {
+      _downloading = true;
+      _downloadProgress = 0;
+      _downloadSize = '';
+      _errorMsg = '';
+    });
+
+    try {
+      final dir = await _getPluginDir();
+      final tempDir = await AppPaths.getTempDir();
+      final zipPath = '$tempDir\\onnxruntime.zip';
+
+      await _tryDownloadWithFallback(
+        githubUrl: _ortGithubUrl,
+        savePath: zipPath,
+        label: '正在下载 ONNX Runtime v$_ortVersion',
+      );
+
+      setState(() {
+        _downloadStatus = '正在解压 ONNX Runtime...';
+        _downloadProgress = 0;
+      });
+
+      final extractDir = '$tempDir\\ort_extract';
+      await _extractZip(zipPath, extractDir);
+
+      final dllFile = await _findFileRecursive(Directory(extractDir), 'onnxruntime.dll');
+      if (dllFile == null) {
+        throw Exception('onnxruntime.dll 未找到，解压目录中无此文件');
+      }
+
+      await dllFile.copy('$dir\\onnxruntime.dll');
+      _onnxExists = true;
+
+      try { await File(zipPath).delete(); } catch (_) {}
+      try { await Directory(extractDir).delete(recursive: true); } catch (_) {}
+
+      _downloadStatus = 'ONNX Runtime 安装完成';
+    } catch (e) {
+      _errorMsg = e.toString().replaceFirst('Exception: ', '');
+      _downloadStatus = '安装失败';
+    }
+
+    setState(() => _downloading = false);
+  }
+
+  Future<void> _downloadModel() async {
+    setState(() {
+      _downloading = true;
+      _downloadProgress = 0;
+      _downloadSize = '';
+      _errorMsg = '';
+    });
+
+    try {
+      final dir = await _getPluginDir();
+      final modelsDir = Directory('$dir\\models');
+      if (!await modelsDir.exists()) await modelsDir.create(recursive: true);
+
+      await _tryDownloadWithFallback(
+        githubUrl: _modelGithubUrl,
+        savePath: '$dir\\models\\yolo11n.onnx',
+        label: '正在下载 YOLO11n 模型',
+      );
+      _modelExists = true;
+      _downloadStatus = 'YOLO11n 模型下载完成';
+    } catch (e) {
+      _errorMsg = e.toString().replaceFirst('Exception: ', '');
+      _downloadStatus = '下载失败';
+    }
+
+    setState(() => _downloading = false);
+  }
+
+  Future<void> _downloadAll() async {
+    if (!_onnxExists) await _downloadOnnxRuntime();
+    if (!_modelExists && _errorMsg.isEmpty) await _downloadModel();
+    setState(() {});
+  }
+
+  Future<void> _uninstallAll() async {
+    _stopDetection();
+
+    final aiPlugin = _getAiTrackerPlugin();
+    if (aiPlugin != null) {
+      aiPlugin.unloadNative();
+    }
+
+    setState(() {
+      _downloading = true;
+      _downloadStatus = '正在卸载...';
+      _errorMsg = '';
+    });
+
+    try {
+      final dir = Directory(_pluginDir);
+      if (await dir.exists()) {
+        await dir.delete(recursive: true);
+      }
+      _onnxExists = false;
+      _modelExists = false;
+      _modelLoaded = false;
+      _dllDeployed = false;
+      _downloadStatus = '已卸载全部组件';
+    } catch (e) {
+      _errorMsg = e.toString().replaceFirst('Exception: ', '');
+      _downloadStatus = '卸载失败';
+    }
+
+    setState(() => _downloading = false);
+  }
+
+  Future<void> _openPluginDir() async {
+    final dir = Directory(_pluginDir);
+    if (!await dir.exists()) await dir.create(recursive: true);
+    await Process.run('explorer', [_pluginDir]);
+  }
+
+  Future<void> _selectDetectRegion() async {
+    final sel = await widget.onAreaSelect();
+    if (sel == null) return;
+    final (x1, y1, x2, y2) = sel;
+    setState(() {
+      _detectRegionX = x1;
+      _detectRegionY = y1;
+      _detectRegionW = x2 - x1;
+      _detectRegionH = y2 - y1;
+      _hasRegion = true;
+    });
+  }
+
+  void _useFullScreen() async {
+    try {
+      final result = await _platformChannel.invokeMethod<Map>('getScreenSize');
+      if (result != null) {
+        setState(() {
+          _detectRegionX = 0;
+          _detectRegionY = 0;
+          _detectRegionW = result['width'] as int;
+          _detectRegionH = result['height'] as int;
+          _hasRegion = true;
+        });
+      }
+    } on PlatformException {}
+  }
+
+  bool _modelLoaded = false;
+
+  void _startDetection() {
+    if (!_hasRegion) return;
+    setState(() {
+      _detecting = true;
+      _detectionCount = 0;
+      _clickCount = 0;
+      _lastResults.clear();
+    });
+
+    _ensureModelLoaded().then((_) {
+      _detectTimer = Timer.periodic(Duration(milliseconds: _checkIntervalMs), (_) {
+        _runDetection();
+      });
+    });
+  }
+
+  AiTrackerPlugin? _getAiTrackerPlugin() {
+    final registry = PluginRegistry.instance;
+    final plugin = registry.getPlugin('ai_tracker');
+    if (plugin is AiTrackerPlugin) return plugin;
+    return null;
+  }
+
+  Future<void> _ensureModelLoaded() async {
+    if (_modelLoaded) return;
+    if (!_onnxExists || !_modelExists) {
+      debugPrint('[AI] 组件未就绪: onnx=$_onnxExists model=$_modelExists');
+      return;
+    }
+
+    final aiPlugin = _getAiTrackerPlugin();
+    if (aiPlugin == null) {
+      debugPrint('[AI] 插件未注册');
+      return;
+    }
+
+    if (!aiPlugin.nativeLoaded) {
+      debugPrint('[AI] 尝试加载原生插件...');
+      final loaded = aiPlugin.loadNative();
+      debugPrint('[AI] 原生插件加载: $loaded');
+      if (!loaded) {
+        debugPrint('[AI] 原生DLL加载失败，请确认 ai_tracker.dll 已部署到 data/plugins/ai_tracker/windows/');
+        debugPrint('[AI] _pluginDir=$_pluginDir');
+        return;
+      }
+    }
+
+    final statusResult = aiPlugin.executeAction('get_status', '{}', returnOnError: true);
+    debugPrint('[AI] 插件状态: $statusResult');
+
+    if (statusResult == null) {
+      debugPrint('[AI] 无法获取插件状态，原生调用失败');
+      return;
+    }
+
+    if (statusResult.contains('"available":false')) {
+      debugPrint('[AI] ONNX Runtime 未加载，尝试重新初始化');
+      aiPlugin.unloadNative();
+      if (!aiPlugin.loadNative()) {
+        debugPrint('[AI] 重新加载失败');
+        return;
+      }
+      final retryStatus = aiPlugin.executeAction('get_status', '{}', returnOnError: true);
+      debugPrint('[AI] 重试状态: $retryStatus');
+      if (retryStatus == null || retryStatus.contains('"available":false')) {
+        debugPrint('[AI] ONNX Runtime 仍不可用');
+        return;
+      }
+    }
+
+    final modelFile = File('$_pluginDir${Platform.pathSeparator}models${Platform.pathSeparator}yolo11n.onnx');
+    if (!await modelFile.exists()) {
+      debugPrint('[AI] 模型文件不存在: ${modelFile.path}');
+      return;
+    }
+
+    final modelPath = modelFile.path;
+    debugPrint('[AI] 加载模型: $modelPath');
+    final result = aiPlugin.executeAction('load_model', '{"model_path":"${modelPath.replaceAll('\\', '\\\\')}"}', returnOnError: true);
+    debugPrint('[AI] 模型加载结果: $result');
+    if (result != null && result.contains('"success":true')) {
+      _modelLoaded = true;
+    }
+  }
+
+  void _stopDetection() {
+    _detectTimer?.cancel();
+    _detectTimer = null;
+    ScreenOverlayService.instance.stopOverlay();
+    if (mounted) {
+      setState(() => _detecting = false);
+    }
+  }
+
+  Future<void> _runDetection() async {
+    if (!_hasRegion || !mounted) return;
+
+    try {
+      final pixels = await _platformChannel.invokeMethod<Uint8List>(
+        'captureScreenRect',
+        [_detectRegionX, _detectRegionY, _detectRegionW, _detectRegionH],
+      );
+      if (pixels == null) {
+        debugPrint('[AI] 截图失败: 返回null');
+        return;
+      }
+      if (pixels.length < 4) {
+        debugPrint('[AI] 截图数据异常: length=${pixels.length}');
+        return;
+      }
+
+      List<_DetectionResult> nativeResults = [];
+
+      if (_modelLoaded && _onnxExists && _modelExists) {
+        nativeResults = await _runNativeDetection(pixels);
+      } else {
+        debugPrint('[AI] 原生检测不可用: modelLoaded=$_modelLoaded onnx=$_onnxExists model=$_modelExists');
+      }
+
+      if (nativeResults.isEmpty) {
+        final pluginManager = VisionPluginManager.instance;
+        final detector = pluginManager.getPluginForCapability(VisionCapability.objectDetect);
+        if (detector != null) {
+          await pluginManager.ensureInitialized(detector.info.id);
+          for (final targetLabel in _targetClasses) {
+            final det = await detector.detectObjects(
+              regionX: _detectRegionX,
+              regionY: _detectRegionY,
+              regionW: _detectRegionW,
+              regionH: _detectRegionH,
+              targetLabel: targetLabel,
+              confidence: _confidence,
+            );
+            for (final r in det) {
+              nativeResults.add(_DetectionResult(
+                x: r.x + _detectRegionX,
+                y: r.y + _detectRegionY,
+                width: r.width,
+                height: r.height,
+                score: r.score,
+                label: r.label ?? 'object',
+              ));
+            }
+          }
+        }
+      }
+
+      setState(() {
+        _lastResults.clear();
+        _lastResults.addAll(nativeResults);
+        _detectionCount++;
+      });
+
+      if (_showTrackBox && _lastResults.isNotEmpty) {
+        final boxes = _lastResults.map((r) => <String, dynamic>{
+          'x': r.x,
+          'y': r.y,
+          'w': r.width,
+          'h': r.height,
+          'confidence': r.score,
+          'class_id': r.classId,
+          'class_name': _cocoClassZh[r.label] ?? r.label,
+        }).toList();
+        if (ScreenOverlayService.instance.overlayActive) {
+          ScreenOverlayService.instance.updateDetectionBoxes(boxes);
+        } else {
+          ScreenOverlayService.instance.showDetectionBoxes(boxes);
+        }
+      } else if (_showTrackBox && _lastResults.isEmpty) {
+        ScreenOverlayService.instance.stopOverlay();
+      }
+
+      if (_autoClick && _lastResults.isNotEmpty) {
+        final best = _lastResults.first;
+        final clickX = best.x + best.width ~/ 2;
+        final clickY = best.y + best.height ~/ 2;
+        await _platformChannel.invokeMethod('sendClick', [clickX, clickY, 0]);
+        setState(() => _clickCount++);
+      }
+    } catch (e) {
+      debugPrint('[AI] _runDetection异常: $e');
+    }
+  }
+
+  Future<List<_DetectionResult>> _runNativeDetection(Uint8List pixels) async {
+    final aiPlugin = _getAiTrackerPlugin();
+    if (aiPlugin == null) {
+      debugPrint('[AI] 检测失败: 插件未注册');
+      return [];
+    }
+    if (!aiPlugin.nativeLoaded) {
+      debugPrint('[AI] 检测失败: 原生插件未加载');
+      return [];
+    }
+
+    final expectedLen = _detectRegionW * _detectRegionH * 4;
+    if (pixels.length != expectedLen) {
+      debugPrint('[AI] 像素数据大小不匹配: got=${pixels.length} expected=$expectedLen (${_detectRegionW}x$_detectRegionH*4)');
+      return [];
+    }
+
+    final pixelPtr = malloc<Uint8>(pixels.length);
+    try {
+      pixelPtr.asTypedList(pixels.length).setAll(0, pixels);
+
+      final ptrHex = pixelPtr.address.toRadixString(16);
+      final targetClass = '';
+
+      final params = '{"region_w":$_detectRegionW,'
+          '"region_h":$_detectRegionH,'
+          '"confidence":$_confidence,'
+          '"pixel_data_ptr":"$ptrHex",'
+          '"target_class":"$targetClass"}';
+
+      debugPrint('[AI] 检测参数: region=${_detectRegionW}x$_detectRegionH conf=$_confidence target=$targetClass ptr=$ptrHex pixels=${pixels.length} expected=${_detectRegionW * _detectRegionH * 4}');
+
+      final resultJson = aiPlugin.executeAction('detect_objects', params, returnOnError: true);
+      debugPrint('[AI] 检测结果: $resultJson');
+
+      if (resultJson == null) {
+        debugPrint('[AI] 检测返回null');
+        return [];
+      }
+
+      if (resultJson.contains('"error"')) {
+        debugPrint('[AI] 检测错误: $resultJson');
+        return [];
+      }
+
+      return _parseDetectionResults(resultJson);
+    } catch (e) {
+      debugPrint('[AI] 检测异常: $e');
+      return [];
+    } finally {
+      malloc.free(pixelPtr);
+    }
+  }
+
+  List<_DetectionResult> _parseDetectionResults(String jsonStr) {
+    final results = <_DetectionResult>[];
+    try {
+      final decoded = jsonDecode(jsonStr);
+      if (decoded is! Map) return results;
+      final detections = decoded['detections'];
+      if (detections is! List) return results;
+
+      for (final det in detections) {
+        if (det is! Map) continue;
+        final className = det['class_name'] as String? ?? '';
+        if (_targetClasses.isNotEmpty && !_targetClasses.contains(className)) continue;
+
+        results.add(_DetectionResult(
+          x: (det['x'] as num).toInt() + _detectRegionX,
+          y: (det['y'] as num).toInt() + _detectRegionY,
+          width: (det['w'] as num).toInt(),
+          height: (det['h'] as num).toInt(),
+          score: (det['confidence'] as num).toDouble(),
+          label: className,
+          classId: (det['class_id'] as num?)?.toInt() ?? 0,
+        ));
+      }
+    } catch (e) {
+      debugPrint('[AI] 解析检测结果异常: $e');
+    }
+    return results;
+  }
+
+  void _addClass(String cls) {
+    if (!_targetClasses.contains(cls)) {
+      setState(() => _targetClasses.add(cls));
+    }
+  }
+
+  void _removeClass(String cls) {
+    setState(() => _targetClasses.remove(cls));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = FluentTheme.of(context).brightness == Brightness.dark;
+    final accent = FluentTheme.of(context).accentColor;
+    final allReady = _onnxExists && _modelExists;
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      if (_checking)
+        const Center(child: ProgressRing())
+      else if (!allReady) ...[
+        _buildSection('下载源', isDark, [
+          Row(children: [
+            Text('当前源: ', style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
+            ..._mirrors.keys.map((name) {
+              final isSelected = _selectedMirror == name;
+              final bgColor = isSelected
+                ? accent.withValues(alpha: 0.15)
+                : Colors.transparent;
+              final textColor = isSelected
+                ? accent
+                : (isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A));
+              return Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: Button(
+                  onPressed: _downloading ? null : () => setState(() => _selectedMirror = name),
+                  style: ButtonStyle(
+                    backgroundColor: WidgetStatePropertyAll(bgColor),
+                    padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 10, vertical: 4)),
+                  ),
+                  child: Text(name, style: TextStyle(
+                    fontSize: 11,
+                    color: textColor,
+                    fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                  )),
+                ),
+              );
+            }),
+          ]),
+          const SizedBox(height: 4),
+          Text(
+            _selectedMirror == 'GitHub'
+              ? '直连 GitHub，海外网络推荐'
+              : '通过国内镜像加速，国内网络推荐',
+            style: TextStyle(fontSize: 10, color: isDark ? const Color(0xFF707090) : const Color(0xFFA0A0B0)),
+          ),
+        ]),
+
+        _buildSection('依赖项', isDark, [
+          _buildDepCard(
+            icon: FluentIcons.processing,
+            name: 'ONNX Runtime v$_ortVersion',
+            desc: 'Microsoft 推理引擎 · ~200MB',
+            installed: _onnxExists,
+            isDark: isDark,
+            accent: accent,
+            onInstall: _downloading ? null : _downloadOnnxRuntime,
+          ),
+          _buildDepCard(
+            icon: FluentIcons.machine_learning,
+            name: 'YOLO11n 模型',
+            desc: 'Ultralytics 目标检测模型 · ~6MB',
+            installed: _modelExists,
+            isDark: isDark,
+            accent: accent,
+            onInstall: _downloading ? null : _downloadModel,
+          ),
+        ]),
+
+        const SizedBox(height: 16),
+
+        Row(children: [
+          FilledButton(
+            onPressed: _downloading ? null : _downloadAll,
+            style: ButtonStyle(
+              backgroundColor: WidgetStatePropertyAll(accent.withValues(alpha: 0.15)),
+              padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 20, vertical: 10)),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(FluentIcons.download, size: 14, color: accent),
+              const SizedBox(width: 8),
+              Text('一键安装全部', style: TextStyle(color: accent, fontSize: 13, fontWeight: FontWeight.w600)),
+            ]),
+          ),
+        ]),
+
+        if (_downloading || _downloadStatus.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(_downloadStatus, style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
+            if (_downloading) ...[
+              const SizedBox(height: 6),
+              ProgressBar(value: _downloadProgress * 100),
+              if (_downloadSize.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(_downloadSize, style: TextStyle(fontSize: 10, color: isDark ? const Color(0xFF707090) : const Color(0xFFA0A0B0))),
+                ),
+            ],
+            if (_errorMsg.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0x14FF0000),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: const Color(0x4DFF0000)),
+                ),
+                child: Text(_errorMsg, style: const TextStyle(fontSize: 11, color: Color(0xFFFF0000))),
+              ),
+            ],
+          ]),
+        ],
+
+        const SizedBox(height: 20),
+
+        _buildSection('插件目录', isDark, [
+          Button(
+            onPressed: _openPluginDir,
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(FluentIcons.folder_open, size: 12, color: accent),
+              const SizedBox(width: 6),
+              Text('打开目录', style: TextStyle(fontSize: 12, color: accent)),
+            ]),
+          ),
+          const SizedBox(height: 6),
+          Text(_pluginDir, style: TextStyle(fontSize: 11, color: isDark ? const Color(0xFF707090) : const Color(0xFFA0A0B0))),
+        ]),
+      ] else ...[
+        _buildSection('检测区域', isDark, [
+          Row(children: [
+            Button(
+              onPressed: _detecting ? null : _selectDetectRegion,
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(FluentIcons.crop, size: 12, color: accent),
+                const SizedBox(width: 6),
+                Text('框选区域', style: TextStyle(fontSize: 12, color: accent)),
+              ]),
+            ),
+            const SizedBox(width: 8),
+            Button(
+              onPressed: _detecting ? null : _useFullScreen,
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(FluentIcons.full_screen, size: 12, color: accent),
+                const SizedBox(width: 6),
+                Text('全屏', style: TextStyle(fontSize: 12, color: accent)),
+              ]),
+            ),
+          ]),
+          if (_hasRegion) ...[
+            const SizedBox(height: 6),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0x80252540) : const Color(0x80F0F0FA),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)),
+              ),
+              child: Text(
+                '区域: ($_detectRegionX, $_detectRegionY) ${_detectRegionW}×$_detectRegionH',
+                style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A)),
+              ),
+            ),
+          ],
+        ]),
+
+        _buildSection('目标类别', isDark, [
+          Wrap(spacing: 4, runSpacing: 4, children: [
+            ..._targetClasses.map((cls) => Button(
+              onPressed: () => _removeClass(cls),
+              style: ButtonStyle(
+                backgroundColor: WidgetStatePropertyAll(accent.withValues(alpha: 0.15)),
+                padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 8, vertical: 2)),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Text(_cocoClassZh[cls] ?? cls, style: TextStyle(fontSize: 11, color: accent, fontWeight: FontWeight.w600)),
+                const SizedBox(width: 4),
+                Icon(FluentIcons.cancel, size: 8, color: accent),
+              ]),
+            )),
+            Button(
+              onPressed: _detecting ? null : () => _showClassPicker(context, isDark, accent),
+              style: ButtonStyle(
+                padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 8, vertical: 4)),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(FluentIcons.add, size: 10, color: accent),
+                const SizedBox(width: 4),
+                Text('添加', style: TextStyle(fontSize: 11, color: accent)),
+              ]),
+            ),
+          ]),
+        ]),
+
+        _buildSection('参数设置', isDark, [
+          Row(children: [
+            const Text('置信度: ', style: TextStyle(fontSize: 12)),
+            Expanded(child: Slider(
+              value: _confidence,
+              min: 0.1, max: 0.95, divisions: 17,
+              onChanged: _detecting ? null : (v) => setState(() => _confidence = v),
+            )),
+            const SizedBox(width: 8),
+            Text(_confidence.toStringAsFixed(2), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+          ]),
+          const SizedBox(height: 8),
+          Row(children: [
+            const Text('检查间隔: ', style: TextStyle(fontSize: 12)),
+            Expanded(child: Slider(
+              value: _checkIntervalMs.toDouble(),
+              min: 100, max: 3000, divisions: 29,
+              onChanged: _detecting ? null : (v) => setState(() => _checkIntervalMs = v.round()),
+            )),
+            const SizedBox(width: 8),
+            Text('$_checkIntervalMs ms', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+          ]),
+          const SizedBox(height: 8),
+          Row(children: [
+            Checkbox(
+              checked: _autoClick,
+              onChanged: _detecting ? null : (v) => setState(() => _autoClick = v ?? true),
+            ),
+            const SizedBox(width: 8),
+            const Text('检测到目标后自动点击', style: TextStyle(fontSize: 12)),
+          ]),
+          const SizedBox(height: 4),
+          Row(children: [
+            Checkbox(
+              checked: _showTrackBox,
+              onChanged: (v) {
+                setState(() => _showTrackBox = v ?? false);
+                if (!_showTrackBox || !_detecting) {
+                  ScreenOverlayService.instance.stopOverlay();
+                }
+              },
+            ),
+            const SizedBox(width: 8),
+            const Text('显示追踪框', style: TextStyle(fontSize: 12)),
+          ]),
+        ]),
+
+        const SizedBox(height: 16),
+
+        Row(children: [
+          if (!_detecting)
+            FilledButton(
+              onPressed: _hasRegion ? _startDetection : null,
+              style: ButtonStyle(
+                backgroundColor: WidgetStatePropertyAll(accent.withValues(alpha: 0.15)),
+                padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 20, vertical: 10)),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(FluentIcons.play, size: 14, color: accent),
+                const SizedBox(width: 8),
+                Text('开始检测', style: TextStyle(color: accent, fontSize: 13, fontWeight: FontWeight.w600)),
+              ]),
+            ),
+          if (_detecting)
+            FilledButton(
+              onPressed: _stopDetection,
+              style: ButtonStyle(
+                backgroundColor: const WidgetStatePropertyAll(Color(0x1FFF0000)),
+                padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 20, vertical: 10)),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(FluentIcons.stop, size: 14, color: const Color(0xCCFF0000)),
+                const SizedBox(width: 8),
+                Text('停止检测', style: const TextStyle(color: Color(0xCCFF0000), fontSize: 13, fontWeight: FontWeight.w600)),
+              ]),
+            ),
+          const SizedBox(width: 12),
+          if (_detecting)
+            Container(
+              width: 8, height: 8,
+              decoration: BoxDecoration(
+                color: const Color(0xFF00E676),
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+          if (_detecting) ...[
+            const SizedBox(width: 6),
+            Text('检测中...', style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
+          ],
+        ]),
+
+        if (_detectionCount > 0 || _lastResults.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          _buildSection('检测结果', isDark, [
+            Row(children: [
+              _statChip('检测次数', '$_detectionCount', isDark),
+              const SizedBox(width: 8),
+              _statChip('当前目标', '${_lastResults.length}', isDark),
+              const SizedBox(width: 8),
+              _statChip('点击次数', '$_clickCount', isDark),
+            ]),
+            if (_lastResults.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              ..._lastResults.take(5).map((r) => Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: isDark ? const Color(0x80252540) : const Color(0x80F0F0FA),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)),
+                  ),
+                  child: Row(children: [
+                    Icon(FluentIcons.bullseye, size: 12, color: accent),
+                    const SizedBox(width: 8),
+                    Text(_cocoClassZh[r.label] ?? r.label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                    const SizedBox(width: 8),
+                    Text('(${r.x}, ${r.y}) ${r.width}×${r.height}', style: TextStyle(fontSize: 11, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: const Color(0x1F00E676),
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                      child: Text('${(r.score * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: Color(0xFF00E676))),
+                    ),
+                  ]),
+                ),
+              )),
+              if (_lastResults.length > 5)
+                Text('...还有 ${_lastResults.length - 5} 个结果', style: TextStyle(fontSize: 11, color: isDark ? const Color(0xFF707090) : const Color(0xFFA0A0B0))),
+            ] else if (_detectionCount > 0) ...[
+              const SizedBox(height: 4),
+              Text('未检测到目标', style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF707090) : const Color(0xFFA0A0B0))),
+            ],
+          ]),
+        ],
+
+        const SizedBox(height: 20),
+
+        _buildSection('管理', isDark, [
+          Row(children: [
+            Button(
+              onPressed: _openPluginDir,
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(FluentIcons.folder_open, size: 12, color: accent),
+                const SizedBox(width: 6),
+                Text('打开目录', style: TextStyle(fontSize: 12, color: accent)),
+              ]),
+            ),
+            const SizedBox(width: 8),
+            Button(
+              onPressed: _detecting ? null : _uninstallAll,
+              style: ButtonStyle(
+                padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 10, vertical: 4)),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(FluentIcons.delete, size: 10, color: const Color(0xFFFF0000)),
+                const SizedBox(width: 4),
+                Text('卸载', style: const TextStyle(fontSize: 11, color: Color(0xFFFF0000))),
+              ]),
+            ),
+          ]),
+        ]),
+      ],
+    ]);
+  }
+
+  void _showClassPicker(BuildContext context, bool isDark, Color accent) {
+    final filtered = _cocoClasses.where((c) => !_targetClasses.contains(c)).toList();
+    showDialog(
+      context: context,
+      builder: (ctx) => ContentDialog(
+        title: const Text('选择目标类别'),
+        constraints: const BoxConstraints(maxWidth: 400, maxHeight: 500),
+        content: SizedBox(
+          width: 360,
+          height: 400,
+          child: ListView.builder(
+            itemCount: filtered.length,
+            itemBuilder: (_, i) {
+              final cls = filtered[i];
+              final zh = _cocoClassZh[cls] ?? cls;
+              return ListTile(
+                leading: Icon(FluentIcons.bullseye, size: 14, color: accent),
+                title: Text(zh, style: const TextStyle(fontSize: 13)),
+                subtitle: Text(cls, style: TextStyle(fontSize: 10, color: isDark ? const Color(0xFF707090) : const Color(0xFF909090))),
+                onPressed: () {
+                  _addClass(cls);
+                  Navigator.pop(ctx);
+                },
+              );
+            },
+          ),
+        ),
+        actions: [
+          Button(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+        ],
+      ),
+    );
+  }
+
+  Widget _statChip(String label, String value, bool isDark) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0x80252540) : const Color(0x80F0F0FA),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Text(label, style: TextStyle(fontSize: 10, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
+        const SizedBox(width: 4),
+        Text(value, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+      ]),
+    );
+  }
+
+  Widget _buildSection(String title, bool isDark, List<Widget> children) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(title, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700,
+        color: isDark ? const Color(0xFFC0C0E8) : const Color(0xFF5A5A80))),
+      const SizedBox(height: 8),
+      ...children,
+      const SizedBox(height: 8),
+    ]);
+  }
+
+  Widget _buildDepCard({
+    required IconData icon,
+    required String name,
+    required String desc,
+    required bool installed,
+    required bool isDark,
+    required Color accent,
+    required VoidCallback? onInstall,
+  }) {
+    final cardBg = isDark ? const Color(0x80252540) : const Color(0x80F0F0FA);
+    final activeColor = installed ? accent : (isDark ? const Color(0xFF606080) : const Color(0xFFB0B0C0));
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: cardBg,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)),
+        ),
+        child: Row(children: [
+          Container(
+            width: 32, height: 32,
+            decoration: BoxDecoration(
+              color: activeColor.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Icon(icon, size: 14, color: activeColor),
+          ),
+          const SizedBox(width: 10),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Text(name, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13,
+                color: installed ? null : (isDark ? const Color(0xFF606080) : const Color(0xFFB0B0C0)))),
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                decoration: BoxDecoration(
+                  color: installed
+                    ? const Color(0x1F00E676)
+                    : const Color(0x1FFF9800),
+                  borderRadius: BorderRadius.circular(3),
+                ),
+                child: Text(installed ? '已安装' : '未安装',
+                  style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600,
+                    color: installed ? const Color(0xFF00E676) : const Color(0xFFFF9800))),
+              ),
+            ]),
+            const SizedBox(height: 2),
+            Text(desc, style: TextStyle(fontSize: 11, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
+          ])),
+          if (!installed)
+            Button(
+              onPressed: onInstall,
+              style: ButtonStyle(
+                padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 10, vertical: 4)),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(FluentIcons.download, size: 10, color: accent),
+                const SizedBox(width: 4),
+                Text('下载', style: TextStyle(fontSize: 11, color: accent)),
+              ]),
+            ),
+        ]),
+      ),
+    );
+  }
+}
+
+class _DetectionResult {
+  final int x;
+  final int y;
+  final int width;
+  final int height;
+  final double score;
+  final String label;
+  final int classId;
+
+  _DetectionResult({
+    required this.x,
+    required this.y,
+    required this.width,
+    required this.height,
+    required this.score,
+    required this.label,
+    this.classId = 0,
+  });
 }
 
 // ─── Data Classes ────────────────────────────────────────────

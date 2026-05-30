@@ -19,11 +19,11 @@ class BackgroundExecutionPlugin extends ClickerPlugin {
   );
 
   @override
-  Future<void> initialize() async {}
+  Future<void> onInitialize() async {}
 
   @override
-  Future<void> dispose() async {}
+  Future<void> onDispose() async {}
 
   @override
-  Widget buildPage(BuildContext context) => const BackgroundExecutionPage();
+  Widget onCreatePage(BuildContext context) => const BackgroundExecutionPage();
 }

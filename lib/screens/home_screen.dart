@@ -24,44 +24,61 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with WindowListener {
-  int _currentIndex = 0;
+  String _currentPageId = 'clicker';
   bool _isFloatingMode = false;
   bool _isMaximized = false;
   bool _isClosing = false;
 
-  // Cache plugin page instances with GlobalKeys to preserve state across rebuilds
   final Map<String, ({Widget widget, GlobalKey key})> _pluginPageCache = {};
+  final Map<String, ({Widget widget, GlobalKey key})> _lazyPages = {};
 
-  // Lazy-loaded page cache: only created when first visited
-  // Each entry stores the widget and a GlobalKey to preserve State
-  final Map<int, ({Widget widget, GlobalKey key})> _lazyPages = {};
+  int _pageIdToIndex(String pageId) {
+    final plugins = PluginRegistry.instance.enabledPlugins;
+    if (pageId == 'clicker') return 0;
+    for (int i = 0; i < plugins.length; i++) {
+      if (plugins[i].manifest.id == pageId) return i + 1;
+    }
+    final pluginCount = plugins.length;
+    if (pageId == 'plugin_center') return pluginCount + 1;
+    if (pageId == 'settings') return pluginCount + 2;
+    return 0;
+  }
 
-  Widget _getOrCreatePage(int index) {
-    final existing = _lazyPages[index];
+  String _indexToPageId(int index) {
+    final plugins = PluginRegistry.instance.enabledPlugins;
+    final pluginCount = plugins.length;
+    if (index == 0) return 'clicker';
+    if (index >= 1 && index <= pluginCount) return plugins[index - 1].manifest.id;
+    if (index == pluginCount + 1) return 'plugin_center';
+    if (index == pluginCount + 2) return 'settings';
+    return 'clicker';
+  }
+
+  Widget _getOrCreatePage(String pageId) {
+    final existing = _lazyPages[pageId];
     if (existing != null) return existing.widget;
 
     final plugins = PluginRegistry.instance.enabledPlugins;
-    final pluginCount = plugins.length;
 
     Widget page;
     GlobalKey key;
 
-    if (index == 0) {
+    if (pageId == 'clicker') {
       key = GlobalKey();
       page = KeyedSubtree(key: key, child: const ClickerPage());
-    } else if (index >= 1 && index <= pluginCount) {
-      final plugin = plugins[index - 1];
-      final cached = _pluginPageCache[plugin.manifest.id];
+    } else if (plugins.any((p) => p.manifest.id == pageId)) {
+      final plugin = plugins.firstWhere((p) => p.manifest.id == pageId);
+      final cached = _pluginPageCache[pageId];
       if (cached == null) {
         key = GlobalKey();
         final widget = KeyedSubtree(key: key, child: Builder(builder: plugin.buildPage));
-        _pluginPageCache[plugin.manifest.id] = (widget: widget, key: key);
-        _lazyPages[index] = (widget: widget, key: key);
+        _pluginPageCache[pageId] = (widget: widget, key: key);
+        _lazyPages[pageId] = (widget: widget, key: key);
         return widget;
       }
-      _lazyPages[index] = cached;
+      _lazyPages[pageId] = cached;
       return cached.widget;
-    } else if (index == pluginCount + 1) {
+    } else if (pageId == 'plugin_center') {
       key = GlobalKey();
       page = KeyedSubtree(key: key, child: const PluginPage());
     } else {
@@ -70,7 +87,7 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
     }
 
     final entry = (widget: page, key: key);
-    _lazyPages[index] = entry;
+    _lazyPages[pageId] = entry;
     return page;
   }
 
@@ -96,10 +113,14 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
 
   void _onPluginsChanged() {
     if (mounted) {
-      // Reset index if it's out of bounds after plugin change
-      final totalItems = 2 + PluginRegistry.instance.enabledPlugins.length + 1; // clicker + separator + plugins + settings
-      if (_currentIndex >= totalItems) {
-        _currentIndex = 0;
+      final enabledIds = PluginRegistry.instance.enabledPlugins.map((p) => p.manifest.id).toSet();
+      _pluginPageCache.removeWhere((id, _) => !enabledIds.contains(id));
+      _lazyPages.removeWhere((id, _) => id != 'clicker' && id != 'plugin_center' && id != 'settings' && !enabledIds.contains(id));
+      if (!enabledIds.contains(_currentPageId) &&
+          _currentPageId != 'clicker' &&
+          _currentPageId != 'plugin_center' &&
+          _currentPageId != 'settings') {
+        _currentPageId = 'clicker';
       }
       setState(() {});
     }
@@ -225,25 +246,18 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
 
     final plugins = PluginRegistry.instance.enabledPlugins;
     final appState = context.watch<AppState>();
-    final totalPages = 1 + plugins.length + 2; // ClickerPage + plugins + PluginPage + SettingsPage
 
-    // _currentIndex is the index into effectiveItems (separators excluded)
-    final pageIndex = _currentIndex.clamp(0, totalPages - 1);
+    _getOrCreatePage(_currentPageId);
 
-    // Ensure current page is created (lazy)
-    _getOrCreatePage(pageIndex);
-
-    // Build the current page widget — only the active page is in the tree.
-    // GlobalKey preserves State when the widget is removed and re-inserted.
-    final currentPage = _lazyPages[pageIndex]?.widget ?? const SizedBox.shrink();
+    final currentPage = _lazyPages[_currentPageId]?.widget ?? const SizedBox.shrink();
+    final currentIndex = _pageIdToIndex(_currentPageId);
 
     return DragToResizeArea(
       resizeEdgeSize: 6,
       child: Column(children: [
         _GlassTitleBar(isDark: isDark, isMaximized: _isMaximized, onFloatingMode: _switchToFloating, animations: appState.uiAnimations),
         Expanded(child: Row(children: [
-          // Custom sidebar — avoids NavigationView's AnimatedSwitcher overhead
-          _buildSidebar(isDark, plugins, pageIndex),
+          _buildSidebar(isDark, plugins, currentIndex),
           // Page content — rendered directly without AnimatedSwitcher
           Expanded(child: ColoredBox(
             color: FluentTheme.of(context).scaffoldBackgroundColor,
@@ -255,7 +269,7 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
                 opacity: animation,
                 child: child,
               ),
-              child: KeyedSubtree(key: ValueKey(pageIndex), child: currentPage),
+              child: KeyedSubtree(key: ValueKey(_currentPageId), child: currentPage),
             ),
           )),
         ])),
@@ -320,7 +334,7 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
         accent: accent,
         isDark: isDark,
         animations: animations,
-        onTap: () => setState(() => _currentIndex = item.index),
+        onTap: () => setState(() => _currentPageId = _indexToPageId(item.index)),
       ),
     );
   }

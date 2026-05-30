@@ -7,7 +7,7 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../services/app_state.dart';
-import '../../services/system_tray_service.dart';
+import '../../services/screen_overlay_service.dart';
 
 class WindowInfo {
   final int hwnd;
@@ -30,39 +30,10 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
   bool _loading = false;
   bool _pickingCoords = false;
 
-  // Unregister function for the external platform channel handler
-  VoidCallback? _unregisterHandler;
-
-  @override
-  void initState() {
-    super.initState();
-  }
-
   @override
   void dispose() {
-    _unregisterHandler?.call();
-    _unregisterHandler = null;
+    ScreenOverlayService.instance.stopOverlay();
     super.dispose();
-  }
-
-  Future<dynamic> _handleMethodCall(MethodCall call) async {
-    if (!mounted) return null;
-    switch (call.method) {
-      case 'onOverlayWindowPick':
-        final args = call.arguments as Map;
-        final x = args['x'] as int;
-        final y = args['y'] as int;
-        final state = context.read<AppState>();
-        final config = state.clickerConfig;
-        state.setClickerConfig(config.copyWith(targetClientX: x, targetClientY: y));
-        if (mounted) setState(() => _pickingCoords = false);
-        return true; // handled
-      case 'onOverlayCancelled':
-        if (mounted) setState(() => _pickingCoords = false);
-        return true; // handled
-      default:
-        return null; // not handled
-    }
   }
 
   Future<void> _refreshWindows() async {
@@ -92,14 +63,14 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
     final config = state.clickerConfig;
     if (config.targetHwnd == 0) return;
     setState(() => _pickingCoords = true);
-    // Register handler via SystemTrayService to avoid overwriting other handlers
-    _unregisterHandler?.call();
-    _unregisterHandler = SystemTrayService().registerExternalHandler(_handleMethodCall);
     try {
-      await _platformChannel.invokeMethod('startWindowPickOverlay', [config.targetHwnd]);
-    } catch (_) {
-      if (mounted) setState(() => _pickingCoords = false);
-    }
+      final result = await ScreenOverlayService.instance.startWindowPick(config.targetHwnd);
+      if (result != null && mounted) {
+        final (x, y) = result;
+        state.setClickerConfig(config.copyWith(targetClientX: x, targetClientY: y));
+      }
+    } catch (_) {}
+    if (mounted) setState(() => _pickingCoords = false);
   }
 
   @override

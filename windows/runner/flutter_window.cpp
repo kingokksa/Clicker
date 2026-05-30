@@ -484,7 +484,7 @@ static const COLORREF CROSSHAIR_COLOR = RGB(255, 60, 60);
 static const COLORREF RECT_COLOR = RGB(0, 180, 255);
 static const wchar_t kOverlayClassName[] = L"ClickerOverlayWnd";
 static const int OVERLAY_TIMER_ID = 1;
-static const int OVERLAY_FPS = 30;
+static const int OVERLAY_FPS = 60;
 
 // Double-buffer: offscreen DC + bitmap, created once and reused
 static HDC g_overlayMemDC = nullptr;
@@ -629,6 +629,43 @@ static void DrawOverlayContent(HDC hdc, int w, int h) {
       SelectObject(hdc, hOldPen);
       DeleteObject(hPen);
     }
+  } else if (g_overlay.mode == OverlayMode::DetectionBox) {
+    COLORREF boxColors[] = {
+      RGB(0, 255, 128), RGB(255, 128, 0), RGB(0, 180, 255),
+      RGB(255, 60, 60), RGB(200, 0, 255), RGB(255, 255, 0),
+    };
+    int numColors = sizeof(boxColors) / sizeof(boxColors[0]);
+
+    for (size_t i = 0; i < g_overlay.detection_boxes.size(); i++) {
+      const auto& box = g_overlay.detection_boxes[i];
+      COLORREF color = boxColors[box.class_id % numColors];
+
+      HPEN hPen = CreatePen(PS_SOLID, 2, color);
+      HBRUSH hOldBrush = (HBRUSH)SelectObject(hdc, GetStockObject(NULL_BRUSH));
+      HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);
+      Rectangle(hdc, box.x, box.y, box.x + box.w, box.y + box.h);
+      SelectObject(hdc, hOldPen);
+      SelectObject(hdc, hOldBrush);
+      DeleteObject(hPen);
+
+      int labelW = 0;
+      int labelH = 18;
+      wchar_t label[128];
+      wchar_t classNameW[64] = {};
+      MultiByteToWideChar(CP_UTF8, 0, box.class_name, -1, classNameW, 64);
+      swprintf_s(label, L"%s %.0f%%", classNameW, box.confidence * 100.0f);
+      labelW = (int)wcslen(label) * 8 + 12;
+      if (labelW < 40) labelW = 40;
+
+      HBRUSH labelBrush = CreateSolidBrush(color);
+      RECT labelRc = { box.x, box.y - labelH, box.x + labelW, box.y };
+      FillRect(hdc, &labelRc, labelBrush);
+      DeleteObject(labelBrush);
+
+      SetBkColor(hdc, color);
+      SetTextColor(hdc, RGB(0, 0, 0));
+      TextOutW(hdc, box.x + 4, box.y - labelH + 1, label, (int)wcslen(label));
+    }
   }
 }
 
@@ -660,6 +697,13 @@ static LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         InvalidateRect(hwnd, nullptr, FALSE);
       }
       return 0;
+    }
+
+    case WM_NCHITTEST: {
+      if (g_overlay.mode == OverlayMode::DetectionBox) {
+        return HTTRANSPARENT;
+      }
+      break;
     }
 
     case WM_LBUTTONDOWN: {
@@ -744,6 +788,7 @@ static LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
     default:
       return DefWindowProc(hwnd, msg, wp, lp);
   }
+  return DefWindowProc(hwnd, msg, wp, lp);
 }
 
 void CreateOverlayWindow(flutter::MethodChannel<flutter::EncodableValue>* channel) {
@@ -822,6 +867,7 @@ void DestroyOverlayWindow() {
   g_overlay.dragging = false;
   g_overlay.channel = nullptr;
   g_overlay.target_window = nullptr;
+  g_overlay.detection_boxes.clear();
   CleanupOverlayBuffer();
 }
 
@@ -1038,6 +1084,81 @@ bool FlutterWindow::OnCreate() {
           result->Success(flutter::EncodableValue(true));
         } else if (call.method_name() == "stopOverlay") {
           DestroyOverlayWindow();
+          result->Success(flutter::EncodableValue(true));
+        } else if (call.method_name() == "showDetectionBoxes") {
+          const auto* args = std::get_if<flutter::EncodableList>(call.arguments());
+          if (!args || args->size() < 1) {
+            result->Error("INVALID_ARGS", "Expected [boxes]");
+            return;
+          }
+          g_overlay.detection_boxes.clear();
+          const auto* boxes = std::get_if<flutter::EncodableList>(&args->at(0));
+          if (boxes) {
+            for (const auto& item : *boxes) {
+              const auto* box_map = std::get_if<flutter::EncodableMap>(&item);
+              if (!box_map) continue;
+              DetectionBox db = {};
+              auto it = box_map->find(flutter::EncodableValue("x"));
+              if (it != box_map->end()) { if (auto* v = std::get_if<int32_t>(&it->second)) db.x = *v; }
+              it = box_map->find(flutter::EncodableValue("y"));
+              if (it != box_map->end()) { if (auto* v = std::get_if<int32_t>(&it->second)) db.y = *v; }
+              it = box_map->find(flutter::EncodableValue("w"));
+              if (it != box_map->end()) { if (auto* v = std::get_if<int32_t>(&it->second)) db.w = *v; }
+              it = box_map->find(flutter::EncodableValue("h"));
+              if (it != box_map->end()) { if (auto* v = std::get_if<int32_t>(&it->second)) db.h = *v; }
+              it = box_map->find(flutter::EncodableValue("confidence"));
+              if (it != box_map->end()) { if (auto* v = std::get_if<double>(&it->second)) db.confidence = (float)*v; }
+              it = box_map->find(flutter::EncodableValue("class_id"));
+              if (it != box_map->end()) { if (auto* v = std::get_if<int32_t>(&it->second)) db.class_id = *v; }
+              it = box_map->find(flutter::EncodableValue("class_name"));
+              if (it != box_map->end()) { if (auto* v = std::get_if<std::string>(&it->second)) {
+                strncpy_s(db.class_name, v->c_str(), 63);
+              }}
+              g_overlay.detection_boxes.push_back(db);
+            }
+          }
+          if (!g_overlay.hwnd || g_overlay.mode != OverlayMode::DetectionBox) {
+            g_overlay.mode = OverlayMode::DetectionBox;
+            CreateOverlayWindow(platform_channel_.get());
+          } else {
+            InvalidateRect(g_overlay.hwnd, nullptr, FALSE);
+          }
+          result->Success(flutter::EncodableValue(true));
+        } else if (call.method_name() == "updateDetectionBoxes") {
+          const auto* args = std::get_if<flutter::EncodableList>(call.arguments());
+          if (!args || args->size() < 1) {
+            result->Error("INVALID_ARGS", "Expected [boxes]");
+            return;
+          }
+          g_overlay.detection_boxes.clear();
+          const auto* boxes = std::get_if<flutter::EncodableList>(&args->at(0));
+          if (boxes) {
+            for (const auto& item : *boxes) {
+              const auto* box_map = std::get_if<flutter::EncodableMap>(&item);
+              if (!box_map) continue;
+              DetectionBox db = {};
+              auto it = box_map->find(flutter::EncodableValue("x"));
+              if (it != box_map->end()) { if (auto* v = std::get_if<int32_t>(&it->second)) db.x = *v; }
+              it = box_map->find(flutter::EncodableValue("y"));
+              if (it != box_map->end()) { if (auto* v = std::get_if<int32_t>(&it->second)) db.y = *v; }
+              it = box_map->find(flutter::EncodableValue("w"));
+              if (it != box_map->end()) { if (auto* v = std::get_if<int32_t>(&it->second)) db.w = *v; }
+              it = box_map->find(flutter::EncodableValue("h"));
+              if (it != box_map->end()) { if (auto* v = std::get_if<int32_t>(&it->second)) db.h = *v; }
+              it = box_map->find(flutter::EncodableValue("confidence"));
+              if (it != box_map->end()) { if (auto* v = std::get_if<double>(&it->second)) db.confidence = (float)*v; }
+              it = box_map->find(flutter::EncodableValue("class_id"));
+              if (it != box_map->end()) { if (auto* v = std::get_if<int32_t>(&it->second)) db.class_id = *v; }
+              it = box_map->find(flutter::EncodableValue("class_name"));
+              if (it != box_map->end()) { if (auto* v = std::get_if<std::string>(&it->second)) {
+                strncpy_s(db.class_name, v->c_str(), 63);
+              }}
+              g_overlay.detection_boxes.push_back(db);
+            }
+          }
+          if (g_overlay.hwnd && g_overlay.mode == OverlayMode::DetectionBox) {
+            InvalidateRect(g_overlay.hwnd, nullptr, FALSE);
+          }
           result->Success(flutter::EncodableValue(true));
         } else if (call.method_name() == "findImage") {
           // Template matching: find a template image within a screen region

@@ -6,7 +6,8 @@ import 'dart:ffi';
 import 'dart:io';
 import 'dart:convert';
 import 'package:ffi/ffi.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:archive/archive.dart';
+import 'app_paths.dart';
 
 // ─── FFI Type Definitions ──────────────────────────────────
 
@@ -254,6 +255,33 @@ class LoadedNativePlugin {
   /// Check if plugin supports custom actions
   bool get supportsCustomActions => _executeAction != null;
 
+  String? executeAction(String actionId, String params, {bool returnOnError = false}) {
+    if (!_isLoaded || _executeAction == null) return null;
+    final actionIdPtr = actionId.toNativeUtf8();
+    final paramsPtr = params.toNativeUtf8();
+    final outBuf = calloc<Uint8>(8192);
+    try {
+      outBuf.cast<Uint8>().asTypedList(8192).fillRange(0, 8192, 0);
+      final rc = _executeAction!(actionIdPtr, paramsPtr, outBuf.cast<Utf8>(), 8192);
+      if (rc != 0) {
+        if (returnOnError) {
+          try {
+            final errStr = outBuf.cast<Utf8>().toDartString();
+            if (errStr.isNotEmpty) return errStr;
+          } catch (_) {}
+        }
+        return null;
+      }
+      return outBuf.cast<Utf8>().toDartString();
+    } catch (_) {
+      return null;
+    } finally {
+      calloc.free(actionIdPtr);
+      calloc.free(paramsPtr);
+      calloc.free(outBuf);
+    }
+  }
+
   void _bindFunctions() {
     final lib = _library!;
     try { _getInfo = lib.lookupFunction<GetInfoNative, GetInfoDart>('plugin_get_info'); } catch (_) {}
@@ -286,13 +314,10 @@ class LoadedNativePlugin {
 
 class PluginDirManager {
   static Future<Directory> getPluginsDir() async {
-    final appDir = await getApplicationSupportDirectory();
-    final dir = Directory('${appDir.path}${Platform.pathSeparator}plugins');
-    if (!await dir.exists()) await dir.create(recursive: true);
-    return dir;
+    final path = await AppPaths.getPluginsDir();
+    return Directory(path);
   }
 
-  /// Discover all installed plugin directories
   static Future<List<PluginManifest>> discoverPlugins() async {
     final pluginsDir = await getPluginsDir();
     final manifests = <PluginManifest>[];
@@ -311,22 +336,29 @@ class PluginDirManager {
     return manifests;
   }
 
-  /// Install a plugin from a zip file
   static Future<PluginManifest?> installFromZip(String zipPath) async {
     final pluginsDir = await getPluginsDir();
-    // Extract zip to plugins directory
-    final result = await Process.run('powershell', [
-      '-NoProfile', '-Command',
-      'Expand-Archive -Path "\'$zipPath\'" -DestinationPath \'${pluginsDir.path}\' -Force',
-    ]);
-    if (result.exitCode != 0) return null;
+    try {
+      final bytes = await File(zipPath).readAsBytes();
+      final archive = ZipDecoder().decodeBytes(bytes);
+      for (final file in archive) {
+        final filePath = '${pluginsDir.path}${Platform.pathSeparator}${file.name}';
+        if (file.isFile) {
+          final outFile = File(filePath);
+          await outFile.parent.create(recursive: true);
+          await outFile.writeAsBytes(file.content as List<int>);
+        } else {
+          await Directory(filePath).create(recursive: true);
+        }
+      }
+    } catch (_) {
+      return null;
+    }
 
-    // Find the manifest in the extracted directory
     final manifests = await discoverPlugins();
     return manifests.isNotEmpty ? manifests.last : null;
   }
 
-  /// Install a plugin from a directory
   static Future<PluginManifest?> installFromDirectory(String sourceDir) async {
     final pluginsDir = await getPluginsDir();
     final sourceManifest = File('$sourceDir${Platform.pathSeparator}manifest.json');
@@ -336,14 +368,10 @@ class PluginDirManager {
       final json = jsonDecode(await sourceManifest.readAsString()) as Map<String, dynamic>;
       final manifest = PluginManifest.fromJson(json);
 
-      // Copy directory to plugins folder
       final destDir = Directory('${pluginsDir.path}${Platform.pathSeparator}${manifest.id}');
       if (await destDir.exists()) await destDir.delete(recursive: true);
 
-      await Process.run('powershell', [
-        '-NoProfile', '-Command',
-        'Copy-Item -Path \'$sourceDir\' -Destination \'${destDir.parent.path}\' -Recurse -Force',
-      ]);
+      await _copyDirectory(Directory(sourceDir), destDir);
 
       return manifest;
     } catch (_) {
@@ -351,7 +379,18 @@ class PluginDirManager {
     }
   }
 
-  /// Uninstall a plugin by id
+  static Future<void> _copyDirectory(Directory source, Directory destination) async {
+    if (!await destination.exists()) await destination.create(recursive: true);
+    await for (final entity in source.list()) {
+      final newPath = '${destination.path}${Platform.pathSeparator}${entity.path.split(Platform.pathSeparator).last}';
+      if (entity is Directory) {
+        await _copyDirectory(entity, Directory(newPath));
+      } else if (entity is File) {
+        await entity.copy(newPath);
+      }
+    }
+  }
+
   static Future<bool> uninstall(String pluginId) async {
     final pluginsDir = await getPluginsDir();
     final dir = Directory('${pluginsDir.path}${Platform.pathSeparator}$pluginId');
@@ -362,7 +401,6 @@ class PluginDirManager {
     return false;
   }
 
-  /// Get the plugin directory for a given id
   static Future<String?> getPluginDir(String pluginId) async {
     final pluginsDir = await getPluginsDir();
     final dir = Directory('${pluginsDir.path}${Platform.pathSeparator}$pluginId');

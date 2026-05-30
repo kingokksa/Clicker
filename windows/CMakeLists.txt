@@ -58,6 +58,23 @@ add_subdirectory("runner")
 include(flutter/generated_plugins.cmake)
 
 
+# === AI Tracker Plugin ===
+set(AI_TRACKER_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../plugins/ai_tracker/src")
+set(AI_TRACKER_SDK "${CMAKE_CURRENT_SOURCE_DIR}/../sdk")
+if(EXISTS "${AI_TRACKER_SRC}/main.cpp")
+  add_library(ai_tracker SHARED "${AI_TRACKER_SRC}/main.cpp")
+  target_include_directories(ai_tracker PRIVATE "${AI_TRACKER_SRC}" "${AI_TRACKER_SDK}")
+  target_compile_features(ai_tracker PRIVATE cxx_std_17)
+  target_compile_options(ai_tracker PRIVATE /W2 /EHsc /utf-8)
+  target_compile_definitions(ai_tracker PRIVATE "PLUGIN_EXPORTS" "UNICODE" "_UNICODE" "NOMINMAX")
+  target_link_libraries(ai_tracker PRIVATE "shell32.lib")
+  install(TARGETS ai_tracker RUNTIME DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/plugins/ai_tracker/windows"
+    COMPONENT Runtime)
+  install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../plugins/ai_tracker/manifest.json"
+    DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/plugins/ai_tracker"
+    COMPONENT Runtime)
+endif()
+
 # === Installation ===
 # Support files are copied into place next to the executable, so that it can
 # run in place. This is done instead of making a separate bundle (as on Linux)

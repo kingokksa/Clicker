@@ -71,6 +71,20 @@
       "icon": "remote",
       "size": 0,
       "minAppVersion": 1
+    },
+    {
+      "id": "ai_tracker",
+      "name": "AI图像跟踪",
+      "version": "1.0.0",
+      "author": "Clicker",
+      "description": "基于ONNX Runtime的YOLO目标检测与跟踪，支持实时画面中的物体识别和自动点击",
+      "category": "vision",
+      "platforms": ["windows"],
+      "type": "dart",
+      "dartPluginId": "ai_tracker",
+      "icon": "machine_learning",
+      "size": 0,
+      "minAppVersion": 1
     }
   ]
 }

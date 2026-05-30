@@ -5,9 +5,9 @@ library;
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:path_provider/path_provider.dart';
 import 'plugin_system.dart';
 import 'native_plugin_loader.dart';
+import 'app_paths.dart';
 
 class PluginRegistry extends ChangeNotifier {
   PluginRegistry._();
@@ -124,11 +124,11 @@ class PluginRegistry extends ChangeNotifier {
     if (plugin == null || !plugin.installed) return;
     if (plugin.enabled) await disablePlugin(id);
     await plugin.dispose();
+    await plugin.onUninstall();
 
     _installedIds.remove(id);
     plugin.installed = false;
 
-    // For external plugins, also remove files
     if (plugin.manifest.source != PluginSource.builtin) {
       await PluginDirManager.uninstall(id);
       _plugins.remove(id);
@@ -225,10 +225,8 @@ class PluginRegistry extends ChangeNotifier {
   }
 
   Future<Directory> _getPluginDir() async {
-    final localAppData = Platform.environment['LOCALAPPDATA'] ?? Platform.environment['HOME'] ?? '.';
-    final dir = Directory('$localAppData${Platform.pathSeparator}Clicker');
-    if (!await dir.exists()) await dir.create(recursive: true);
-    return dir;
+    final path = await AppPaths.getDataDir();
+    return Directory(path);
   }
 
   /// Open the plugins directory in file explorer
