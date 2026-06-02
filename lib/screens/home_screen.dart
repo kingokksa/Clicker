@@ -435,8 +435,8 @@ class _GlassTitleBar extends StatelessWidget {
         height: 36,
         decoration: BoxDecoration(
           color: isDark
-            ? const Color(0xFF16162A).withValues(alpha:0.88)
-            : const Color(0xFFF0F0FA).withValues(alpha:0.88),
+            ? const Color(0xFF16162A).withValues(alpha: 0.88)
+            : const Color(0xFFF0F0FA).withValues(alpha: 0.88),
           border: Border(
             bottom: BorderSide(
               color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0),

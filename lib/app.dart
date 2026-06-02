@@ -1,6 +1,7 @@
 /// App entry point — initialises state and launches FluentApp.
 library;
 
+import 'dart:io';
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_acrylic/flutter_acrylic.dart' as acrylic;
@@ -64,10 +65,10 @@ class _ClickerAppState extends State<ClickerApp> {
               accentColor: _toAccent(accent),
               visualDensity: VisualDensity.standard,
               fontFamily: 'Segoe UI Variable, Segoe UI, Microsoft YaHei UI, PingFang SC, sans-serif',
-              scaffoldBackgroundColor: const Color(0xFFF8F8FC).withValues(alpha:0.88),
-              cardColor: Colors.white.withValues(alpha:0.78),
+              scaffoldBackgroundColor: const Color(0xFFF8F8FC).withValues(alpha: 0.88),
+              cardColor: Colors.white.withValues(alpha: 0.78),
               navigationPaneTheme: NavigationPaneThemeData(
-                backgroundColor: const Color(0xFFF2F2FA).withValues(alpha:0.75),
+                backgroundColor: const Color(0xFFF2F2FA).withValues(alpha: 0.75),
                 animationDuration: Duration.zero,
               ),
             ),
@@ -76,10 +77,10 @@ class _ClickerAppState extends State<ClickerApp> {
               accentColor: _toAccent(accent),
               visualDensity: VisualDensity.standard,
               fontFamily: 'Segoe UI Variable, Segoe UI, Microsoft YaHei UI, PingFang SC, sans-serif',
-              scaffoldBackgroundColor: const Color(0xFF16162A).withValues(alpha:0.88),
-              cardColor: const Color(0xFF22223A).withValues(alpha:0.78),
+              scaffoldBackgroundColor: const Color(0xFF16162A).withValues(alpha: 0.88),
+              cardColor: const Color(0xFF22223A).withValues(alpha: 0.78),
               navigationPaneTheme: NavigationPaneThemeData(
-                backgroundColor: const Color(0xFF16162A).withValues(alpha:0.75),
+                backgroundColor: const Color(0xFF16162A).withValues(alpha: 0.75),
                 animationDuration: Duration.zero,
               ),
             ),
@@ -95,6 +96,7 @@ class _ClickerAppState extends State<ClickerApp> {
   }
 
   void _updateAcrylic(String themeMode, Color accent) {
+    if (!Platform.isWindows) return;
     final isDark = themeMode == 'dark';
     try {
       acrylic.Window.setEffect(
@@ -102,15 +104,10 @@ class _ClickerAppState extends State<ClickerApp> {
         color: isDark ? const Color(0xFF16162A) : const Color(0xFFF8F8FC),
         dark: isDark,
       );
-    } catch (_) {
-      // Acrylic may fail on older Windows — continue without it
-    }
-    // Re-apply DWM fixes immediately after flutter_acrylic overrides them.
+    } catch (_) {}
     try {
       _platformChannel.invokeMethod('reapplyDwmFixes');
-    } catch (_) {
-      // DWM fixes are non-critical
-    }
+    } catch (_) {}
   }
 }
 

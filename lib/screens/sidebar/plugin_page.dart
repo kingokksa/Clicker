@@ -442,7 +442,7 @@ class _PluginPageState extends State<PluginPage> {
   Future<void> _installPlugin() async {
     setState(() => _isInstalling = true);
     try {
-      final result = await FilePicker.pickFiles(
+      final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['zip'],
         dialogTitle: '选择插件包 (.zip)',

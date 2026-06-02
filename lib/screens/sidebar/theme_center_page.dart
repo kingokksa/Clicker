@@ -103,7 +103,7 @@ class ThemeCenterPage extends StatelessWidget {
           duration: const Duration(milliseconds: 200),
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
           decoration: BoxDecoration(
-            color: selected ? accent.withValues(alpha:0.15) : bgColor,
+            color: selected ? accent.withValues(alpha: 0.15) : bgColor,
             borderRadius: BorderRadius.circular(8),
             border: Border.all(color: selected ? accent : (isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)), width: selected ? 2 : 1),
           ),
@@ -133,14 +133,14 @@ class ThemeCenterPage extends StatelessWidget {
             color: bg,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(color: selected ? preset.primary : (isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)), width: selected ? 2.5 : 1),
-            boxShadow: selected ? [BoxShadow(color: preset.primary.withValues(alpha:0.3), blurRadius: 8, spreadRadius: 1)] : null,
+            boxShadow: selected ? [BoxShadow(color: preset.primary.withValues(alpha: 0.3), blurRadius: 8, spreadRadius: 1)] : null,
           ),
           child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
             Container(width: 40, height: 4, decoration: BoxDecoration(color: preset.primary, borderRadius: BorderRadius.circular(2))),
             const SizedBox(height: 8),
-            Container(width: 60, height: 3, decoration: BoxDecoration(color: preset.primary.withValues(alpha:0.5), borderRadius: BorderRadius.circular(2))),
+            Container(width: 60, height: 3, decoration: BoxDecoration(color: preset.primary.withValues(alpha: 0.5), borderRadius: BorderRadius.circular(2))),
             const SizedBox(height: 4),
-            Container(width: 45, height: 3, decoration: BoxDecoration(color: preset.primary.withValues(alpha:0.3), borderRadius: BorderRadius.circular(2))),
+            Container(width: 45, height: 3, decoration: BoxDecoration(color: preset.primary.withValues(alpha: 0.3), borderRadius: BorderRadius.circular(2))),
             const SizedBox(height: 10),
             Text(preset.name, style: TextStyle(fontSize: 11, fontWeight: selected ? FontWeight.w700 : FontWeight.normal,
               color: preset.isDark ? const Color(0xFFC0C0E8) : const Color(0xFF5A5A80))),
@@ -159,7 +159,7 @@ class ThemeCenterPage extends StatelessWidget {
           duration: const Duration(milliseconds: 150),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
-            color: selected ? opt.color.withValues(alpha:0.15) : Colors.transparent,
+            color: selected ? opt.color.withValues(alpha: 0.15) : Colors.transparent,
             borderRadius: BorderRadius.circular(6),
             border: Border.all(color: selected ? opt.color : (isDark ? const Color(0xFF404060) : const Color(0xFFD0D0D8))),
           ),
@@ -178,7 +178,7 @@ class ThemeCenterPage extends StatelessWidget {
   }
 
   Widget _buildCustomColorCard(bool isDark, AppState state) {
-    final cardBg = isDark ? const Color(0xFF252540).withValues(alpha:0.5) : const Color(0xFFF0F0FA).withValues(alpha:0.5);
+    final cardBg = isDark ? const Color(0xFF252540).withValues(alpha: 0.5) : const Color(0xFFF0F0FA).withValues(alpha: 0.5);
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(

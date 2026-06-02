@@ -303,6 +303,7 @@ class LoadedNativePlugin {
   static String? _currentPlatform() {
     if (Platform.isWindows) return 'windows';
     if (Platform.isLinux) return 'linux';
+    if (Platform.isAndroid) return 'android';
     if (Platform.isMacOS) return 'darwin';
     return null;
   }

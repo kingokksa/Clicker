@@ -19,6 +19,11 @@ target_compile_options(${BINARY_NAME} PRIVATE -Wall -Werror)
 target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
 target_link_libraries(${BINARY_NAME} PRIVATE PkgConfig::GTK)
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(X11 REQUIRED x11)
+target_include_directories(${BINARY_NAME} PRIVATE ${X11_INCLUDE_DIRS})
+target_link_libraries(${BINARY_NAME} PRIVATE ${X11_LIBRARIES})
+
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 add_dependencies(${BINARY_NAME} flutter_assemble)

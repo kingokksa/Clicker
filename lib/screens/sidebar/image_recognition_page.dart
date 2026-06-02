@@ -506,7 +506,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
           duration: const Duration(milliseconds: 150),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           decoration: BoxDecoration(
-            color: selected ? accent.withValues(alpha:0.15) : Colors.transparent,
+            color: selected ? accent.withValues(alpha: 0.15) : Colors.transparent,
             borderRadius: BorderRadius.circular(6),
             border: Border.all(color: selected ? accent : (isDark ? const Color(0xFF404060) : const Color(0xFFD0D0D8))),
           ),
@@ -1172,39 +1172,60 @@ class _AiTrackerTabState extends State<_AiTrackerTab> {
 
   Future<bool> _deployNativePlugin() async {
     final dir = _pluginDir;
-    final windowsDir = Directory('$dir\\windows');
-    if (!await windowsDir.exists()) await windowsDir.create(recursive: true);
+    final sep = Platform.pathSeparator;
+
+    String platformDir;
+    String libName;
+    String libExt;
+    if (Platform.isWindows) {
+      platformDir = 'windows';
+      libExt = '.dll';
+      libName = 'ai_tracker';
+    } else if (Platform.isLinux) {
+      platformDir = 'linux';
+      libExt = '.so';
+      libName = 'libai_tracker';
+    } else if (Platform.isAndroid) {
+      platformDir = 'android';
+      libExt = '.so';
+      libName = 'libai_tracker';
+    } else {
+      return false;
+    }
+
+    final targetDir = Directory('$dir$sep$platformDir');
+    if (!await targetDir.exists()) await targetDir.create(recursive: true);
 
     final exePath = Platform.resolvedExecutable;
     final exeDir = File(exePath).parent.path;
 
     final pluginDir = await AppPaths.getPluginDir('ai_tracker');
 
-    final dllDest = File('$dir\\windows\\ai_tracker.dll');
-    final manifestDest = File('$dir\\manifest.json');
+    final libDest = File('$dir$sep$platformDir$sep$libName$libExt');
+    final manifestDest = File('$dir$sep${'manifest.json'}');
 
-    final dllSources = [
-      '$exeDir\\plugins\\ai_tracker\\windows\\ai_tracker.dll',
-      '$exeDir\\data\\plugins\\ai_tracker\\windows\\ai_tracker.dll',
-      '$pluginDir\\windows\\ai_tracker.dll',
+    final libSources = [
+      '$exeDir$sep${'plugins'}$sep${'ai_tracker'}$sep$platformDir$sep$libName$libExt',
+      '$exeDir$sep${'data'}$sep${'plugins'}$sep${'ai_tracker'}$sep$platformDir$sep$libName$libExt',
+      '$pluginDir$sep$platformDir$sep$libName$libExt',
     ];
 
     final manifestSources = [
-      '$exeDir\\plugins\\ai_tracker\\manifest.json',
-      '$exeDir\\data\\plugins\\ai_tracker\\manifest.json',
-      '$pluginDir\\manifest.json',
+      '$exeDir$sep${'plugins'}$sep${'ai_tracker'}$sep${'manifest.json'}',
+      '$exeDir$sep${'data'}$sep${'plugins'}$sep${'ai_tracker'}$sep${'manifest.json'}',
+      '$pluginDir$sep${'manifest.json'}',
     ];
 
-    bool dllOk = await dllDest.exists();
+    bool libOk = await libDest.exists();
     bool manifestOk = await manifestDest.exists();
 
-    if (!dllOk) {
-      for (final src in dllSources) {
+    if (!libOk) {
+      for (final src in libSources) {
         final srcFile = File(src);
         if (await srcFile.exists()) {
           try {
-            await srcFile.copy(dllDest.path);
-            dllOk = true;
+            await srcFile.copy(libDest.path);
+            libOk = true;
             break;
           } catch (_) {}
         }
@@ -1224,7 +1245,7 @@ class _AiTrackerTabState extends State<_AiTrackerTab> {
       }
     }
 
-    return dllOk && manifestOk;
+    return libOk && manifestOk;
   }
 
   String _formatBytes(int bytes) {

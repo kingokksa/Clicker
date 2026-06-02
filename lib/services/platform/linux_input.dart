@@ -1,4 +1,3 @@
-/// Linux platform input — uses X11/XDOTOOL for mouse/keyboard simulation.
 library;
 
 import 'dart:async';
@@ -32,14 +31,12 @@ class LinuxInput extends PlatformInput {
         'doubleClick': doubleClick,
       });
     } catch (_) {
-      // Fallback: use xdotool
       await _xdotoolClick(x, y, button, doubleClick);
     }
   }
 
   @override
   void syncClick({required int x, required int y, String button = 'left'}) {
-    // Linux sync click — fire and forget via xdotool
     _xdotoolClickSync(x, y, button);
   }
 
@@ -85,7 +82,6 @@ class LinuxInput extends PlatformInput {
     try {
       await _channel.invokeMethod('mouseScroll', {'dx': dx, 'dy': dy});
     } catch (_) {
-      // xdotool scroll: button 4 = up, button 5 = down
       final clicks = (dy.abs() / 120).round().clamp(1, 20);
       final btn = dy > 0 ? '5' : '4';
       for (int i = 0; i < clicks; i++) {
@@ -130,7 +126,6 @@ class LinuxInput extends PlatformInput {
         return (width: m['width'] as int, height: m['height'] as int);
       }
     } catch (_) {}
-    // Fallback: use xdotool
     try {
       final result = await Process.run('xdotool', ['getdisplaygeometry']);
       final parts = (result.stdout as String).trim().split(' ');
@@ -169,11 +164,12 @@ class LinuxInput extends PlatformInput {
 
   @override
   Future<dynamic> invokeMethod(String method, [dynamic arguments]) async {
-    // Not supported on Linux
-    return null;
+    try {
+      return await _channel.invokeMethod(method, arguments);
+    } catch (_) {
+      return null;
+    }
   }
-
-  // ─── Helpers ───────────────────────────────────────────────
 
   String _linuxButton(String button) {
     switch (button) {

@@ -44,7 +44,7 @@ class AiTrackerPlugin extends ClickerPlugin {
     icon: FluentIcons.machine_learning,
     category: PluginCategory.vision,
     source: PluginSource.builtin,
-    platforms: ['windows'],
+    platforms: ['windows', 'linux', 'android'],
   );
 
   bool get nativeLoaded => _nativeLoaded;
@@ -103,25 +103,62 @@ class AiTrackerPlugin extends ClickerPlugin {
     final exeDir = File(exePath).parent.path;
     final sep = Platform.pathSeparator;
 
-    final candidates = [
-      '$exeDir${sep}data${sep}plugins${sep}ai_tracker${sep}windows${sep}ai_tracker.dll',
-      '$exeDir${sep}plugins${sep}ai_tracker${sep}windows${sep}ai_tracker.dll',
-    ];
+    if (Platform.isWindows) {
+      final candidates = [
+        '$exeDir${sep}data${sep}plugins${sep}ai_tracker${sep}windows${sep}ai_tracker.dll',
+        '$exeDir${sep}plugins${sep}ai_tracker${sep}windows${sep}ai_tracker.dll',
+      ];
 
-    try {
-      final dataDir = Directory('$exeDir${sep}data');
-      if (dataDir.existsSync()) {
-        for (final entity in dataDir.listSync(recursive: true)) {
-          if (entity is File && entity.path.endsWith('ai_tracker.dll')) {
-            return entity.path;
+      try {
+        final dataDir = Directory('$exeDir${sep}data');
+        if (dataDir.existsSync()) {
+          for (final entity in dataDir.listSync(recursive: true)) {
+            if (entity is File && entity.path.endsWith('ai_tracker.dll')) {
+              return entity.path;
+            }
           }
         }
-      }
-    } catch (_) {}
+      } catch (_) {}
 
-    for (final path in candidates) {
-      if (File(path).existsSync()) return path;
+      for (final path in candidates) {
+        if (File(path).existsSync()) return path;
+      }
+    } else if (Platform.isLinux) {
+      final candidates = [
+        '$exeDir${sep}data${sep}plugins${sep}ai_tracker${sep}linux${sep}libai_tracker.so',
+        '$exeDir${sep}lib${sep}libai_tracker.so',
+        '$exeDir${sep}plugins${sep}ai_tracker${sep}linux${sep}libai_tracker.so',
+      ];
+
+      try {
+        final dataDir = Directory('$exeDir${sep}data');
+        if (dataDir.existsSync()) {
+          for (final entity in dataDir.listSync(recursive: true)) {
+            if (entity is File && entity.path.endsWith('libai_tracker.so')) {
+              return entity.path;
+            }
+          }
+        }
+      } catch (_) {}
+
+      try {
+        final libDir = Directory('$exeDir${sep}lib');
+        if (libDir.existsSync()) {
+          for (final entity in libDir.listSync(recursive: true)) {
+            if (entity is File && entity.path.endsWith('libai_tracker.so')) {
+              return entity.path;
+            }
+          }
+        }
+      } catch (_) {}
+
+      for (final path in candidates) {
+        if (File(path).existsSync()) return path;
+      }
+    } else if (Platform.isAndroid) {
+      return 'libai_tracker.so';
     }
+
     return null;
   }
 

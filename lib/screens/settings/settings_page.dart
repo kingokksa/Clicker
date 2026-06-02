@@ -86,7 +86,7 @@ class SettingsPage extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(children: [
-        Icon(icon, size: 16, color: accent.withValues(alpha:0.7)),
+        Icon(icon, size: 16, color: accent.withValues(alpha: 0.7)),
         const SizedBox(width: 10),
         Expanded(child: Text(label, style: const TextStyle(fontSize: 13))),
         GestureDetector(
@@ -94,16 +94,16 @@ class SettingsPage extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             decoration: BoxDecoration(
-              color: accent.withValues(alpha:0.1),
+              color: accent.withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: accent.withValues(alpha:0.3)),
+              border: Border.all(color: accent.withValues(alpha: 0.3)),
             ),
             child: Row(mainAxisSize: MainAxisSize.min, children: [
               Text(value.toUpperCase(), style: TextStyle(
                 color: accent, fontWeight: FontWeight.w600, fontFamily: 'monospace', fontSize: 13,
               )),
               const SizedBox(width: 6),
-              Icon(FluentIcons.edit, size: 14, color: accent.withValues(alpha:0.6)),
+              Icon(FluentIcons.edit, size: 14, color: accent.withValues(alpha: 0.6)),
             ]),
           ),
         ),
@@ -199,7 +199,7 @@ class SettingsPage extends StatelessWidget {
         ...profiles.map((name) => Padding(
           padding: const EdgeInsets.only(bottom: 6),
           child: Row(children: [
-            Icon(FluentIcons.bookmarks, size: 16, color: FluentTheme.of(context).accentColor.withValues(alpha:0.5)),
+            Icon(FluentIcons.bookmarks, size: 16, color: FluentTheme.of(context).accentColor.withValues(alpha: 0.5)),
             const SizedBox(width: 8),
             Expanded(child: Text(name, style: const TextStyle(fontSize: 13))),
             HyperlinkButton(onPressed: () => state.loadProfile(name), child: const Text('加载')),
@@ -214,7 +214,7 @@ class SettingsPage extends StatelessWidget {
       Row(children: [
         Expanded(child: FilledButton(
           onPressed: () => _exportConfig(context, state),
-          style: ButtonStyle(backgroundColor: WidgetStatePropertyAll(accent.withValues(alpha:0.15))),
+          style: ButtonStyle(backgroundColor: WidgetStatePropertyAll(accent.withValues(alpha: 0.15))),
           child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
             Icon(FluentIcons.upload, size: 14, color: accent),
             const SizedBox(width: 6),
@@ -224,7 +224,7 @@ class SettingsPage extends StatelessWidget {
         const SizedBox(width: 8),
         Expanded(child: FilledButton(
           onPressed: () => _importConfig(context, state),
-          style: ButtonStyle(backgroundColor: WidgetStatePropertyAll(accent.withValues(alpha:0.15))),
+          style: ButtonStyle(backgroundColor: WidgetStatePropertyAll(accent.withValues(alpha: 0.15))),
           child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
             Icon(FluentIcons.download, size: 14, color: accent),
             const SizedBox(width: 6),
@@ -309,8 +309,8 @@ class _HotkeyPickerDialogState extends State<_HotkeyPickerDialog> {
         Center(child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
           decoration: BoxDecoration(
-            color: accent.withValues(alpha:0.1), borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: accent.withValues(alpha:0.4)),
+            color: accent.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: accent.withValues(alpha: 0.4)),
           ),
           child: Text(preview.toUpperCase(), style: TextStyle(
             color: accent, fontWeight: FontWeight.w700, fontFamily: 'monospace', fontSize: 20, letterSpacing: 2,
@@ -358,7 +358,7 @@ class _HotkeyPickerDialogState extends State<_HotkeyPickerDialog> {
           duration: const Duration(milliseconds: 150),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
-            color: selected ? accent.withValues(alpha:0.2) : unselectedBg,
+            color: selected ? accent.withValues(alpha: 0.2) : unselectedBg,
             borderRadius: BorderRadius.circular(4),
             border: Border.all(color: selected ? accent : unselectedBorder),
           ),

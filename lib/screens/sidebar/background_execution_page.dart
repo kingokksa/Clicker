@@ -202,7 +202,7 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF252540).withValues(alpha:0.5) : const Color(0xFFF0F0FA).withValues(alpha:0.5),
+        color: isDark ? const Color(0xFF252540).withValues(alpha: 0.5) : const Color(0xFFF0F0FA).withValues(alpha: 0.5),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)),
       ),
@@ -224,7 +224,7 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
       Container(
         width: 32, height: 32,
         decoration: BoxDecoration(
-          color: (enabled ? accent : disabledColor).withValues(alpha:0.1),
+          color: (enabled ? accent : disabledColor).withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(6),
         ),
         child: Icon(icon, size: 14, color: enabled ? accent : disabledColor),

@@ -142,7 +142,7 @@ class WindowsInput extends PlatformInput {
     if (dy != 0) {
       final p = calloc<INPUT>();
       p.ref.type = INPUT_MOUSE;
-      p.ref.mi.dwFlags = MOUSEEVENTF_WHEEL;
+      p.ref.mi.dwFlags = MOUSE_EVENT_FLAGS(MOUSEEVENTF_WHEEL);
       p.ref.mi.mouseData = (dy * 120).round();
       SendInput(1, p, sizeOf<INPUT>());
       calloc.free(p);
@@ -150,15 +150,15 @@ class WindowsInput extends PlatformInput {
   }
 
   MOUSE_EVENT_FLAGS _down(String b) => switch (b) {
-        'right' => MOUSEEVENTF_RIGHTDOWN,
-        'middle' => MOUSEEVENTF_MIDDLEDOWN,
-        _ => MOUSEEVENTF_LEFTDOWN,
+        'right' => MOUSE_EVENT_FLAGS(MOUSEEVENTF_RIGHTDOWN),
+        'middle' => MOUSE_EVENT_FLAGS(MOUSEEVENTF_MIDDLEDOWN),
+        _ => MOUSE_EVENT_FLAGS(MOUSEEVENTF_LEFTDOWN),
       };
 
   MOUSE_EVENT_FLAGS _up(String b) => switch (b) {
-        'right' => MOUSEEVENTF_RIGHTUP,
-        'middle' => MOUSEEVENTF_MIDDLEUP,
-        _ => MOUSEEVENTF_LEFTUP,
+        'right' => MOUSE_EVENT_FLAGS(MOUSEEVENTF_RIGHTUP),
+        'middle' => MOUSE_EVENT_FLAGS(MOUSEEVENTF_MIDDLEUP),
+        _ => MOUSE_EVENT_FLAGS(MOUSEEVENTF_LEFTUP),
       };
 
   void _sendMouseInput(MOUSE_EVENT_FLAGS flags) {
@@ -251,7 +251,7 @@ class WindowsInput extends PlatformInput {
     final vk = _vk[key.toLowerCase()] ??
         (key.length == 1 ? key.toUpperCase().codeUnitAt(0) : null);
     if (vk == null) return;
-    _sendKey(vk, KEYEVENTF_KEYUP);
+    _sendKey(vk, KEYBD_EVENT_FLAGS(KEYEVENTF_KEYUP));
   }
 
   @override
@@ -260,9 +260,9 @@ class WindowsInput extends PlatformInput {
       final p = calloc<INPUT>();
       p.ref.type = INPUT_KEYBOARD;
       p.ref.ki.wScan = c.codeUnitAt(0);
-      p.ref.ki.dwFlags = KEYEVENTF_UNICODE;
+      p.ref.ki.dwFlags = KEYBD_EVENT_FLAGS(KEYEVENTF_UNICODE);
       SendInput(1, p, sizeOf<INPUT>());
-      p.ref.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+      p.ref.ki.dwFlags = KEYBD_EVENT_FLAGS(KEYEVENTF_UNICODE | KEYEVENTF_KEYUP);
       SendInput(1, p, sizeOf<INPUT>());
       calloc.free(p);
       await Future.delayed(Duration(milliseconds: delayMs));

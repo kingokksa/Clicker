@@ -1,10 +1,10 @@
-/// Main entry point.
 library;
 
+import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:window_manager/window_manager.dart';
-import 'package:flutter_acrylic/flutter_acrylic.dart';
 import 'package:flutter/services.dart';
+import 'package:window_manager/window_manager.dart';
+import 'package:flutter_acrylic/flutter_acrylic.dart' as acrylic;
 import 'app.dart';
 import 'services/plugin_registry.dart';
 import 'services/plugins/macro_plugin.dart';
@@ -26,35 +26,36 @@ void main() async {
   registry.registerPlugin(AiTrackerPlugin());
   await registry.loadState();
 
-  // Configure window for desktop
-  await windowManager.ensureInitialized();
-  await windowManager.setMinimumSize(const Size(500, 680));
-  await windowManager.setSize(const Size(920, 720));
-  await windowManager.setTitle('Clicker');
-  await windowManager.center();
-  await windowManager.setPreventClose(true);
-
-  // Enable acrylic / mica effect
-  try {
-    await Window.initialize();
-    await Window.setEffect(
-      effect: WindowEffect.acrylic,
-      color: const Color(0xFF1A1A2E),
-      dark: true,
-    );
-  } catch (_) {
-    // Acrylic may fail on older Windows versions — continue without it
-  }
-
-  // Re-apply DWM fixes immediately after flutter_acrylic overrides them.
-  // flutter_acrylic's setEffect() resets DwmExtendFrameIntoClientArea margins,
-  // which causes white border flash to return.
-  try {
-    const platformChannel = MethodChannel('com.clicker.pro/platform');
-    await platformChannel.invokeMethod('reapplyDwmFixes');
-  } catch (_) {
-    // DWM fixes are non-critical — continue without them
+  if (Platform.isWindows || Platform.isLinux) {
+    await _initDesktopWindow();
   }
 
   runApp(const ClickerApp());
+}
+
+Future<void> _initDesktopWindow() async {
+  try {
+    await windowManager.ensureInitialized();
+    await windowManager.setMinimumSize(const Size(500, 680));
+    await windowManager.setSize(const Size(920, 720));
+    await windowManager.setTitle('Clicker');
+    await windowManager.center();
+    await windowManager.setPreventClose(true);
+  } catch (_) {}
+
+  if (Platform.isWindows) {
+    try {
+      await acrylic.Window.initialize();
+      await acrylic.Window.setEffect(
+        effect: acrylic.WindowEffect.acrylic,
+        color: const Color(0xFF1A1A2E),
+        dark: true,
+      );
+    } catch (_) {}
+
+    try {
+      const platformChannel = MethodChannel('com.clicker.pro/platform');
+      await platformChannel.invokeMethod('reapplyDwmFixes');
+    } catch (_) {}
+  }
 }

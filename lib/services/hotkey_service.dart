@@ -9,6 +9,8 @@ import '../models/hotkey_config.dart';
 import '../models/macro_model.dart';
 import 'platform/platform_input.dart';
 import 'platform/windows_input.dart';
+import 'platform/linux_input.dart';
+import 'platform/android_input.dart';
 
 class HotkeyService {
   final PlatformInput _input;
@@ -51,17 +53,15 @@ class HotkeyService {
     _registerSystemHotkeys();
   }
 
-  /// Register all hotkeys at the system level (Windows only).
   Future<void> _registerSystemHotkeys() async {
-    if (!Platform.isWindows) return;
-    final winInput = _input as WindowsInput;
-
-    await winInput.registerHotkey('startStopClicker', _config.startStopClicker);
-    await winInput.registerHotkey(
-        'startStopRecording', _config.startStopRecording);
-    await winInput.registerHotkey('emergencyStop', _config.emergencyStop);
-    await winInput.registerHotkey('playMacro', _config.playMacro);
-    await winInput.registerHotkey('holdTrigger', _config.holdTrigger);
+    if (Platform.isWindows) {
+      final winInput = _input as WindowsInput;
+      await winInput.registerHotkey('startStopClicker', _config.startStopClicker);
+      await winInput.registerHotkey('startStopRecording', _config.startStopRecording);
+      await winInput.registerHotkey('emergencyStop', _config.emergencyStop);
+      await winInput.registerHotkey('playMacro', _config.playMacro);
+      await winInput.registerHotkey('holdTrigger', _config.holdTrigger);
+    }
   }
 
   void _handleKeyEvent(String field) {
@@ -126,35 +126,27 @@ class HotkeyService {
     _input.stopListening();
   }
 
-  /// Register a hotkey for a specific macro.
   Future<void> registerMacroHotkey(String macroId, String hotkey) async {
-    // Unregister existing hotkey for this macro first
     await unregisterMacroHotkey(macroId);
 
-    if (!Platform.isWindows) return;
-    final winInput = _input as WindowsInput;
-
-    // Find a free ID
-    int id = _macroHotkeyBaseId;
-    while (_macroHotkeyIds.containsKey(id)) {
-      id++;
+    if (Platform.isWindows) {
+      final winInput = _input as WindowsInput;
+      int id = _macroHotkeyBaseId;
+      while (_macroHotkeyIds.containsKey(id)) {
+        id++;
+      }
+      await winInput.registerHotkey(id.toString(), hotkey);
+      _macroHotkeyIds[id] = macroId;
+      _macroHotkeys[macroId] = hotkey;
     }
-
-    // Register with Windows — use numeric ID as the field name
-    await winInput.registerHotkey(id.toString(), hotkey);
-
-    _macroHotkeyIds[id] = macroId;
-    _macroHotkeys[macroId] = hotkey;
   }
 
-  /// Unregister a macro's hotkey.
   Future<void> unregisterMacroHotkey(String macroId) async {
     final hotkey = _macroHotkeys[macroId];
     if (hotkey == null) return;
 
     if (Platform.isWindows) {
       final winInput = _input as WindowsInput;
-      // Find the ID for this macro
       final entry = _macroHotkeyIds.entries.firstWhere(
         (e) => e.value == macroId,
         orElse: () => MapEntry(-1, ''),
@@ -167,26 +159,23 @@ class HotkeyService {
     _macroHotkeys.remove(macroId);
   }
 
-  /// Re-register all macro hotkeys (call after macros list changes).
   Future<void> reregisterAllMacroHotkeys(List<MacroModel> macros) async {
-    if (!Platform.isWindows) return;
+    if (Platform.isWindows) {
+      final winInput = _input as WindowsInput;
+      for (final id in _macroHotkeyIds.keys.toList()) {
+        await winInput.unregisterHotkey(id.toString());
+      }
+      _macroHotkeyIds.clear();
+      _macroHotkeys.clear();
 
-    // Unregister all existing macro hotkeys
-    final winInput = _input as WindowsInput;
-    for (final id in _macroHotkeyIds.keys.toList()) {
-      await winInput.unregisterHotkey(id.toString());
-    }
-    _macroHotkeyIds.clear();
-    _macroHotkeys.clear();
-
-    // Register new ones
-    int nextId = _macroHotkeyBaseId;
-    for (final macro in macros) {
-      if (macro.hotkey != null && macro.hotkey!.isNotEmpty) {
-        await winInput.registerHotkey(nextId.toString(), macro.hotkey!);
-        _macroHotkeyIds[nextId] = macro.id;
-        _macroHotkeys[macro.id] = macro.hotkey!;
-        nextId++;
+      int nextId = _macroHotkeyBaseId;
+      for (final macro in macros) {
+        if (macro.hotkey != null && macro.hotkey!.isNotEmpty) {
+          await winInput.registerHotkey(nextId.toString(), macro.hotkey!);
+          _macroHotkeyIds[nextId] = macro.id;
+          _macroHotkeys[macro.id] = macro.hotkey!;
+          nextId++;
+        }
       }
     }
   }

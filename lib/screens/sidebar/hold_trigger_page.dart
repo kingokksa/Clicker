@@ -53,7 +53,7 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
     return Container(
       padding: const EdgeInsets.all(32),
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF252540).withValues(alpha:0.3) : const Color(0xFFF0F0FA).withValues(alpha:0.3),
+        color: isDark ? const Color(0xFF252540).withValues(alpha: 0.3) : const Color(0xFFF0F0FA).withValues(alpha: 0.3),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0), style: BorderStyle.solid),
       ),
@@ -67,7 +67,7 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
 
   Widget _buildKeyCard(HoldTriggerKey key, bool isDark, AppState state) {
     final accentColor = state.accentColor;
-    final cardBg = isDark ? const Color(0xFF252540).withValues(alpha:0.5) : const Color(0xFFF0F0FA).withValues(alpha:0.5);
+    final cardBg = isDark ? const Color(0xFF252540).withValues(alpha: 0.5) : const Color(0xFFF0F0FA).withValues(alpha: 0.5);
 
     String actionDesc;
     switch (key.action) {
@@ -97,9 +97,9 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
-              color: key.enabled ? accentColor.withValues(alpha:0.15) : (isDark ? const Color(0xFF303050) : const Color(0xFFE0E0F0)),
+              color: key.enabled ? accentColor.withValues(alpha: 0.15) : (isDark ? const Color(0xFF303050) : const Color(0xFFE0E0F0)),
               borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: key.enabled ? accentColor.withValues(alpha:0.4) : (isDark ? const Color(0xFF404060) : const Color(0xFFD0D0E0))),
+              border: Border.all(color: key.enabled ? accentColor.withValues(alpha: 0.4) : (isDark ? const Color(0xFF404060) : const Color(0xFFD0D0E0))),
             ),
             child: Text(
               key.triggerType == HoldTriggerType.mouse
@@ -334,9 +334,9 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
                 ...comboKeys.map((k) => Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                    color: FluentTheme.of(context).accentColor.withValues(alpha:0.1),
+                    color: FluentTheme.of(context).accentColor.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: FluentTheme.of(context).accentColor.withValues(alpha:0.3)),
+                    border: Border.all(color: FluentTheme.of(context).accentColor.withValues(alpha: 0.3)),
                   ),
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
                     Text(_displayName(k), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),

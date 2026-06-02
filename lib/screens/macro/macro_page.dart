@@ -82,13 +82,13 @@ class MacroPage extends StatelessWidget {
     final hint = isPaused ? '请保存或丢弃录制内容' : '按 ${state.hotkeyConfig.startStopRecording} 停止';
     return Container(
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(color: color.withValues(alpha:0.08), borderRadius: BorderRadius.circular(8), border: Border.all(color: color.withValues(alpha:0.3))),
+      decoration: BoxDecoration(color: color.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(8), border: Border.all(color: color.withValues(alpha: 0.3))),
       child: Row(children: [
         Icon(isPaused ? FluentIcons.pause : FluentIcons.record2, color: color, size: 16),
         const SizedBox(width: 8),
         Text(text, style: TextStyle(color: color, fontSize: 13)),
         const Spacer(),
-        Text(hint, style: TextStyle(color: color.withValues(alpha:0.7), fontSize: 12)),
+        Text(hint, style: TextStyle(color: color.withValues(alpha: 0.7), fontSize: 12)),
       ]),
     );
   }
@@ -96,7 +96,7 @@ class MacroPage extends StatelessWidget {
   Widget _buildPlayingStatus(AppState state) {
     return Container(
       padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(color: const Color(0xFF00E676).withValues(alpha:0.08), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFF00E676).withValues(alpha:0.3))),
+      decoration: BoxDecoration(color: const Color(0xFF00E676).withValues(alpha: 0.08), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFF00E676).withValues(alpha: 0.3))),
       child: Row(children: [
         const Icon(FluentIcons.play, color: Color(0xFF00E676), size: 16),
         const SizedBox(width: 8),
@@ -209,7 +209,7 @@ class MacroPage extends StatelessWidget {
           child: Container(
             width: 38, height: 38,
             decoration: BoxDecoration(
-              color: canPlay ? accent.withValues(alpha:0.15) : disabledBg,
+              color: canPlay ? accent.withValues(alpha: 0.15) : disabledBg,
               borderRadius: BorderRadius.circular(10),
             ),
             child: Icon(FluentIcons.play, size: 18, color: canPlay ? accent : disabledIcon),
@@ -246,7 +246,7 @@ class MacroPage extends StatelessWidget {
       final accent = FluentTheme.of(context).accentColor;
       return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(color: accent.withValues(alpha:0.1), borderRadius: BorderRadius.circular(4)),
+      decoration: BoxDecoration(color: accent.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(4)),
       child: Row(mainAxisSize: MainAxisSize.min, children: [Icon(icon, size: 12, color: accent), const SizedBox(width: 2), Text(count, style: TextStyle(fontSize: 11, color: accent))]),
     );
     });
@@ -401,7 +401,7 @@ class MacroPage extends StatelessWidget {
   // ─── Import / Export ──────────────────────────────────────
 
   Future<void> _importMacro(BuildContext context, AppState state) async {
-    final result = await FilePicker.pickFiles(
+    final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['json', 'ahk', 'txt'],
       dialogTitle: '导入宏',
@@ -456,7 +456,7 @@ class MacroPage extends StatelessWidget {
 
   Future<void> _exportMacroJson(MacroModel macro) async {
     final json = const JsonEncoder.withIndent('  ').convert(macro.toJson());
-    await FilePicker.saveFile(
+    await FilePicker.platform.saveFile(
       dialogTitle: '导出 JSON',
       fileName: '${macro.name}.json',
       type: FileType.custom,
@@ -467,7 +467,7 @@ class MacroPage extends StatelessWidget {
 
   Future<void> _exportMacroAhk(MacroModel macro) async {
     final ahk = _macroToAhk(macro);
-    await FilePicker.saveFile(
+    await FilePicker.platform.saveFile(
       dialogTitle: '导出 AHK',
       fileName: '${macro.name}.ahk',
       type: FileType.custom,
@@ -479,7 +479,7 @@ class MacroPage extends StatelessWidget {
   Future<void> _exportAllMacros(BuildContext context, AppState state) async {
     final list = state.macros.map((m) => m.toJson()).toList();
     final json = const JsonEncoder.withIndent('  ').convert(list);
-    await FilePicker.saveFile(
+    await FilePicker.platform.saveFile(
       dialogTitle: '导出全部宏',
       fileName: 'clicker_macros.json',
       type: FileType.custom,
@@ -655,7 +655,7 @@ Widget _chip(String label, bool selected, VoidCallback onTap, {IconData? icon}) 
         duration: const Duration(milliseconds: 150),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
-          color: selected ? accent.withValues(alpha:0.2) : unselectedBg,
+          color: selected ? accent.withValues(alpha: 0.2) : unselectedBg,
           borderRadius: BorderRadius.circular(4),
           border: Border.all(color: selected ? accent : unselectedBorder),
         ),
@@ -963,7 +963,7 @@ class _MacroEditorDialogState extends State<_MacroEditorDialog> {
           Icon(_eventIcon(event.type), size: 14, color: accent),
           const SizedBox(width: 8),
           Expanded(child: Text(_eventLabel(event), style: const TextStyle(fontSize: 12))),
-          Text('${event.timestampMs}ms', style: TextStyle(fontSize: 11, color: accent.withValues(alpha:0.7))),
+          Text('${event.timestampMs}ms', style: TextStyle(fontSize: 11, color: accent.withValues(alpha: 0.7))),
           const SizedBox(width: 8),
           // Delete button
           GestureDetector(
@@ -972,7 +972,7 @@ class _MacroEditorDialogState extends State<_MacroEditorDialog> {
               if (_editingIndex == index) _editingIndex = null;
               else if (_editingIndex != null && _editingIndex! > index) _editingIndex = _editingIndex! - 1;
             }),
-            child: Icon(FluentIcons.delete, size: 12, color: Colors.red.withValues(alpha:0.7)),
+            child: Icon(FluentIcons.delete, size: 12, color: Colors.red.withValues(alpha: 0.7)),
           ),
         ]),
       ),
@@ -988,7 +988,7 @@ class _MacroEditorDialogState extends State<_MacroEditorDialog> {
 
     return Container(
       padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(6), border: Border.all(color: accent.withValues(alpha:0.4))),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(6), border: Border.all(color: accent.withValues(alpha: 0.4))),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         // Header
         Row(children: [
@@ -1033,9 +1033,9 @@ class _MacroEditorDialogState extends State<_MacroEditorDialog> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
-                    color: selected ? accent.withValues(alpha:0.2) : Colors.transparent,
+                    color: selected ? accent.withValues(alpha: 0.2) : Colors.transparent,
                     borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: selected ? accent : accent.withValues(alpha:0.3)),
+                    border: Border.all(color: selected ? accent : accent.withValues(alpha: 0.3)),
                   ),
                   child: Text(label, style: TextStyle(fontSize: 11, color: selected ? accent : null, fontWeight: selected ? FontWeight.w600 : FontWeight.normal)),
                 ),
@@ -1207,7 +1207,7 @@ class _KeySequenceBuilderDialogState extends State<_KeySequenceBuilderDialog> {
     final accent = FluentTheme.of(context).accentColor;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-      decoration: BoxDecoration(color: accent.withValues(alpha:0.1), borderRadius: BorderRadius.circular(4), border: Border.all(color: accent.withValues(alpha:0.3))),
+      decoration: BoxDecoration(color: accent.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(4), border: Border.all(color: accent.withValues(alpha: 0.3))),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         Text(key.toUpperCase(), style: TextStyle(color: accent, fontWeight: FontWeight.w600, fontFamily: 'monospace', fontSize: 11)),
         const SizedBox(width: 3),
@@ -1281,7 +1281,7 @@ class _ComboBuilderDialogState extends State<_ComboBuilderDialog> {
                 for (int i = 0; i < _keys.length; i++) ...[
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(color: accent.withValues(alpha:0.1), borderRadius: BorderRadius.circular(6), border: Border.all(color: accent.withValues(alpha:0.3))),
+                    decoration: BoxDecoration(color: accent.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(6), border: Border.all(color: accent.withValues(alpha: 0.3))),
                     child: Row(mainAxisSize: MainAxisSize.min, children: [
                       Text(_keys[i].toUpperCase(), style: TextStyle(color: accent, fontWeight: FontWeight.w600, fontFamily: 'monospace', fontSize: 12)),
                       const SizedBox(width: 3),

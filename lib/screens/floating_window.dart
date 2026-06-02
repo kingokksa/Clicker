@@ -43,7 +43,7 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener {
     return ExcludeSemantics(
       child: Container(
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E1E36).withValues(alpha:0.95) : const Color(0xFFFAFAFF).withValues(alpha:0.95),
+        color: isDark ? const Color(0xFF1E1E36).withValues(alpha: 0.95) : const Color(0xFFFAFAFF).withValues(alpha: 0.95),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: isDark ? const Color(0xFF3A3A5A) : const Color(0xFFE0E0EE),
@@ -51,7 +51,7 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener {
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha:0.18),
+            color: Colors.black.withValues(alpha: 0.18),
             blurRadius: 20,
             offset: const Offset(0, 4),
           ),
@@ -70,7 +70,7 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener {
                 height: 32,
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 decoration: BoxDecoration(
-                  color: isDark ? const Color(0xFF252544).withValues(alpha:0.95) : const Color(0xFFF0F0FA).withValues(alpha:0.95),
+                  color: isDark ? const Color(0xFF252544).withValues(alpha: 0.95) : const Color(0xFFF0F0FA).withValues(alpha: 0.95),
                   border: Border(bottom: BorderSide(
                     color: isDark ? const Color(0xFF3A3A5A) : const Color(0xFFE0E0EE),
                     width: 0.5,
@@ -223,7 +223,7 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener {
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         decoration: BoxDecoration(
           color: active
-            ? FluentTheme.of(context).accentColor.withValues(alpha:0.15)
+            ? FluentTheme.of(context).accentColor.withValues(alpha: 0.15)
             : (isDark ? const Color(0xFF2A2A48) : const Color(0xFFF0F0FA)),
           borderRadius: BorderRadius.circular(5),
           border: Border.all(

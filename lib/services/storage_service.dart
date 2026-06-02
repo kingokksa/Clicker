@@ -249,7 +249,7 @@ class StorageService {
         themeMode: themeMode,
         alwaysOnTop: alwaysOnTop,
       );
-      final path = await FilePicker.saveFile(
+      final path = await FilePicker.platform.saveFile(
         dialogTitle: '导出配置',
         fileName: 'clicker_config.json',
         type: FileType.custom,
@@ -312,7 +312,7 @@ class StorageService {
   /// Import config from a file chosen by the user.
   Future<ImportResult> importConfigFromFile() async {
     try {
-      final result = await FilePicker.pickFiles(
+      final result = await FilePicker.platform.pickFiles(
         dialogTitle: '导入配置',
         type: FileType.custom,
         allowedExtensions: ['json'],
