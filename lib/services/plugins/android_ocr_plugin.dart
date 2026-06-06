@@ -4,16 +4,16 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import '../vision_plugin.dart';
 
-class WindowsOcrPlugin extends VisionPlugin {
+class AndroidOcrPlugin extends VisionPlugin {
   static const _channel = MethodChannel('com.clicker.pro/platform');
   bool _available = false;
   String? _unavailableReason;
 
   @override
   final VisionPluginInfo info = const VisionPluginInfo(
-    id: 'builtin_windows_ocr',
-    name: 'Windows OCR',
-    description: 'Windows 内置文字识别引擎，需安装OCR语言包',
+    id: 'builtin_android_ocr',
+    name: 'ML Kit OCR',
+    description: 'Google ML Kit 文字识别引擎，支持中英文离线识别',
     version: '1.0.0',
     author: 'Clicker',
     capabilities: [VisionCapability.ocr],
@@ -27,9 +27,9 @@ class WindowsOcrPlugin extends VisionPlugin {
 
   @override
   Future<bool> initialize() async {
-    if (!Platform.isWindows) {
+    if (!Platform.isAndroid) {
       _available = false;
-      _unavailableReason = '仅支持 Windows 平台';
+      _unavailableReason = '仅支持 Android 平台';
       return false;
     }
     try {
@@ -40,10 +40,10 @@ class WindowsOcrPlugin extends VisionPlugin {
         return true;
       }
     } on PlatformException {
-      // checkOcrAvailable not implemented, try a small OCR test
+      // checkOcrAvailable not implemented yet
     }
     try {
-      final result = await _channel.invokeMethod<Map>('ocrRegion', [0, 0, 10, 10, 'en']);
+      final result = await _channel.invokeMethod<Map>('ocrRegion', [0, 0, 10, 10, 'zh']);
       if (result != null) {
         _available = true;
         _unavailableReason = null;
@@ -52,7 +52,7 @@ class WindowsOcrPlugin extends VisionPlugin {
     } on PlatformException catch (e) {
       if (e.code == 'OCR_NOT_AVAILABLE') {
         _available = false;
-        _unavailableReason = '未安装OCR语言包，请在Windows设置中安装';
+        _unavailableReason = 'ML Kit OCR 不可用';
         return false;
       }
     }
@@ -77,12 +77,13 @@ class WindowsOcrPlugin extends VisionPlugin {
     if (!_available) {
       return VisionOcrResult(
         text: '',
-        error: _unavailableReason ?? 'Windows OCR 不可用',
+        error: _unavailableReason ?? 'ML Kit OCR 不可用',
       );
     }
 
     try {
-      final result = await _channel.invokeMethod<Map>('ocrRegion', [x, y, w, h, language]);
+      final lang = language.startsWith('zh') ? 'zh' : 'en';
+      final result = await _channel.invokeMethod<Map>('ocrRegion', [x, y, w, h, lang]);
       if (result == null) {
         return const VisionOcrResult(text: '', error: 'OCR 返回空结果');
       }
@@ -96,10 +97,10 @@ class WindowsOcrPlugin extends VisionPlugin {
     } on PlatformException catch (e) {
       if (e.code == 'OCR_NOT_AVAILABLE') {
         _available = false;
-        _unavailableReason = '未安装OCR语言包';
+        _unavailableReason = 'ML Kit OCR 不可用';
         return const VisionOcrResult(
           text: '',
-          error: 'OCR不可用，请安装Windows OCR语言包',
+          error: 'OCR不可用',
         );
       }
       return VisionOcrResult(text: '', error: 'OCR 错误: ${e.message}');

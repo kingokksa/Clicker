@@ -45,6 +45,7 @@ class ClickerPluginManifest {
   final PluginSource source;
   final List<String> platforms;
   final bool supportsCurrentPlatform;
+  final bool showInNav;
 
   const ClickerPluginManifest({
     required this.id,
@@ -57,6 +58,7 @@ class ClickerPluginManifest {
     this.source = PluginSource.builtin,
     this.platforms = const [],
     this.supportsCurrentPlatform = true,
+    this.showInNav = true,
   });
 }
 

@@ -6,7 +6,6 @@ import 'package:ffi/ffi.dart';
 import 'package:fluent_ui/fluent_ui.dart';
 import '../plugin_system.dart';
 import '../app_paths.dart';
-import '../../screens/sidebar/ai_tracker_page.dart';
 
 typedef ExecuteActionNative = Int32 Function(
   Pointer<Utf8> actionId,
@@ -45,6 +44,7 @@ class AiTrackerPlugin extends ClickerPlugin {
     category: PluginCategory.vision,
     source: PluginSource.builtin,
     platforms: ['windows', 'linux', 'android'],
+    showInNav: false,
   );
 
   bool get nativeLoaded => _nativeLoaded;
@@ -52,7 +52,7 @@ class AiTrackerPlugin extends ClickerPlugin {
   bool loadNative() {
     if (_nativeLoaded) return true;
 
-    final dllPath = _getNativeDllPath();
+    final dllPath = _getNativeDllPathSync();
     if (dllPath == null) return false;
 
     try {
@@ -98,7 +98,56 @@ class AiTrackerPlugin extends ClickerPlugin {
     }
   }
 
-  String? _getNativeDllPath() {
+  Future<bool> loadNativeAsync() async {
+    if (_nativeLoaded) return true;
+
+    final dllPath = await _getNativeDllPath();
+    if (dllPath == null) return false;
+
+    try {
+      _library = DynamicLibrary.open(dllPath);
+      try {
+        _executeAction = _library!.lookupFunction<ExecuteActionNative, ExecuteActionDart>(
+          'plugin_execute_action',
+        );
+      } catch (_) {
+        _executeAction = null;
+      }
+      try {
+        _initializeFn = _library!.lookupFunction<InitializeNative, InitializeDart>(
+          'plugin_initialize',
+        );
+      } catch (_) {
+        _initializeFn = null;
+      }
+      try {
+        _disposeFn = _library!.lookupFunction<DisposeNative, DisposeDart>(
+          'plugin_dispose',
+        );
+      } catch (_) {
+        _disposeFn = null;
+      }
+
+      if (_initializeFn != null) {
+        final initResult = _initializeFn!();
+        if (initResult != 0) {
+          debugPrint('[AiTrackerPlugin] plugin_initialize failed: $initResult');
+        }
+      }
+
+      _nativeLoaded = true;
+      return true;
+    } catch (e) {
+      _library = null;
+      _executeAction = null;
+      _initializeFn = null;
+      _disposeFn = null;
+      _nativeLoaded = false;
+      return false;
+    }
+  }
+
+  String? _getNativeDllPathSync() {
     final exePath = Platform.resolvedExecutable;
     final exeDir = File(exePath).parent.path;
     final sep = Platform.pathSeparator;
@@ -128,6 +177,74 @@ class AiTrackerPlugin extends ClickerPlugin {
         '$exeDir${sep}data${sep}plugins${sep}ai_tracker${sep}linux${sep}libai_tracker.so',
         '$exeDir${sep}lib${sep}libai_tracker.so',
         '$exeDir${sep}plugins${sep}ai_tracker${sep}linux${sep}libai_tracker.so',
+      ];
+
+      try {
+        final dataDir = Directory('$exeDir${sep}data');
+        if (dataDir.existsSync()) {
+          for (final entity in dataDir.listSync(recursive: true)) {
+            if (entity is File && entity.path.endsWith('libai_tracker.so')) {
+              return entity.path;
+            }
+          }
+        }
+      } catch (_) {}
+
+      try {
+        final libDir = Directory('$exeDir${sep}lib');
+        if (libDir.existsSync()) {
+          for (final entity in libDir.listSync(recursive: true)) {
+            if (entity is File && entity.path.endsWith('libai_tracker.so')) {
+              return entity.path;
+            }
+          }
+        }
+      } catch (_) {}
+
+      for (final path in candidates) {
+        if (File(path).existsSync()) return path;
+      }
+    } else if (Platform.isAndroid) {
+      return 'libai_tracker.so';
+    }
+
+    return null;
+  }
+
+  Future<String?> _getNativeDllPath() async {
+    final exePath = Platform.resolvedExecutable;
+    final exeDir = File(exePath).parent.path;
+    final sep = Platform.pathSeparator;
+
+    if (Platform.isWindows) {
+      final pluginDir = await AppPaths.getPluginDir('ai_tracker');
+      final candidates = [
+        '$exeDir${sep}data${sep}plugins${sep}ai_tracker${sep}windows${sep}ai_tracker.dll',
+        '$exeDir${sep}plugins${sep}ai_tracker${sep}windows${sep}ai_tracker.dll',
+        '$pluginDir${sep}windows${sep}ai_tracker.dll',
+      ];
+
+      try {
+        final dataDir = Directory('$exeDir${sep}data');
+        if (dataDir.existsSync()) {
+          for (final entity in dataDir.listSync(recursive: true)) {
+            if (entity is File && entity.path.endsWith('ai_tracker.dll')) {
+              return entity.path;
+            }
+          }
+        }
+      } catch (_) {}
+
+      for (final path in candidates) {
+        if (File(path).existsSync()) return path;
+      }
+    } else if (Platform.isLinux) {
+      final pluginDir = await AppPaths.getPluginDir('ai_tracker');
+      final candidates = [
+        '$exeDir${sep}data${sep}plugins${sep}ai_tracker${sep}linux${sep}libai_tracker.so',
+        '$exeDir${sep}lib${sep}libai_tracker.so',
+        '$exeDir${sep}plugins${sep}ai_tracker${sep}linux${sep}libai_tracker.so',
+        '$pluginDir${sep}linux${sep}libai_tracker.so',
       ];
 
       try {
@@ -220,5 +337,5 @@ class AiTrackerPlugin extends ClickerPlugin {
   }
 
   @override
-  Widget onCreatePage(BuildContext context) => const AiTrackerPage();
+  Widget onCreatePage(BuildContext context) => const SizedBox.shrink();
 }

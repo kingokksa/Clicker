@@ -68,11 +68,6 @@ if(EXISTS "${AI_TRACKER_SRC}/main.cpp")
   target_compile_options(ai_tracker PRIVATE /W2 /EHsc /utf-8)
   target_compile_definitions(ai_tracker PRIVATE "PLUGIN_EXPORTS" "UNICODE" "_UNICODE" "NOMINMAX")
   target_link_libraries(ai_tracker PRIVATE "shell32.lib")
-  install(TARGETS ai_tracker RUNTIME DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/plugins/ai_tracker/windows"
-    COMPONENT Runtime)
-  install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../plugins/ai_tracker/manifest.json"
-    DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/plugins/ai_tracker"
-    COMPONENT Runtime)
 endif()
 
 # === Installation ===
@@ -88,6 +83,15 @@ endif()
 
 set(INSTALL_BUNDLE_DATA_DIR "${CMAKE_INSTALL_PREFIX}/data")
 set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}")
+
+# === AI Tracker Plugin Install ===
+if(EXISTS "${AI_TRACKER_SRC}/main.cpp")
+  install(TARGETS ai_tracker RUNTIME DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/plugins/ai_tracker/windows"
+    COMPONENT Runtime)
+  install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../plugins/ai_tracker/manifest.json"
+    DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/plugins/ai_tracker"
+    COMPONENT Runtime)
+endif()
 
 install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)

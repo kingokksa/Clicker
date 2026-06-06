@@ -6,6 +6,7 @@ library;
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'app_paths.dart';
 import 'vision_plugin.dart';
@@ -36,7 +37,11 @@ class VisionService {
   /// Capture a screen region as raw BGRA pixel data
   Future<Uint8List?> captureScreenRect(int x, int y, int w, int h) async {
     try {
-      return await _channel.invokeMethod<Uint8List>('captureScreenRect', [x, y, w, h]);
+      final result = await _channel.invokeMethod<dynamic>('captureScreenRect', [x, y, w, h]);
+      if (result == null) return null;
+      if (result is Uint8List) return result;
+      if (result is List) return Uint8List.fromList(result.cast<int>());
+      return null;
     } on PlatformException {
       return null;
     }
@@ -57,7 +62,11 @@ class VisionService {
   /// Capture a screen region and return as template data (BGRA bytes + dimensions)
   Future<TemplateData?> captureTemplate(int x, int y, int w, int h) async {
     final pixels = await captureScreenRect(x, y, w, h);
-    if (pixels == null) return null;
+    if (pixels == null) {
+      debugPrint('[captureTemplate] captureScreenRect返回null: ($x,$y,$w,$h)');
+      return null;
+    }
+    debugPrint('[captureTemplate] 成功: ($x,$y,$w,$h) pixels=${pixels.length} expected=${w * h * 4}');
     return TemplateData(pixels: pixels, width: w, height: h);
   }
 
@@ -87,20 +96,30 @@ class VisionService {
       return _findImageDirect(regionX, regionY, regionW, regionH, template, threshold);
     }
 
-    final results = await plugin.findTemplate(
-      regionX: regionX,
-      regionY: regionY,
-      regionW: regionW,
-      regionH: regionH,
-      templatePixels: template.pixels,
-      templateWidth: template.width,
-      templateHeight: template.height,
-      threshold: threshold,
-    );
+    try {
+      final results = await plugin.findTemplate(
+        regionX: regionX,
+        regionY: regionY,
+        regionW: regionW,
+        regionH: regionH,
+        templatePixels: template.pixels,
+        templateWidth: template.width,
+        templateHeight: template.height,
+        threshold: threshold,
+      ).timeout(const Duration(seconds: 15));
 
-    if (results.isEmpty) return null;
-    final r = results.first;
-    return MatchResult(x: r.x, y: r.y, width: r.width, height: r.height, score: r.score);
+      if (results.isEmpty) return null;
+      final r = results.first;
+      debugPrint('[findImage] plugin返回: score=${r.score} threshold=$threshold x=${r.x} y=${r.y}');
+      if (r.score < threshold) {
+        debugPrint('[findImage] plugin分数${r.score}低于阈值$threshold');
+        return null;
+      }
+      return MatchResult(x: r.x, y: r.y, width: r.width, height: r.height, score: r.score);
+    } catch (e) {
+      debugPrint('[findImage] plugin异常: $e');
+      return _findImageDirect(regionX, regionY, regionW, regionH, template, threshold);
+    }
   }
 
   /// Direct platform channel fallback for template matching
@@ -109,21 +128,36 @@ class VisionService {
     TemplateData template, double threshold,
   ) async {
     try {
+      debugPrint('[findImage] 调用: region=($regionX,$regionY,$regionW,$regionH) tpl=(${template.width}x${template.height}) pixels=${template.pixels.length} threshold=$threshold');
       final tplBytes = template.pixels.toList();
       final result = await _channel.invokeMethod<List>('findImage', [
         regionX, regionY, regionW, regionH,
         tplBytes, template.width, template.height, threshold,
       ]);
-      if (result == null || result.isEmpty) return null;
+      if (result == null || result.isEmpty) {
+        debugPrint('[findImage] C++返回空');
+        return null;
+      }
       final match = result.first as Map;
+      final score = (match['score'] as num).toDouble();
+      final matched = match['matched'] as bool? ?? (score >= threshold);
+      final x = match['x'] as int;
+      final y = match['y'] as int;
+      debugPrint('[findImage] C++返回: score=$score matched=$matched x=$x y=$y threshold=$threshold');
+      if (!matched || x < 0) return null;
+      if (score < threshold) {
+        debugPrint('[findImage] 分数$score低于阈值$threshold，未匹配');
+        return null;
+      }
       return MatchResult(
-        x: match['x'] as int,
-        y: match['y'] as int,
+        x: x,
+        y: y,
         width: match['width'] as int,
         height: match['height'] as int,
-        score: (match['score'] as num).toDouble(),
+        score: score,
       );
-    } on PlatformException {
+    } on PlatformException catch (e) {
+      debugPrint('[findImage] PlatformException: $e');
       return null;
     }
   }
@@ -153,18 +187,31 @@ class VisionService {
       return _ocrDirect(x, y, w, h, language);
     }
 
-    final result = await plugin.recognizeText(
-      x: x, y: y, w: w, h: h, language: language,
-    );
+    OcrResult ocrResult;
+    try {
+      final result = await plugin.recognizeText(
+        x: x, y: y, w: w, h: h, language: language,
+      ).timeout(const Duration(seconds: 30));
 
-    return OcrResult(
-      text: result.text,
-      x: result.x,
-      y: result.y,
-      width: result.width,
-      height: result.height,
-      error: result.error,
-    );
+      // If plugin returned an error, fall back to direct OCR
+      if (result.error != null && result.error!.isNotEmpty) {
+        return _ocrDirect(x, y, w, h, language);
+      }
+
+      ocrResult = OcrResult(
+        text: result.text,
+        x: result.x,
+        y: result.y,
+        width: result.width,
+        height: result.height,
+        error: result.error,
+      );
+    } catch (e) {
+      // Plugin failed or timed out, try direct fallback
+      return _ocrDirect(x, y, w, h, language);
+    }
+
+    return ocrResult;
   }
 
   /// Direct platform channel fallback for OCR

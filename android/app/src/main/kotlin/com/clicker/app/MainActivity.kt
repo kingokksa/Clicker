@@ -31,6 +31,8 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
 
 class MainActivity : FlutterActivity() {
     private val INPUT_CHANNEL = "clicker/input"
@@ -196,10 +198,13 @@ class MainActivity : FlutterActivity() {
                 saveScreenshot(args, result)
             }
             "findImage" -> {
-                result.success(emptyList<Map<String, Any>>())
+                findImage(args, result)
             }
             "ocrRegion" -> {
-                result.error("OCR_NOT_AVAILABLE", "OCR not available on Android", null)
+                ocrRegion(args, result)
+            }
+            "checkOcrAvailable" -> {
+                result.success(mapOf("available" to true))
             }
             "getForegroundWindowTitle" -> {
                 result.success("")
@@ -543,5 +548,293 @@ class MainActivity : FlutterActivity() {
         imageReader = null
         mediaProjection?.stop()
         mediaProjection = null
+    }
+
+    @TargetApi(Build.VERSION_CODES.LOLLIPOP)
+    private fun captureRegionBitmap(x: Int, y: Int, w: Int, h: Int): Bitmap? {
+        val image = imageReader?.acquireLatestImage() ?: return null
+        try {
+            val planes = image.planes
+            val buffer: ByteBuffer = planes[0].buffer
+            val pixelStride = planes[0].pixelStride
+            val rowStride = planes[0].rowStride
+            val rowPadding = rowStride - pixelStride * screenWidth
+
+            val fullBitmap = Bitmap.createBitmap(
+                screenWidth + rowPadding / pixelStride, screenHeight,
+                Bitmap.Config.ARGB_8888
+            )
+            fullBitmap.copyPixelsFromBuffer(buffer)
+            image.close()
+
+            val cx = x.coerceAtLeast(0).coerceAtMost(screenWidth - 1)
+            val cy = y.coerceAtLeast(0).coerceAtMost(screenHeight - 1)
+            val cw = w.coerceAtMost(screenWidth - cx)
+            val ch = h.coerceAtMost(screenHeight - cy)
+            if (cw <= 0 || ch <= 0) return null
+
+            return Bitmap.createBitmap(fullBitmap, cx, cy, cw, ch)
+        } catch (e: Exception) {
+            image.close()
+            return null
+        }
+    }
+
+    @TargetApi(Build.VERSION_CODES.LOLLIPOP)
+    private fun findImage(args: Any?, result: MethodChannel.Result) {
+        if (mediaProjection == null) {
+            result.error("NO_PROJECTION", "Screen capture not initialized", null)
+            return
+        }
+
+        val argList = args as? List<Any>
+        if (argList == null || argList.size < 8) {
+            result.error("INVALID_ARGS", "Expected [regionX, regionY, regionW, regionH, tplBytes, tplW, tplH, threshold]", null)
+            return
+        }
+
+        val regionX = (argList[0] as? Number)?.toInt() ?: 0
+        val regionY = (argList[1] as? Number)?.toInt() ?: 0
+        val regionW = (argList[2] as? Number)?.toInt() ?: screenWidth
+        val regionH = (argList[3] as? Number)?.toInt() ?: screenHeight
+        val tplBytes = argList[4] as? ByteArray ?: byteArrayOf()
+        val tplW = (argList[5] as? Number)?.toInt() ?: 0
+        val tplH = (argList[6] as? Number)?.toInt() ?: 0
+        val threshold = (argList[7] as? Number)?.toDouble() ?: 0.8
+
+        if (tplW <= 0 || tplH <= 0 || tplBytes.size < tplW * tplH * 4) {
+            result.success(emptyList<Map<String, Any>>())
+            return
+        }
+
+        val regionBitmap = captureRegionBitmap(regionX, regionY, regionW, regionH)
+        if (regionBitmap == null) {
+            result.error("CAPTURE_FAILED", "Failed to capture screen region", null)
+            return
+        }
+
+        Thread {
+            try {
+                val regionPixels = IntArray(regionW * regionH)
+                regionBitmap.getPixels(regionPixels, 0, regionW, 0, 0, regionW, regionH)
+
+                val tplPixels = IntArray(tplW * tplH)
+                for (i in 0 until tplW * tplH) {
+                    val idx = i * 4
+                    val b = tplBytes[idx].toInt() and 0xFF
+                    val g = tplBytes[idx + 1].toInt() and 0xFF
+                    val r = tplBytes[idx + 2].toInt() and 0xFF
+                    tplPixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                }
+
+                var tplMeanR = 0.0
+                var tplMeanG = 0.0
+                var tplMeanB = 0.0
+                for (i in tplPixels.indices) {
+                    val px = tplPixels[i]
+                    tplMeanR += (px shr 16 and 0xFF)
+                    tplMeanG += (px shr 8 and 0xFF)
+                    tplMeanB += (px and 0xFF)
+                }
+                val tplN = tplPixels.size.toDouble()
+                tplMeanR /= tplN
+                tplMeanG /= tplN
+                tplMeanB /= tplN
+
+                var tplVarSum = 0.0
+                for (i in tplPixels.indices) {
+                    val px = tplPixels[i]
+                    val dr = (px shr 16 and 0xFF) - tplMeanR
+                    val dg = (px shr 8 and 0xFF) - tplMeanG
+                    val db = (px and 0xFF) - tplMeanB
+                    tplVarSum += dr * dr + dg * dg + db * db
+                }
+                val tplStdDev = Math.sqrt(tplVarSum / (tplN * 3))
+                if (tplStdDev < 1.0) {
+                    runOnUiThread { result.success(emptyList<Map<String, Any>>()) }
+                    return@Thread
+                }
+
+                val coarseStep = maxOf(2, minOf(tplW, tplH) / 8)
+                val searchW = regionW - tplW
+                val searchH = regionH - tplH
+
+                data class Candidate(val sx: Int, val sy: Int, val score: Double)
+
+                val candidates = mutableListOf<Candidate>()
+                for (sy in 0..searchH step coarseStep) {
+                    for (sx in 0..searchW step coarseStep) {
+                        var nccNum = 0.0
+                        var regVarSum = 0.0
+                        var regMeanR = 0.0
+                        var regMeanG = 0.0
+                        var regMeanB = 0.0
+
+                        for (ty in 0 until tplH step 2) {
+                            for (tx in 0 until tplW step 2) {
+                                val rIdx = (sy + ty) * regionW + (sx + tx)
+                                val rpx = regionPixels[rIdx]
+                                regMeanR += (rpx shr 16 and 0xFF)
+                                regMeanG += (rpx shr 8 and 0xFF)
+                                regMeanB += (rpx and 0xFF)
+                            }
+                        }
+                        val sampleN = ((tplH + 1) / 2) * ((tplW + 1) / 2).toDouble()
+                        regMeanR /= sampleN
+                        regMeanG /= sampleN
+                        regMeanB /= sampleN
+
+                        for (ty in 0 until tplH step 2) {
+                            for (tx in 0 until tplW step 2) {
+                                val rIdx = (sy + ty) * regionW + (sx + tx)
+                                val rpx = regionPixels[rIdx]
+                                val tpx = tplPixels[ty * tplW + tx]
+
+                                val rdR = (rpx shr 16 and 0xFF) - regMeanR
+                                val rdG = (rpx shr 8 and 0xFF) - regMeanG
+                                val rdB = (rpx and 0xFF) - regMeanB
+                                val tdR = (tpx shr 16 and 0xFF) - tplMeanR
+                                val tdG = (tpx shr 8 and 0xFF) - tplMeanG
+                                val tdB = (tpx and 0xFF) - tplMeanB
+                                nccNum += rdR * tdR + rdG * tdG + rdB * tdB
+                                regVarSum += rdR * rdR + rdG * rdG + rdB * rdB
+                            }
+                        }
+
+                        val regStdDev = Math.sqrt(regVarSum / (sampleN * 3))
+                        val ncc = if (regStdDev > 0.5) nccNum / (sampleN * 3 * tplStdDev * regStdDev) else 0.0
+                        val clampedNcc = ncc.coerceIn(0.0, 1.0)
+
+                        if (clampedNcc >= threshold - 0.15) {
+                            candidates.add(Candidate(sx, sy, clampedNcc))
+                        }
+                    }
+                }
+
+                candidates.sortByDescending { it.score }
+                val topCandidates = candidates.take(20)
+
+                var bestScore = -1.0
+                var bestX = -1
+                var bestY = -1
+
+                val fineRadius = coarseStep
+                for (cand in topCandidates) {
+                    for (dy in -fineRadius..fineRadius) {
+                        for (dx in -fineRadius..fineRadius) {
+                            val sx = cand.sx + dx
+                            val sy = cand.sy + dy
+                            if (sx < 0 || sy < 0 || sx > searchW || sy > searchH) continue
+
+                            var nccNum = 0.0
+                            var regVarSum = 0.0
+                            var regMeanR = 0.0
+                            var regMeanG = 0.0
+                            var regMeanB = 0.0
+
+                            for (ty in 0 until tplH) {
+                                for (tx in 0 until tplW) {
+                                    val rIdx = (sy + ty) * regionW + (sx + tx)
+                                    val rpx = regionPixels[rIdx]
+                                    regMeanR += (rpx shr 16 and 0xFF)
+                                    regMeanG += (rpx shr 8 and 0xFF)
+                                    regMeanB += (rpx and 0xFF)
+                                }
+                            }
+                            regMeanR /= tplN
+                            regMeanG /= tplN
+                            regMeanB /= tplN
+
+                            for (ty in 0 until tplH) {
+                                for (tx in 0 until tplW) {
+                                    val rIdx = (sy + ty) * regionW + (sx + tx)
+                                    val rpx = regionPixels[rIdx]
+                                    val tpx = tplPixels[ty * tplW + tx]
+
+                                    val rdR = (rpx shr 16 and 0xFF) - regMeanR
+                                    val rdG = (rpx shr 8 and 0xFF) - regMeanG
+                                    val rdB = (rpx and 0xFF) - regMeanB
+                                    val tdR = (tpx shr 16 and 0xFF) - tplMeanR
+                                    val tdG = (tpx shr 8 and 0xFF) - tplMeanG
+                                    val tdB = (tpx and 0xFF) - tplMeanB
+                                    nccNum += rdR * tdR + rdG * tdG + rdB * tdB
+                                    regVarSum += rdR * rdR + rdG * rdG + rdB * rdB
+                                }
+                            }
+
+                            val regStdDev = Math.sqrt(regVarSum / (tplN * 3))
+                            val ncc = if (regStdDev > 0.5) nccNum / (tplN * 3 * tplStdDev * regStdDev) else 0.0
+                            val clampedNcc = ncc.coerceIn(0.0, 1.0)
+
+                            if (clampedNcc >= threshold && clampedNcc > bestScore) {
+                                bestScore = clampedNcc
+                                bestX = regionX + sx
+                                bestY = regionY + sy
+                            }
+                        }
+                    }
+                }
+
+                val matches = mutableListOf<Map<String, Any>>()
+                if (bestX >= 0 && bestY >= 0) {
+                    matches.add(mapOf(
+                        "x" to bestX,
+                        "y" to bestY,
+                        "width" to tplW,
+                        "height" to tplH,
+                        "score" to bestScore
+                    ))
+                }
+
+                runOnUiThread { result.success(matches) }
+            } catch (e: Exception) {
+                runOnUiThread { result.error("FIND_FAILED", e.message, null) }
+            }
+        }.start()
+    }
+
+    @TargetApi(Build.VERSION_CODES.LOLLIPOP)
+    private fun ocrRegion(args: Any?, result: MethodChannel.Result) {
+        if (mediaProjection == null) {
+            result.error("NO_PROJECTION", "Screen capture not initialized", null)
+            return
+        }
+
+        val argList = args as? List<Any>
+        if (argList == null || argList.size < 4) {
+            result.error("INVALID_ARGS", "Expected [x, y, w, h, language?]", null)
+            return
+        }
+
+        val x = (argList[0] as? Number)?.toInt() ?: 0
+        val y = (argList[1] as? Number)?.toInt() ?: 0
+        val w = (argList[2] as? Number)?.toInt() ?: screenWidth
+        val h = (argList[3] as? Number)?.toInt() ?: screenHeight
+
+        val bitmap = captureRegionBitmap(x, y, w, h)
+        if (bitmap == null) {
+            result.error("CAPTURE_FAILED", "Failed to capture screen region for OCR", null)
+            return
+        }
+
+        val image = InputImage.fromBitmap(bitmap, 0)
+        val recognizer = com.google.mlkit.vision.text.TextRecognition.getClient(
+            ChineseTextRecognizerOptions.Builder().build()
+        )
+
+        recognizer.process(image)
+            .addOnSuccessListener { visionText ->
+                val text = visionText.text
+                result.success(mapOf(
+                    "text" to text,
+                    "x" to x,
+                    "y" to y,
+                    "width" to w,
+                    "height" to h
+                ))
+            }
+            .addOnFailureListener { e ->
+                result.error("OCR_FAILED", e.message, null)
+            }
     }
 }

@@ -2,9 +2,14 @@
 /// Plugins are loaded on demand and can be enabled/disabled without affecting others.
 library;
 
+import 'dart:io' show Platform;
+
 import 'vision_plugin.dart';
 import 'plugins/template_match_plugin.dart';
 import 'plugins/windows_ocr_plugin.dart';
+import 'plugins/paddle_ocr_plugin.dart';
+import 'plugins/android_ocr_plugin.dart';
+import 'plugins/yolo_detect_plugin.dart';
 
 class VisionPluginManager {
   final Map<String, VisionPlugin> _plugins = {};
@@ -25,10 +30,20 @@ class VisionPluginManager {
   }
 
   /// Get the first available plugin with a specific capability
+  /// Non-builtin plugins (e.g. PaddleOCR) are preferred over builtin ones
   VisionPlugin? getPluginForCapability(VisionCapability cap) {
-    return _plugins.values
-        .where((p) => p.info.capabilities.contains(cap) && p.enabled && p.isAvailable)
-        .firstOrNull;
+    VisionPlugin? builtin;
+    VisionPlugin? external;
+    for (final p in _plugins.values) {
+      if (p.info.capabilities.contains(cap) && p.enabled && p.isAvailable) {
+        if (p.info.isBuiltin) {
+          builtin ??= p;
+        } else {
+          external ??= p;
+        }
+      }
+    }
+    return external ?? builtin;
   }
 
   bool _builtinRegistered = false;
@@ -58,6 +73,11 @@ class VisionPluginManager {
     final ok = await plugin.initialize();
     _initialized[id] = ok;
     return ok;
+  }
+
+  /// Reset initialization cache for a plugin so it can be re-initialized
+  void resetInitialized(String id) {
+    _initialized.remove(id);
   }
 
   /// Initialize all registered plugins
@@ -102,6 +122,15 @@ class VisionPluginManager {
     if (mgr._builtinRegistered) return;
     mgr._builtinRegistered = true;
     await mgr.registerPlugin(TemplateMatchPlugin());
-    await mgr.registerPlugin(WindowsOcrPlugin());
+    if (Platform.isWindows) {
+      await mgr.registerPlugin(WindowsOcrPlugin());
+      // await mgr.registerPlugin(PaddleOcrPlugin()); // 暂时禁用，PaddlePaddle 3.x 与 PaddleOCR 不兼容
+    }
+    if (Platform.isWindows || Platform.isLinux) {
+      await mgr.registerPlugin(YoloDetectPlugin());
+    }
+    if (Platform.isAndroid) {
+      await mgr.registerPlugin(AndroidOcrPlugin());
+    }
   }
 }

@@ -43,8 +43,11 @@ class ScreenMonitorService {
   /// Capture a screen rectangle as raw BGRA pixel data
   Future<Uint8List?> captureScreenRect(int x, int y, int w, int h) async {
     try {
-      final result = await _channel.invokeMethod<Uint8List>('captureScreenRect', [x, y, w, h]);
-      return result;
+      final result = await _channel.invokeMethod<dynamic>('captureScreenRect', [x, y, w, h]);
+      if (result == null) return null;
+      if (result is Uint8List) return result;
+      if (result is List) return Uint8List.fromList(result.cast<int>());
+      return null;
     } on PlatformException {
       return null;
     }

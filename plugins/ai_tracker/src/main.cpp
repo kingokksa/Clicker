@@ -241,33 +241,61 @@ static bool loadOnnxRuntime() {
         search_paths.push_back(std::string(base) + "\\Clicker\\data\\plugins\\ai_tracker\\onnxruntime.dll");
     }
 
-    g_tracker.ort_lib = LoadLibraryA("onnxruntime.dll");
-    if (g_tracker.ort_lib) {
-        dbgLog("ONNX Runtime found via system path");
-    }
-    if (!g_tracker.ort_lib) {
-        for (const auto& path : search_paths) {
-            g_tracker.ort_lib = LoadLibraryA(path.c_str());
-            if (g_tracker.ort_lib) {
-                dbgLog("ONNX Runtime found at: %s", path.c_str());
-                break;
-            }
-        }
-    }
-    if (!g_tracker.ort_lib) {
-        dbgLog("ONNX Runtime NOT found in any path");
-        return false;
+    // Helper lambda: try to get ORT API from a loaded DLL
+    auto tryGetOrtApi = [](HMODULE lib) -> const OrtApi* {
+        if (!lib) return nullptr;
+        typedef const OrtApiBase* (ORT_API_CALL *OrtGetApiBaseFn)(void);
+        auto get_api_base = (OrtGetApiBaseFn)GetProcAddress(lib, "OrtGetApiBase");
+        if (!get_api_base) return nullptr;
+        const OrtApiBase* api_base = get_api_base();
+        if (!api_base) return nullptr;
+        return api_base->GetApi(ORT_API_VERSION);
+    };
+
+    // Build a list of DLL paths to try (full paths first, then system search)
+    std::vector<std::pair<std::string, bool>> dll_candidates; // (path, is_full_path)
+
+    // Full paths first — these are preferred because they avoid loading wrong versions
+    for (const auto& path : search_paths) {
+        dll_candidates.push_back({path, true});
     }
 
-    typedef const OrtApiBase* (ORT_API_CALL *OrtGetApiBaseFn)(void);
-    auto get_api_base = (OrtGetApiBaseFn)GetProcAddress(g_tracker.ort_lib, "OrtGetApiBase");
+    // System path search as last resort
+    dll_candidates.push_back({"onnxruntime.dll", false});
+
+    for (auto& [path, is_full_path] : dll_candidates) {
+        if (is_full_path) {
+            dbgLog("Trying: %s", path.c_str());
+        } else {
+            dbgLog("Trying system path search");
+        }
+
+        HMODULE lib = LoadLibraryA(path.c_str());
+        if (!lib) continue;
+
+        const OrtApi* ort_api = tryGetOrtApi(lib);
+        if (ort_api) {
+            dbgLog("ONNX Runtime found at: %s (API v%d OK)", path.c_str(), ORT_API_VERSION);
+            g_tracker.ort_lib = lib;
+            g_tracker.ort = ort_api;
+            g_tracker.available = true;
+            return true;
+        }
+
+        // DLL loaded but API version mismatch — free it and try next
+        dbgLog("ONNX Runtime at '%s' has wrong API version (need v%d), skipping", path.c_str(), ORT_API_VERSION);
+        FreeLibrary(lib);
+    }
+
+    dbgLog("ONNX Runtime NOT found with compatible API v%d (searched %d paths)", ORT_API_VERSION, (int)dll_candidates.size());
+    return false;
 #else
+    // Linux: try dlopen
     g_tracker.ort_lib = dlopen("libonnxruntime.so", RTLD_NOW);
     if (!g_tracker.ort_lib) return false;
 
     typedef const OrtApiBase* (*OrtGetApiBaseFn)(void);
     auto get_api_base = (OrtGetApiBaseFn)dlsym(g_tracker.ort_lib, "OrtGetApiBase");
-#endif
     if (!get_api_base) return false;
 
     const OrtApiBase* api_base = get_api_base();
@@ -279,6 +307,7 @@ static bool loadOnnxRuntime() {
     g_tracker.ort = ort_api;
     g_tracker.available = true;
     return true;
+#endif
 }
 
 /* ─── YOLO Preprocessing ───────────────────────────────── */
@@ -416,9 +445,9 @@ PLUGIN_EXPORT const PluginInfo* PLUGIN_CALL plugin_get_info(void) {
 }
 
 PLUGIN_EXPORT int32_t PLUGIN_CALL plugin_initialize(void) {
+    dbgLog("plugin_initialize called, initialized=%d, available=%d, ort_lib=%p",
+           g_tracker.initialized, g_tracker.available, (void*)g_tracker.ort_lib);
     if (g_tracker.initialized) return 0;
-
-    dbgLog("plugin_initialize called");
 
     if (!loadOnnxRuntime()) {
         g_tracker.available = false;
@@ -642,6 +671,11 @@ PLUGIN_EXPORT int32_t PLUGIN_CALL plugin_execute_action(
             return 1;
         }
 
+        // Log first few pixel values for debugging
+        dbgLog("detect_objects: first pixels BGRA=[%d,%d,%d,%d] region=%dx%d ptr=0x%s",
+            pixel_data[0], pixel_data[1], pixel_data[2], pixel_data[3],
+            region_w, region_h, ptr_str.c_str());
+
         preprocessBgra(pixel_data, region_w, region_h,
                        g_tracker.input_buffer.data(),
                        g_tracker.input_width, g_tracker.input_height);
@@ -795,6 +829,8 @@ PLUGIN_EXPORT int32_t PLUGIN_CALL plugin_execute_action(
             json << "{\"initialized\":" << (g_tracker.initialized ? "true" : "false")
                  << ",\"available\":" << (g_tracker.available ? "true" : "false")
                  << ",\"model_loaded\":" << (g_tracker.model_loaded ? "true" : "false")
+                 << ",\"ort_lib\":" << (g_tracker.ort_lib ? "true" : "false")
+                 << ",\"ort_api\":" << (g_tracker.ort ? "true" : "false")
                  << "}";
             std::string result = json.str();
             strncpy(out_buf, result.c_str(), out_size - 1);

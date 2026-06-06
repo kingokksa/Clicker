@@ -25,6 +25,11 @@ import '../services/system_tray_service.dart';
 import 'package:window_manager/window_manager.dart';
 
 class AppState extends ChangeNotifier {
+  // Emergency stop signal
+  static final StreamController<void> _emergencyStopController = StreamController<void>.broadcast();
+  static Stream<void> get onEmergencyStopSignal => _emergencyStopController.stream;
+  static void broadcastEmergencyStop() { _emergencyStopController.add(null); }
+
   // Services
   late final StorageService _storage;
   late final PlatformInput _platformInput;
@@ -243,6 +248,7 @@ class AppState extends ChangeNotifier {
         _clickService.stop();
         _macroService.stopPlayback();
         _macroService.cancelRecording();
+        broadcastEmergencyStop();
         notifyListeners();
       };
       _hotkeyService.onPlayMacro = () {

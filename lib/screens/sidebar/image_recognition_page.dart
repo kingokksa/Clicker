@@ -3,9 +3,7 @@ library;
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ffi';
 import 'dart:io';
-import 'package:ffi/ffi.dart';
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -20,9 +18,6 @@ import '../../services/vision_plugin.dart';
 import '../../services/vision_plugin_manager.dart';
 import '../../services/platform/windows_input.dart';
 import '../../services/app_paths.dart';
-import '../../services/plugin_registry.dart';
-import '../../services/plugin_system.dart';
-import '../../services/plugins/ai_tracker_plugin.dart';
 import '../../services/screen_overlay_service.dart';
 
 class ImageRecognitionPage extends StatefulWidget {
@@ -37,10 +32,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
   final ScreenMonitorService _monitor = ScreenMonitorService();
   final VisionService _vision = VisionService();
 
-  // Region monitor entries
-  final List<_RegionEntry> _regions = [];
   int _checkIntervalMs = 500;
-  double _sensitivity = 0.5;
 
   // OCR state (used by trigger textMatch)
   String _ocrLanguage = 'zh-Hans-CN';
@@ -50,21 +42,36 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
   bool _pythonInstalled = false;
   bool _checkingTools = true;
   bool _installingTool = false;
+  // bool _paddleOcrInstalled = false;  // PaddleOCR 暂时禁用
+  // bool _checkingPaddleOcr = true;
+  // bool _installingPaddleOcr = false;
   bool _initialized = false;
 
   // Conditional triggers
   final List<_TriggerEntry> _triggers = [];
   Timer? _triggerCheckTimer;
   final Map<String, DateTime> _triggerLastFired = {};
+  final Map<String, VisionMatchResult> _lastDetectionResults = {};
+  String? _highlightedTriggerId;
+  final Map<String, String> _triggerStatus = {}; // trigger id -> last check status text
+  final Map<String, DateTime> _triggerLastCheck = {}; // trigger id -> last check time
 
   static const _platformChannel = MethodChannel('com.clicker.pro/platform');
+
+  StreamSubscription? _emergencyStopSub;
 
   @override
   void initState() {
     super.initState();
-    _monitor.onLogEntry = (_) { if (mounted) setState(() {}); };
-    _monitor.onMonitoringChanged = (_) { if (mounted) setState(() {}); };
-
+    _emergencyStopSub = AppState.onEmergencyStopSignal.listen((_) {
+      if (_triggerRunning && mounted) {
+        setState(() {
+          _triggerRunning = false;
+          _stopTriggerChecker();
+        });
+        debugPrint('[条件触发] 紧急停止');
+      }
+    });
     Future.delayed(const Duration(milliseconds: 100), () {
       if (mounted) _initAndLoad();
     });
@@ -78,51 +85,88 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
 
   Future<void> _initPlugins() async {
     await VisionPluginManager.registerBuiltinPlugins();
+    // Deploy native plugin DLL before initializing (needed for YOLO)
+    await _deployNativePluginIfNeeded();
     await _vision.pluginManager.initializeAll();
     if (mounted) setState(() {});
   }
 
+  Future<void> _deployNativePluginIfNeeded() async {
+    if (!Platform.isWindows && !Platform.isLinux) return;
+    final dir = await AppPaths.getPluginDir('ai_tracker');
+    final sep = Platform.pathSeparator;
+
+    String platformDir;
+    String libName;
+    String libExt;
+    if (Platform.isWindows) {
+      platformDir = 'windows';
+      libExt = '.dll';
+      libName = 'ai_tracker';
+    } else if (Platform.isLinux) {
+      platformDir = 'linux';
+      libExt = '.so';
+      libName = 'libai_tracker';
+    } else {
+      return;
+    }
+
+    final targetDir = Directory('$dir$sep$platformDir');
+    if (!await targetDir.exists()) await targetDir.create(recursive: true);
+
+    final libDest = File('$dir$sep$platformDir$sep$libName$libExt');
+    final manifestDest = File('$dir$sep${'manifest.json'}');
+
+    final exePath = Platform.resolvedExecutable;
+    final exeDir = File(exePath).parent.path;
+
+    final libSources = [
+      '$exeDir$sep${'plugins'}$sep${'ai_tracker'}$sep$platformDir$sep$libName$libExt',
+      '$exeDir$sep${'data'}$sep${'plugins'}$sep${'ai_tracker'}$sep$platformDir$sep$libName$libExt',
+      '$dir$sep$platformDir$sep$libName$libExt',
+    ];
+
+    final manifestSources = [
+      '$exeDir$sep${'plugins'}$sep${'ai_tracker'}$sep${'manifest.json'}',
+      '$exeDir$sep${'data'}$sep${'plugins'}$sep${'ai_tracker'}$sep${'manifest.json'}',
+      '$dir$sep${'manifest.json'}',
+    ];
+
+    bool libOk = await libDest.exists();
+    bool manifestOk = await manifestDest.exists();
+
+    if (!libOk) {
+      for (final src in libSources) {
+        final srcFile = File(src);
+        if (await srcFile.exists()) {
+          try {
+            await srcFile.copy(libDest.path);
+            libOk = true;
+            break;
+          } catch (_) {}
+        }
+      }
+    }
+
+    if (!manifestOk) {
+      for (final src in manifestSources) {
+        final srcFile = File(src);
+        if (await srcFile.exists()) {
+          try {
+            await srcFile.copy(manifestDest.path);
+            manifestOk = true;
+            break;
+          } catch (_) {}
+        }
+      }
+    }
+  }
+
   // ─── Persistence ──────────────────────────────────────────
-  static const _kRegionsKey = 'img_rec_regions';
   static const _kTriggersKey = 'img_rec_triggers';
 
   Future<void> _loadPersistedData() async {
     final prefs = await SharedPreferences.getInstance();
-
-    // Load regions
-    final regionsJson = prefs.getString(_kRegionsKey);
-    if (regionsJson != null) {
-      try {
-        final list = jsonDecode(regionsJson) as List;
-        for (final m in list) {
-          final entry = _RegionEntry(
-            id: m['id'] ?? '',
-            name: m['name'] ?? '监控区域',
-            threshold: (m['threshold'] as num?)?.toDouble() ?? 0.85,
-            enabled: m['enabled'] ?? true,
-            x: m['x'] ?? 0, y: m['y'] ?? 0,
-            w: m['w'] ?? 100, h: m['h'] ?? 100,
-          );
-          _regions.add(entry);
-          _monitor.addRegion(MonitorRegion(
-            id: entry.id, name: entry.name,
-            x: entry.x, y: entry.y, w: entry.w, h: entry.h,
-            enabled: entry.enabled,
-            onDetected: () { if (mounted) setState(() {}); },
-            onChanged: () {
-              final t = _regions.where((t) => t.id == entry.id).firstOrNull;
-              if (t != null) {
-                final region = _monitor.regions.where((r) => r.id == entry.id).firstOrNull;
-                if (region != null && region.lastCenterColor != null) {
-                  t.lastColor = region.lastCenterColor;
-                }
-              }
-              if (mounted) setState(() {});
-            },
-          ));
-        }
-      } catch (_) {}
-    }
 
     // Load triggers
     final triggersJson = prefs.getString(_kTriggersKey);
@@ -143,6 +187,8 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
             targetText: m['targetText'] ?? '',
             textMatchMode: _TextMatchMode.values.firstWhere(
               (e) => e.name == m['textMatchMode'], orElse: () => _TextMatchMode.fuzzy),
+            targetObjectClass: m['targetObjectClass'] ?? '',
+            detectConfidence: (m['detectConfidence'] as num?)?.toDouble() ?? 0.5,
             actionX: m['actionX'] ?? 0, actionY: m['actionY'] ?? 0,
             actionKey: m['actionKey'] ?? '',
             macroId: m['macroId'] ?? '',
@@ -165,7 +211,8 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
 
     if (mounted) setState(() {});
     // checkOcrTools now runs on a background thread in C++, so it won't block the UI.
-    if (mounted) _checkOcrTools();
+    if (mounted && Platform.isWindows) _checkOcrTools();
+    // if (mounted && Platform.isWindows) _checkPaddleOcr();  // PaddleOCR 暂时禁用
   }
 
   Future<void> _checkOcrTools() async {
@@ -184,14 +231,45 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     }
   }
 
-  Future<void> _saveRegions() async {
-    final prefs = await SharedPreferences.getInstance();
-    final list = _regions.map((r) => {
-      'id': r.id, 'name': r.name, 'threshold': r.threshold,
-      'enabled': r.enabled, 'x': r.x, 'y': r.y, 'w': r.w, 'h': r.h,
-    }).toList();
-    await prefs.setString(_kRegionsKey, jsonEncode(list));
-  }
+  // PaddleOCR 暂时禁用
+  // Future<void> _checkPaddleOcr() async {
+  //   setState(() => _checkingPaddleOcr = true);
+  //   try {
+  //     final results = await _platformChannel.invokeMethod<Map>('checkPaddleOcr');
+  //     if (results != null && mounted) {
+  //       setState(() {
+  //         _paddleOcrInstalled = results['available'] == true;
+  //         _checkingPaddleOcr = false;
+  //       });
+  //     }
+  //   } on PlatformException {
+  //     if (mounted) setState(() => _checkingPaddleOcr = false);
+  //   }
+  // }
+
+  // Future<void> _installPaddleOcr() async {
+  //   setState(() => _installingPaddleOcr = true);
+  //   try {
+  //     await _platformChannel.invokeMethod<bool>('installPaddleOcr');
+  //     await _checkPaddleOcr();
+  //     final paddlePlugin = _vision.pluginManager.getPlugin('plugin_paddle_ocr');
+  //     if (paddlePlugin != null) {
+  //       await _vision.pluginManager.ensureInitialized('plugin_paddle_ocr');
+  //     }
+  //   } on PlatformException {
+  //     // Installation failed
+  //   }
+  //   if (mounted) setState(() => _installingPaddleOcr = false);
+  // }
+
+  // Future<void> _uninstallPaddleOcr() async {
+  //   try {
+  //     await _platformChannel.invokeMethod<bool>('uninstallPaddleOcr');
+  //     await _checkPaddleOcr();
+  //   } on PlatformException {
+  //     // ignore
+  //   }
+  // }
 
   Future<void> _saveTriggers() async {
     final prefs = await SharedPreferences.getInstance();
@@ -204,6 +282,8 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
       'matchThreshold': t.matchThreshold,
       'targetText': t.targetText,
       'textMatchMode': t.textMatchMode.name,
+      'targetObjectClass': t.targetObjectClass,
+      'detectConfidence': t.detectConfidence,
       'actionX': t.actionX, 'actionY': t.actionY,
       'actionKey': t.actionKey, 'macroId': t.macroId, 'intervalMs': t.intervalMs,
       if (t.templateData != null) 'templateData': {
@@ -223,15 +303,16 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     final enabledTriggers = _triggers.where((t) => t.enabled).toList();
     if (enabledTriggers.isEmpty) return;
 
-    // Determine interval: at least 500ms, use trigger intervals as guide
-    int minInterval = 500;
-    // For expensive triggers (OCR/template), enforce at least 2s interval
+    // Use user-configured interval, but enforce minimum based on trigger types
+    int interval = _checkIntervalMs;
     final hasExpensiveTriggers = enabledTriggers.any((t) =>
       t.conditionType == _TriggerConditionType.imageMatch ||
-      t.conditionType == _TriggerConditionType.textMatch);
-    if (hasExpensiveTriggers && minInterval < 2000) minInterval = 2000;
+      t.conditionType == _TriggerConditionType.textMatch ||
+      t.conditionType == _TriggerConditionType.objectDetect);
+    if (hasExpensiveTriggers && interval < 1000) interval = 1000;
 
-    _triggerCheckTimer = Timer.periodic(Duration(milliseconds: minInterval), (_) => _checkTriggers());
+    debugPrint('[条件触发] 启动检测: interval=${interval}ms, triggers=${enabledTriggers.length}');
+    _triggerCheckTimer = Timer.periodic(Duration(milliseconds: interval), (_) => _checkTriggers());
   }
 
   void _stopTriggerChecker() {
@@ -239,10 +320,14 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     _triggerCheckTimer = null;
   }
 
+  bool _checkingTriggers = false;
+
   Future<void> _checkTriggers() async {
-    if (!_triggerRunning) return;
+    if (!_triggerRunning || _checkingTriggers) return;
+    _checkingTriggers = true;
+    try {
     final now = DateTime.now();
-    for (final trigger in _triggers) {
+    for (final trigger in List.of(_triggers)) {
       if (!trigger.enabled) continue;
 
       // Debounce: don't fire more often than the trigger's interval
@@ -250,6 +335,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
       if (lastFired != null && now.difference(lastFired).inMilliseconds < trigger.intervalMs) continue;
 
       bool conditionMet = false;
+      String statusText = '';
       try {
         switch (trigger.conditionType) {
           case _TriggerConditionType.colorMatch:
@@ -302,12 +388,23 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
             break;
           case _TriggerConditionType.imageMatch:
             if (trigger.templateData != null) {
+              debugPrint('[图像匹配] 开始: region=(${trigger.x},${trigger.y},${trigger.w},${trigger.h}) tpl=(${trigger.templateData!.width}x${trigger.templateData!.height}) pixels=${trigger.templateData!.pixels.length} threshold=${trigger.matchThreshold}');
               final result = await _vision.findImage(
                 regionX: trigger.x, regionY: trigger.y, regionW: trigger.w, regionH: trigger.h,
                 template: trigger.templateData!,
                 threshold: trigger.matchThreshold,
               );
               conditionMet = result != null;
+              statusText = conditionMet ? '匹配成功 score=${result!.score.toStringAsFixed(2)}' : '未找到匹配';
+              debugPrint('[图像匹配] 结果: $statusText');
+
+              if (conditionMet && result != null) {
+                _lastDetectionResults[trigger.id] = VisionMatchResult(
+                  x: result.x, y: result.y, width: result.width, height: result.height, score: result.score,
+                );
+              }
+            } else {
+              debugPrint('[图像匹配] templateData为null');
             }
             break;
           case _TriggerConditionType.textMatch:
@@ -316,20 +413,63 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
                 x: trigger.x, y: trigger.y, w: trigger.w, h: trigger.h,
                 language: _ocrLanguage,
               );
-              if (ocrResult != null && ocrResult.hasText) {
+              if (ocrResult == null) {
+                statusText = 'OCR不可用(返回null)';
+              } else if (ocrResult.hasError && !ocrResult.hasText) {
+                statusText = 'OCR错误: ${ocrResult.error}';
+              } else if (!ocrResult.hasText) {
+                statusText = '未识别到文字';
+              } else {
                 conditionMet = _matchText(ocrResult.text, trigger.targetText, trigger.textMatchMode);
+                statusText = conditionMet ? '匹配成功: "${ocrResult.text}"' : '不匹配: 识别到"${ocrResult.text}"';
+                if (conditionMet) {
+                  _lastDetectionResults[trigger.id] = VisionMatchResult(
+                    x: ocrResult.x, y: ocrResult.y, width: ocrResult.width, height: ocrResult.height, score: 1.0,
+                  );
+                }
+              }
+            } else {
+              statusText = '未设置目标文字';
+            }
+            break;
+          case _TriggerConditionType.objectDetect:
+            final pluginManager = VisionPluginManager.instance;
+            final detector = pluginManager.getPluginForCapability(VisionCapability.objectDetect);
+            if (detector == null) {
+              statusText = '无检测插件(需安装ONNX Runtime+模型)';
+            } else if (!detector.isAvailable) {
+              statusText = '检测插件不可用: ${detector.info.name}';
+            } else {
+              await pluginManager.ensureInitialized(detector.info.id);
+              final detections = await detector.detectObjects(
+                regionX: trigger.x, regionY: trigger.y, regionW: trigger.w, regionH: trigger.h,
+                targetLabel: trigger.targetObjectClass.isNotEmpty ? trigger.targetObjectClass : null,
+                confidence: trigger.detectConfidence,
+              );
+              conditionMet = detections.isNotEmpty;
+              statusText = conditionMet ? '检测到${detections.length}个目标' : '未检测到目标';
+              if (conditionMet && detections.isNotEmpty) {
+                _lastDetectionResults[trigger.id] = detections.first;
               }
             }
             break;
         }
-      } catch (_) {
-        continue;
+      } catch (e) {
+        statusText = '异常: $e';
+        debugPrint('[条件触发] 检测异常 trigger=${trigger.name} type=${trigger.conditionType.name}: $e');
       }
+
+      _triggerStatus[trigger.id] = statusText;
+      _triggerLastCheck[trigger.id] = now;
 
       if (conditionMet) {
         _triggerLastFired[trigger.id] = now;
         await _executeTriggerAction(trigger);
       }
+    }
+    if (mounted) setState(() {});
+    } finally {
+      _checkingTriggers = false;
     }
   }
 
@@ -340,6 +480,17 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     final dg = ((a.g - b.g) * 255).round().abs();
     final db = ((a.b - b.b) * 255).round().abs();
     return (dr + dg + db) / 3.0;
+  }
+
+  void _highlightTriggerRegion(_TriggerEntry t) {
+    // 仅更新UI状态，不使用overlay（overlay会拦截鼠标事件导致无法操作）
+    setState(() => _highlightedTriggerId = t.id);
+  }
+
+  void _clearHighlight() {
+    if (_highlightedTriggerId != null) {
+      setState(() => _highlightedTriggerId = null);
+    }
   }
 
   /// Normalize text for fuzzy matching: remove spaces, punctuation, and convert to lowercase
@@ -377,6 +528,14 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     switch (trigger.actionType) {
       case _TriggerActionType.click:
         await _platformChannel.invokeMethod('sendClick', [trigger.actionX, trigger.actionY, 0]);
+        break;
+      case _TriggerActionType.clickTargetCenter:
+        final det = _lastDetectionResults[trigger.id];
+        if (det != null) {
+          final cx = trigger.x + det.centerX;
+          final cy = trigger.y + det.centerY;
+          await _platformChannel.invokeMethod('sendClick', [cx, cy, 0]);
+        }
         break;
       case _TriggerActionType.keyPress:
         if (trigger.actionKey.isNotEmpty) {
@@ -424,6 +583,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
 
   @override
   void dispose() {
+    _emergencyStopSub?.cancel();
     _stopTriggerChecker();
     ScreenOverlayService.instance.stopOverlay();
     _monitor.dispose();
@@ -480,17 +640,14 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
 
         // Tab selector
         Row(children: [
-          _tabChip('区域监控', _selectedTab == 0, () => setState(() => _selectedTab = 0)),
+          _tabChip('条件触发', _selectedTab == 0, () => setState(() => _selectedTab = 0)),
           const SizedBox(width: 6),
-          _tabChip('条件触发', _selectedTab == 1, () => setState(() => _selectedTab = 1)),
-          const SizedBox(width: 6),
-          _tabChip('AI检测', _selectedTab == 2, () => setState(() => _selectedTab = 2)),
+          _tabChip('高级模型', _selectedTab == 1, () => setState(() => _selectedTab = 1)),
         ]),
         const SizedBox(height: 16),
 
-        if (_selectedTab == 0) ..._buildRegionMonitor(isDark, state),
-        if (_selectedTab == 1) ..._buildTriggers(isDark, state),
-        if (_selectedTab == 2) _AiTrackerTab(onAreaSelect: _startAreaSelect),
+        if (_selectedTab == 0) ..._buildTriggers(isDark, state),
+        if (_selectedTab == 1) const _AdvancedModelsTab(),
       ],
     );
   }
@@ -519,11 +676,11 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     );
   }
 
-  // ─── Region Monitor ────────────────────────────────────────
+  // ─── Conditional Triggers ──────────────────────────────────
 
-  List<Widget> _buildRegionMonitor(bool isDark, AppState state) {
+  List<Widget> _buildTriggers(bool isDark, AppState state) {
     final cardBg = isDark ? const Color(0xFF252540).withValues(alpha: 0.5) : const Color(0xFFF0F0FA).withValues(alpha: 0.5);
-    final logs = _monitor.logs.reversed.take(30).toList();
+    final ocrPlugins = _vision.getPluginsFor(VisionCapability.ocr);
     return [
       Container(
         padding: const EdgeInsets.all(14),
@@ -534,402 +691,369 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
-            Icon(FluentIcons.devices2, size: 16, color: state.accentColor),
+            Icon(FluentIcons.process_meta_task, size: 16, color: state.accentColor),
             const SizedBox(width: 8),
-            const Text('屏幕区域监控', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+            const Text('条件触发监控', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
             const Spacer(),
-            FilledButton(
-              onPressed: _monitor.isMonitoring ? _monitor.stopMonitoring : _monitor.startMonitoring,
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(_monitor.isMonitoring ? FluentIcons.stop : FluentIcons.play, size: 12),
-                const SizedBox(width: 4),
-                Text(_monitor.isMonitoring ? '停止' : '开始'),
-              ]),
-            ),
+            if (_triggerRunning)
+              FilledButton(
+                style: ButtonStyle(backgroundColor: WidgetStateProperty.all(Colors.red)),
+                onPressed: () { setState(() { _triggerRunning = false; _stopTriggerChecker(); }); },
+                child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(FluentIcons.stop, size: 12),
+                  SizedBox(width: 4),
+                  Text('停止'),
+                ]),
+              )
+            else
+              FilledButton(
+                onPressed: _triggers.isEmpty ? null : () {
+                  setState(() { _triggerRunning = true; });
+                  _startTriggerChecker();
+                },
+                child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(FluentIcons.play, size: 12),
+                  SizedBox(width: 4),
+                  Text('启动'),
+                ]),
+              ),
+            if (_triggerRunning) ...[
+              const SizedBox(width: 8),
+              Container(width: 8, height: 8, decoration: BoxDecoration(color: const Color(0xFF00E676), borderRadius: BorderRadius.circular(4))),
+              const SizedBox(width: 4),
+              Text('检测中', style: TextStyle(fontSize: 11, color: const Color(0xFF00E676))),
+            ],
           ]),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           Row(children: [
-            const Text('频率: ', style: TextStyle(fontSize: 13)),
+            Icon(FluentIcons.speed_high, size: 12, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A)),
+            const SizedBox(width: 4),
+            const Text('间隔:', style: TextStyle(fontSize: 12)),
+            const SizedBox(width: 4),
             ComboBox<String>(
               items: ['100ms', '200ms', '500ms', '1000ms', '2000ms'].map((l) => ComboBoxItem(value: l, child: Text(l))).toList(),
               value: ['100ms', '200ms', '500ms', '1000ms', '2000ms'].contains('${_checkIntervalMs}ms') ? '${_checkIntervalMs}ms' : '500ms',
               onChanged: (v) {
                 if (v != null) {
-                  final ms = int.parse(v.replaceAll('ms', ''));
-                  setState(() => _checkIntervalMs = ms);
-                  _monitor.setCheckInterval(ms);
+                  setState(() => _checkIntervalMs = int.parse(v.replaceAll('ms', '')));
+                  if (_triggerRunning) _startTriggerChecker();
                 }
               },
             ),
-            const SizedBox(width: 16),
-            const Text('灵敏度: ', style: TextStyle(fontSize: 13)),
-            SizedBox(width: 120, child: Slider(value: _sensitivity, min: 0.1, max: 1.0, divisions: 9, onChanged: (v) {
-              setState(() => _sensitivity = v);
-              _monitor.setSensitivity(v);
-            })),
-            Text('${(_sensitivity * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+            const Spacer(),
+            ...ocrPlugins.map((p) => Padding(
+              padding: const EdgeInsets.only(left: 4),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: p.isAvailable ? const Color(0xFF00E676).withValues(alpha: 0.12) : Colors.grey.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: p.isAvailable ? const Color(0xFF00E676).withValues(alpha: 0.3) : Colors.grey.withValues(alpha: 0.3)),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(p.info.isBuiltin ? FluentIcons.puzzle : FluentIcons.download, size: 10,
+                    color: p.isAvailable ? const Color(0xFF00E676) : Colors.grey),
+                  const SizedBox(width: 3),
+                  Text(p.info.name, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600,
+                    color: p.isAvailable ? const Color(0xFF00E676) : Colors.grey)),
+                ]),
+              ),
+            )),
           ]),
+          // PaddleOCR 暂时禁用
+          // if (Platform.isWindows && !_paddleOcrInstalled && !_checkingPaddleOcr) ...[
+          //   const SizedBox(height: 8),
+          //   Row(children: [
+          //     const Icon(FluentIcons.info, size: 12, color: Color(0xFFFF9800)),
+          //     const SizedBox(width: 4),
+          //     Expanded(child: Text('安装 PaddleOCR 可提升中文识别精度，在「高级模型」中安装', style: const TextStyle(fontSize: 11, color: Color(0xFFFF9800)))),
+          //   ]),
+          // ] else if (Platform.isWindows && _paddleOcrInstalled) ...[
+          //   const SizedBox(height: 8),
+          //   Row(children: [
+          //     const Icon(FluentIcons.completed, size: 12, color: Color(0xFF00E676)),
+          //     const SizedBox(width: 4),
+          //     const Expanded(child: Text('PaddleOCR 已就绪', style: TextStyle(fontSize: 11, color: Color(0xFF00E676)))),
+          //   ]),
+          // ] else if (Platform.isWindows && _checkingPaddleOcr) ...[
+          //   const SizedBox(height: 8),
+          //   const Row(children: [
+          //     SizedBox(width: 12, height: 12, child: ProgressRing()),
+          //     SizedBox(width: 4),
+          //     Text('正在检测PaddleOCR...', style: TextStyle(fontSize: 11, color: Colors.grey)),
+          //   ]),
+          // ],
         ]),
       ),
-      const SizedBox(height: 12),
+      const SizedBox(height: 10),
 
-      SizedBox(width: double.infinity, child: Button(onPressed: () => _addRegion(isDark, state), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+      SizedBox(width: double.infinity, child: Button(onPressed: () => _addTrigger(isDark, state), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
         const Icon(FluentIcons.add, size: 14),
         const SizedBox(width: 6),
-        const Text('添加监控区域'),
+        const Text('添加触发条件'),
       ]))),
-      const SizedBox(height: 12),
+      const SizedBox(height: 10),
 
-      if (_regions.isEmpty)
-        Center(child: Padding(padding: const EdgeInsets.all(32), child: Column(children: [
-          const Icon(FluentIcons.image_search, size: 48, color: Colors.grey),
-          const SizedBox(height: 12),
-          const Text('暂无监控区域', style: TextStyle(fontSize: 14)),
+      if (_triggers.isEmpty)
+        Center(child: Padding(padding: const EdgeInsets.all(40), child: Column(children: [
+          Container(
+            width: 64, height: 64,
+            decoration: BoxDecoration(
+              color: state.accentColor.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Icon(FluentIcons.process_meta_task, size: 28, color: state.accentColor.withValues(alpha: 0.5)),
+          ),
+          const SizedBox(height: 16),
+          const Text('暂无触发条件', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+          const SizedBox(height: 4),
+          Text('点击上方按钮添加条件触发规则', style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
         ])))
       else
-        ..._regions.map((t) => Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: cardBg,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)),
+        ..._triggers.map((t) {
+          final condColor = _conditionColor(t.conditionType);
+          final condIcon = _conditionIcon(t.conditionType);
+          final isHighlighted = _highlightedTriggerId == t.id;
+          return MouseRegion(
+            onEnter: (_) => _highlightTriggerRegion(t),
+            onExit: (_) => _clearHighlight(),
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: isHighlighted ? condColor.withValues(alpha: 0.08) : cardBg,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: isHighlighted ? condColor : (isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)), width: isHighlighted ? 1.5 : 1),
+                ),
+                child: IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Container(
+                        width: 4,
+                        margin: const EdgeInsets.all(1),
+                        decoration: BoxDecoration(
+                          color: condColor,
+                          borderRadius: const BorderRadius.horizontal(left: Radius.circular(7)),
+                        ),
+                      ),
+                      Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(children: [
+                                Icon(condIcon, size: 14, color: condColor),
+                                const SizedBox(width: 6),
+                                Expanded(child: Text(t.name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13))),
+                                ToggleSwitch(checked: t.enabled, onChanged: (v) { setState(() => t.enabled = v); _saveTriggers(); if (_triggerRunning) _startTriggerChecker(); }),
+                                const SizedBox(width: 4),
+                                IconButton(icon: Icon(FluentIcons.edit, size: 12, color: state.accentColor), onPressed: () async {
+                                  final result = await showDialog<_TriggerConfig>(context: context, builder: (_) => _AddTriggerDialog(
+                                    initialX: t.x, initialY: t.y, initialW: t.w, initialH: t.h,
+                                    onPickActionPos: _startPick,
+                                    onCaptureTemplate: _captureTemplate,
+                                    initialTrigger: t,
+                                  ));
+                                  if (result != null) {
+                                    setState(() {
+                                      final idx = _triggers.indexOf(t);
+                                      if (idx >= 0) {
+                                        _triggers[idx] = _TriggerEntry(
+                                          id: t.id,
+                                          name: result.name,
+                                          conditionType: result.conditionType,
+                                          actionType: result.actionType,
+                                          enabled: t.enabled,
+                                          x: result.x, y: result.y, w: result.w, h: result.h,
+                                          targetColor: result.targetColor,
+                                          templateData: result.templateData,
+                                          matchThreshold: result.matchThreshold,
+                                          targetText: result.targetText,
+                                          textMatchMode: result.textMatchMode,
+                                          targetObjectClass: result.targetObjectClass,
+                                          detectConfidence: result.detectConfidence,
+                                          actionX: result.actionX, actionY: result.actionY,
+                                          actionKey: result.actionKey,
+                                          macroId: result.macroId,
+                                          intervalMs: result.intervalMs,
+                                        );
+                                      }
+                                    });
+                                    _saveTriggers();
+                                    if (_triggerRunning) _startTriggerChecker();
+                                  }
+                                }),
+                                const SizedBox(width: 2),
+                                IconButton(icon: Icon(FluentIcons.delete, size: 12, color: Colors.red.withValues(alpha: 0.7)), onPressed: () {
+                                  setState(() => _triggers.remove(t));
+                                  _saveTriggers();
+                                  if (_triggerRunning) _startTriggerChecker();
+                                }),
+                              ]),
+                              const SizedBox(height: 6),
+                              Wrap(spacing: 8, runSpacing: 4, children: [
+                                _conditionChip(t.conditionType.label, isDark, condColor),
+                                _actionChip(t.actionType.label, isDark),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: (isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A)).withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text('(${t.x}, ${t.y}) ${t.w}x${t.h}', style: TextStyle(fontSize: 10, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
+                                ),
+                              ]),
+                              if (t.targetColor != null) ...[
+                                const SizedBox(height: 4),
+                                Row(children: [
+                                  const Text('目标色:', style: TextStyle(fontSize: 11)),
+                                  const SizedBox(width: 4),
+                                  Container(width: 14, height: 14, decoration: BoxDecoration(
+                                    color: t.targetColor,
+                                    borderRadius: BorderRadius.circular(3),
+                                    border: Border.all(color: isDark ? const Color(0xFF404060) : const Color(0xFFD0D0D8)),
+                                  )),
+                                ]),
+                              ],
+                              if (t.conditionType == _TriggerConditionType.imageMatch) ...[
+                                const SizedBox(height: 4),
+                                Row(children: [
+                                  const Text('模板:', style: TextStyle(fontSize: 11)),
+                                  const SizedBox(width: 4),
+                                  Icon(FluentIcons.image_pixel, size: 11, color: t.templateData != null ? const Color(0xFF00E676) : Colors.grey),
+                                  const SizedBox(width: 3),
+                                  Text(t.templateData != null ? '${t.templateData!.width}x${t.templateData!.height}' : '未设置',
+                                    style: TextStyle(fontSize: 11, color: t.templateData != null ? const Color(0xFF00E676) : Colors.grey)),
+                                  const SizedBox(width: 8),
+                                  const Text('阈值:', style: TextStyle(fontSize: 11)),
+                                  const SizedBox(width: 2),
+                                  Text('${(t.matchThreshold * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+                                ]),
+                              ],
+                              if (t.conditionType == _TriggerConditionType.textMatch) ...[
+                                const SizedBox(height: 4),
+                                Row(children: [
+                                  const Text('文字:', style: TextStyle(fontSize: 11)),
+                                  const SizedBox(width: 4),
+                                  Text(t.targetText.isNotEmpty ? '"${t.targetText}" [${t.textMatchMode.label}]' : '未设置',
+                                    style: TextStyle(fontSize: 11, color: t.targetText.isNotEmpty ? const Color(0xFF00BCD4) : Colors.grey)),
+                                ]),
+                              ],
+                              if (t.conditionType == _TriggerConditionType.objectDetect) ...[
+                                const SizedBox(height: 4),
+                                Row(children: [
+                                  const Text('目标:', style: TextStyle(fontSize: 11)),
+                                  const SizedBox(width: 4),
+                                  Text(t.targetObjectClass.isNotEmpty ? t.targetObjectClass : '所有目标',
+                                    style: const TextStyle(fontSize: 11, color: Color(0xFFE040FB))),
+                                  const SizedBox(width: 8),
+                                  const Text('置信度:', style: TextStyle(fontSize: 11)),
+                                  const SizedBox(width: 2),
+                                  Text('${(t.detectConfidence * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+                                ]),
+                              ],
+                              if (t.actionType == _TriggerActionType.click)
+                                Padding(padding: const EdgeInsets.only(top: 4), child: Text('→ 点击 (${t.actionX}, ${t.actionY})', style: TextStyle(fontSize: 11, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))))
+                              else if (t.actionType == _TriggerActionType.clickTargetCenter)
+                                const Padding(padding: EdgeInsets.only(top: 4), child: Text('→ 点击检测目标中心', style: TextStyle(fontSize: 11, color: Color(0xFFFF5252))))
+                              else if (t.actionType == _TriggerActionType.keyPress)
+                                Padding(padding: const EdgeInsets.only(top: 4), child: Text('→ 按键 ${t.actionKey}', style: TextStyle(fontSize: 11, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))))
+                              else if (t.actionType == _TriggerActionType.runMacro)
+                                Padding(padding: const EdgeInsets.only(top: 4), child: Builder(builder: (context) {
+                                  final macro = context.read<AppState>().macros.where((m) => m.id == t.macroId).firstOrNull;
+                                  return Text(macro != null ? '→ 宏: ${macro.name}' : '→ 宏未找到', style: TextStyle(fontSize: 11, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A)));
+                                }))
+                              else if (t.actionType == _TriggerActionType.startClicker)
+                                const Padding(padding: EdgeInsets.only(top: 4), child: Text('→ 启动连点', style: TextStyle(fontSize: 11)))
+                              else if (t.actionType == _TriggerActionType.stopClicker)
+                                const Padding(padding: EdgeInsets.only(top: 4), child: Text('→ 停止连点', style: TextStyle(fontSize: 11))),
+                              const SizedBox(height: 4),
+                              Row(children: [
+                                const Text('间隔:', style: TextStyle(fontSize: 11)),
+                                const SizedBox(width: 2),
+                                Text('${t.intervalMs}ms', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+                                const SizedBox(width: 4),
+                                Expanded(child: Slider(
+                                  value: t.intervalMs.toDouble(),
+                                  min: 100, max: 5000, divisions: 49,
+                                  label: '${t.intervalMs}ms',
+                                  onChanged: (v) => setState(() => t.intervalMs = v.round()),
+                                )),
+                              ]),
+                              if (_triggerRunning && _triggerStatus.containsKey(t.id)) ...[
+                                const SizedBox(height: 4),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: (isDark ? const Color(0xFF1A1A30) : const Color(0xFFF5F5FA)),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Row(children: [
+                                    Icon(FluentIcons.info, size: 10, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A)),
+                                    const SizedBox(width: 4),
+                                    Expanded(child: Text(_triggerStatus[t.id]!, style: TextStyle(fontSize: 10, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A)))),
+                                  ]),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                Icon(FluentIcons.image_search, size: 16, color: state.accentColor),
-                const SizedBox(width: 8),
-                Expanded(child: Text(t.name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14))),
-                ToggleSwitch(checked: t.enabled, onChanged: (v) { setState(() => t.enabled = v); _saveRegions(); }),
-                const SizedBox(width: 8),
-                IconButton(icon: Icon(FluentIcons.delete, size: 14, color: Colors.red), onPressed: () {
-                  setState(() { _regions.remove(t); _monitor.removeRegion(t.id); });
-                  _saveRegions();
-                }),
-              ]),
-              const SizedBox(height: 4),
-              Text('区域: (${t.x}, ${t.y}) ${t.w}x${t.h}', style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
-              if (t.targetColor != null) ...[
-                const SizedBox(height: 6),
-                Row(children: [
-                  const Text('目标: ', style: TextStyle(fontSize: 12)),
-                  Container(width: 20, height: 20, decoration: BoxDecoration(
-                    color: t.targetColor,
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: isDark ? const Color(0xFF404060) : const Color(0xFFD0D0D8)),
-                  )),
-                  const SizedBox(width: 4),
-                  Text('#${t.targetColor!.toARGB32().toRadixString(16).substring(2).toUpperCase()}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                ]),
-              ],
-              if (t.lastColor != null) ...[
-                const SizedBox(height: 4),
-                Row(children: [
-                  const Text('当前: ', style: TextStyle(fontSize: 12)),
-                  Container(width: 20, height: 20, decoration: BoxDecoration(
-                    color: t.lastColor,
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: isDark ? const Color(0xFF404060) : const Color(0xFFD0D0D8)),
-                  )),
-                  const SizedBox(width: 4),
-                  Text('#${t.lastColor!.toARGB32().toRadixString(16).substring(2).toUpperCase()}', style: const TextStyle(fontSize: 12)),
-                ]),
-              ],
-              const SizedBox(height: 6),
-              Row(children: [
-                const Text('阈值: ', style: TextStyle(fontSize: 12)),
-                Text('${(t.threshold * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                const SizedBox(width: 8),
-                Expanded(child: Slider(
-                  value: t.threshold,
-                  min: 0.5, max: 1.0, divisions: 50,
-                  onChanged: (v) => setState(() => t.threshold = v),
-                )),
-              ]),
-            ]),
-          ),
-        )),
-
-      // Log section
-      const SizedBox(height: 12),
-      Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: cardBg,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)),
-        ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Icon(FluentIcons.history, size: 16, color: state.accentColor),
-            const SizedBox(width: 8),
-            const Text('监控日志', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
-            const Spacer(),
-            HyperlinkButton(onPressed: () { _monitor.clearLogs(); setState(() {}); }, child: const Text('清空')),
-          ]),
-          const SizedBox(height: 8),
-          if (logs.isEmpty)
-            Center(child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Text('开始监控后将显示日志', style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF707090) : const Color(0xFF9A9AAA))),
-            ))
-          else
-            ...logs.map((log) => Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Row(children: [
-                Text('${log.time.hour.toString().padLeft(2, '0')}:${log.time.minute.toString().padLeft(2, '0')}:${log.time.second.toString().padLeft(2, '0')}',
-                  style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: isDark ? const Color(0xFF707090) : const Color(0xFF9A9AAA))),
-                const SizedBox(width: 8),
-                Icon(_logLevelIcon(log.level), size: 12, color: _logLevelColor(log.level)),
-                const SizedBox(width: 4),
-                Expanded(child: Text(log.message, style: TextStyle(fontSize: 12, color: _logLevelColor(log.level)))),
-              ]),
-            )),
-        ]),
-      ),
+          );
+        }),
     ];
   }
 
-  void _addRegion(bool isDark, AppState state) async {
-    final sel = await _startAreaSelect();
-    if (sel == null) return; // cancelled
-    final (selX, selY, selX2, selY2) = sel;
-    final selW = selX2 - selX;
-    final selH = selY2 - selY;
-
-    final result = await showDialog<_RegionConfig>(context: context, builder: (ctx) => _AddRegionDialog(
-      initialX: selX, initialY: selY,
-      initialW: selW, initialH: selH,
-    ));
-    if (result != null && mounted) {
-      final entry = _RegionEntry(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        name: result.name,
-        x: result.x, y: result.y, w: result.w, h: result.h,
-        threshold: result.threshold,
-        enabled: true,
-        targetColor: result.targetColor,
-      );
-      setState(() => _regions.add(entry));
-
-      _monitor.addRegion(MonitorRegion(
-        id: entry.id,
-        name: entry.name,
-        x: entry.x, y: entry.y, w: entry.w, h: entry.h,
-        targetColor: entry.targetColor,
-        enabled: entry.enabled,
-        onDetected: () { if (mounted) setState(() {}); },
-        onChanged: () {
-          final t = _regions.where((t) => t.id == entry.id).firstOrNull;
-          if (t != null) {
-            final region = _monitor.regions.where((r) => r.id == entry.id).firstOrNull;
-            if (region != null && region.lastCenterColor != null) {
-              t.lastColor = region.lastCenterColor;
-            }
-          }
-          if (mounted) setState(() {});
-        },
-      ));
-      _saveRegions();
+  Color _conditionColor(_TriggerConditionType type) {
+    switch (type) {
+      case _TriggerConditionType.colorMatch: return const Color(0xFF00BCD4);
+      case _TriggerConditionType.colorChange: return const Color(0xFFFFB300);
+      case _TriggerConditionType.colorDisappear: return const Color(0xFFE040FB);
+      case _TriggerConditionType.imageMatch: return const Color(0xFF00E676);
+      case _TriggerConditionType.textMatch: return const Color(0xFF448AFF);
+      case _TriggerConditionType.objectDetect: return const Color(0xFFFF5252);
     }
   }
 
-  // ─── Conditional Triggers ──────────────────────────────────
-
-  List<Widget> _buildTriggers(bool isDark, AppState state) {
-    final cardBg = isDark ? const Color(0xFF252540).withValues(alpha: 0.5) : const Color(0xFFF0F0FA).withValues(alpha: 0.5);
-    return [
-      Row(children: [
-        Expanded(child: Button(onPressed: () => _addTrigger(isDark, state), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          const Icon(FluentIcons.add, size: 14),
-          const SizedBox(width: 6),
-          const Text('添加触发条件'),
-        ]))),
-        const SizedBox(width: 8),
-        if (_triggerRunning)
-          FilledButton(
-            style: ButtonStyle(backgroundColor: WidgetStateProperty.all(Colors.red)),
-            onPressed: () { setState(() { _triggerRunning = false; _stopTriggerChecker(); }); },
-            child: const Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(FluentIcons.stop, size: 14),
-              SizedBox(width: 6),
-              Text('停止监控'),
-            ]),
-          )
-        else
-          FilledButton(
-            onPressed: _triggers.isEmpty ? null : () {
-              setState(() { _triggerRunning = true; });
-              _startTriggerChecker();
-            },
-            child: const Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(FluentIcons.play, size: 14),
-              SizedBox(width: 6),
-              Text('启动监控'),
-            ]),
-          ),
-      ]),
-      const SizedBox(height: 12),
-
-      if (_triggers.isEmpty)
-        Center(child: Padding(padding: const EdgeInsets.all(32), child: Column(children: [
-          const Icon(FluentIcons.process_meta_task, size: 48, color: Colors.grey),
-          const SizedBox(height: 12),
-          const Text('暂无触发条件', style: TextStyle(fontSize: 14)),
-        ])))
-      else
-        ..._triggers.map((t) => Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: cardBg,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)),
-            ),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                Icon(FluentIcons.process_meta_task, size: 16, color: state.accentColor),
-                const SizedBox(width: 8),
-                Expanded(child: Text(t.name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14))),
-                ToggleSwitch(checked: t.enabled, onChanged: (v) { setState(() => t.enabled = v); _saveTriggers(); if (_triggerRunning) _startTriggerChecker(); }),
-                const SizedBox(width: 4),
-                IconButton(icon: Icon(FluentIcons.edit, size: 14, color: state.accentColor), onPressed: () async {
-                  final result = await showDialog<_TriggerConfig>(context: context, builder: (_) => _AddTriggerDialog(
-                    initialX: t.x, initialY: t.y, initialW: t.w, initialH: t.h,
-                    onPickActionPos: _startPick,
-                    onCaptureTemplate: _captureTemplate,
-                    initialTrigger: t,
-                  ));
-                  if (result != null) {
-                    setState(() {
-                      final idx = _triggers.indexOf(t);
-                      if (idx >= 0) {
-                        _triggers[idx] = _TriggerEntry(
-                          id: t.id,
-                          name: result.name,
-                          conditionType: result.conditionType,
-                          actionType: result.actionType,
-                          enabled: t.enabled,
-                          x: result.x, y: result.y, w: result.w, h: result.h,
-                          targetColor: result.targetColor,
-                          templateData: result.templateData,
-                          matchThreshold: result.matchThreshold,
-                          targetText: result.targetText,
-                          textMatchMode: result.textMatchMode,
-                          actionX: result.actionX, actionY: result.actionY,
-                          actionKey: result.actionKey,
-                          macroId: result.macroId,
-                          intervalMs: result.intervalMs,
-                        );
-                      }
-                    });
-                    _saveTriggers();
-                    if (_triggerRunning) _startTriggerChecker();
-                  }
-                }),
-                const SizedBox(width: 4),
-                IconButton(icon: Icon(FluentIcons.delete, size: 14, color: Colors.red), onPressed: () {
-                  setState(() => _triggers.remove(t));
-                  _saveTriggers();
-                  if (_triggerRunning) _startTriggerChecker();
-                }),
-              ]),
-              const SizedBox(height: 6),
-              Row(children: [
-                _conditionChip(t.conditionType.label, isDark),
-                const SizedBox(width: 6),
-                Text('区域: (${t.x}, ${t.y}) ${t.w}x${t.h}', style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
-              ]),
-              if (t.targetColor != null) ...[
-                const SizedBox(height: 4),
-                Row(children: [
-                  const Text('目标色: ', style: TextStyle(fontSize: 12)),
-                  Container(width: 16, height: 16, decoration: BoxDecoration(
-                    color: t.targetColor,
-                    borderRadius: BorderRadius.circular(3),
-                    border: Border.all(color: isDark ? const Color(0xFF404060) : const Color(0xFFD0D0D8)),
-                  )),
-                ]),
-              ],
-              if (t.conditionType == _TriggerConditionType.imageMatch) ...[
-                const SizedBox(height: 4),
-                Row(children: [
-                  const Text('模板: ', style: TextStyle(fontSize: 12)),
-                  Icon(FluentIcons.image_pixel, size: 12, color: t.templateData != null ? const Color(0xFF00E676) : Colors.grey),
-                  const SizedBox(width: 4),
-                  Text(t.templateData != null ? '${t.templateData!.width}x${t.templateData!.height}' : '未设置',
-                    style: TextStyle(fontSize: 12, color: t.templateData != null ? const Color(0xFF00E676) : Colors.grey)),
-                  const SizedBox(width: 8),
-                  const Text('阈值: ', style: TextStyle(fontSize: 12)),
-                  Text('${(t.matchThreshold * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                ]),
-              ],
-              if (t.conditionType == _TriggerConditionType.textMatch) ...[
-                const SizedBox(height: 4),
-                Row(children: [
-                  const Text('目标文字: ', style: TextStyle(fontSize: 12)),
-                  Text(t.targetText.isNotEmpty ? '"${t.targetText}" [${t.textMatchMode.label}]' : '未设置',
-                    style: TextStyle(fontSize: 12, color: t.targetText.isNotEmpty ? const Color(0xFF00BCD4) : Colors.grey)),
-                ]),
-              ],
-              const SizedBox(height: 6),
-              Row(children: [
-                _actionChip(t.actionType.label, isDark),
-                const SizedBox(width: 6),
-                if (t.actionType == _TriggerActionType.click)
-                  Text('点击 (${t.actionX}, ${t.actionY})', style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A)))
-                else if (t.actionType == _TriggerActionType.keyPress)
-                  Text('按键 ${t.actionKey}', style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A)))
-                else if (t.actionType == _TriggerActionType.runMacro)
-                  Builder(builder: (context) {
-                    final macro = context.read<AppState>().macros.where((m) => m.id == t.macroId).firstOrNull;
-                    return Text(macro != null ? '宏: ${macro.name}' : '宏未找到', style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A)));
-                  })
-                else if (t.actionType == _TriggerActionType.startClicker)
-                  const Text('启动连点', style: TextStyle(fontSize: 12))
-                else if (t.actionType == _TriggerActionType.stopClicker)
-                  const Text('停止连点', style: TextStyle(fontSize: 12)),
-              ]),
-              const SizedBox(height: 6),
-              Row(children: [
-                const Text('检查间隔: ', style: TextStyle(fontSize: 12)),
-                Text('${t.intervalMs}ms', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                const SizedBox(width: 8),
-                Expanded(child: Slider(
-                  value: t.intervalMs.toDouble(),
-                  min: 100, max: 5000, divisions: 49,
-                  onChanged: (v) => setState(() => t.intervalMs = v.round()),
-                )),
-              ]),
-            ]),
-          ),
-        )),
-    ];
+  IconData _conditionIcon(_TriggerConditionType type) {
+    switch (type) {
+      case _TriggerConditionType.colorMatch: return FluentIcons.color;
+      case _TriggerConditionType.colorChange: return FluentIcons.sync;
+      case _TriggerConditionType.colorDisappear: return FluentIcons.hide;
+      case _TriggerConditionType.imageMatch: return FluentIcons.image_pixel;
+      case _TriggerConditionType.textMatch: return FluentIcons.font;
+      case _TriggerConditionType.objectDetect: return FluentIcons.machine_learning;
+    }
   }
 
-  Widget _conditionChip(String label, bool isDark) {
+  Widget _conditionChip(String label, bool isDark, Color color) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: const Color(0xFF00BCD4).withValues(alpha: 0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: const Color(0xFF00BCD4).withValues(alpha: 0.3)),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
-      child: Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF00BCD4))),
+      child: Text(label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: color)),
     );
   }
 
   Widget _actionChip(String label, bool isDark) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
         color: const Color(0xFFFF9800).withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(4),
         border: Border.all(color: const Color(0xFFFF9800).withValues(alpha: 0.3)),
       ),
-      child: Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFFFF9800))),
+      child: Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: Color(0xFFFF9800))),
     );
   }
 
@@ -1015,6 +1139,8 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
           matchThreshold: result.matchThreshold,
           targetText: result.targetText,
           textMatchMode: result.textMatchMode,
+          targetObjectClass: result.targetObjectClass,
+          detectConfidence: result.detectConfidence,
           actionX: result.actionX, actionY: result.actionY,
           actionKey: result.actionKey,
           macroId: result.macroId,
@@ -1027,34 +1153,16 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     }
   }
 
-  IconData _logLevelIcon(MonitorLogLevel level) {
-    switch (level) {
-      case MonitorLogLevel.info: return FluentIcons.info;
-      case MonitorLogLevel.detected: return FluentIcons.completed;
-      case MonitorLogLevel.changed: return FluentIcons.sync;
-      case MonitorLogLevel.error: return FluentIcons.warning;
-    }
-  }
-
-  Color _logLevelColor(MonitorLogLevel level) {
-    switch (level) {
-      case MonitorLogLevel.info: return const Color(0xFF9090B0);
-      case MonitorLogLevel.detected: return const Color(0xFF00E676);
-      case MonitorLogLevel.changed: return const Color(0xFFFFB300);
-      case MonitorLogLevel.error: return Colors.red;
-    }
-  }
 }
 
-class _AiTrackerTab extends StatefulWidget {
-  final Future<(int, int, int, int)?> Function() onAreaSelect;
-  const _AiTrackerTab({required this.onAreaSelect});
+class _AdvancedModelsTab extends StatefulWidget {
+  const _AdvancedModelsTab();
 
   @override
-  State<_AiTrackerTab> createState() => _AiTrackerTabState();
+  State<_AdvancedModelsTab> createState() => _AdvancedModelsTabState();
 }
 
-class _AiTrackerTabState extends State<_AiTrackerTab> {
+class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
   bool _checking = true;
   bool _downloading = false;
   String _downloadStatus = '';
@@ -1065,6 +1173,7 @@ class _AiTrackerTabState extends State<_AiTrackerTab> {
 
   bool _onnxExists = false;
   bool _modelExists = false;
+  // bool _paddleOcrExists = false;  // PaddleOCR 暂时禁用
 
   String _pluginDir = '';
 
@@ -1073,7 +1182,6 @@ class _AiTrackerTabState extends State<_AiTrackerTab> {
       'https://github.com/microsoft/onnxruntime/releases/download/v$_ortVersion/onnxruntime-win-x64-$_ortVersion.zip';
   static const _modelGithubUrl =
       'https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11n.onnx';
-
   static const _mirrors = <String, String>{
     'GitHub': '',
     'ghfast.top': 'https://ghfast.top/',
@@ -1083,60 +1191,6 @@ class _AiTrackerTabState extends State<_AiTrackerTab> {
 
   String _selectedMirror = 'GitHub';
 
-  static const _cocoClasses = [
-    'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat',
-    'traffic light', 'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat',
-    'dog', 'horse', 'sheep', 'cow', 'elephant', 'bear', 'zebra', 'giraffe', 'backpack',
-    'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee', 'skis', 'snowboard', 'sports ball',
-    'kite', 'baseball bat', 'baseball glove', 'skateboard', 'surfboard', 'tennis racket',
-    'bottle', 'wine glass', 'cup', 'fork', 'knife', 'spoon', 'bowl', 'banana', 'apple',
-    'sandwich', 'orange', 'broccoli', 'carrot', 'hot dog', 'pizza', 'donut', 'cake', 'chair',
-    'couch', 'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse',
-    'remote', 'keyboard', 'cell phone', 'microwave', 'oven', 'toaster', 'sink', 'refrigerator',
-    'book', 'clock', 'vase', 'scissors', 'teddy bear', 'hair drier', 'toothbrush',
-  ];
-
-  static const _cocoClassZh = <String, String>{
-    'person': '人', 'bicycle': '自行车', 'car': '汽车', 'motorcycle': '摩托车',
-    'airplane': '飞机', 'bus': '公交车', 'train': '火车', 'truck': '卡车', 'boat': '船',
-    'traffic light': '红绿灯', 'fire hydrant': '消防栓', 'stop sign': '停车标志',
-    'parking meter': '停车计时器', 'bench': '长椅', 'bird': '鸟', 'cat': '猫',
-    'dog': '狗', 'horse': '马', 'sheep': '羊', 'cow': '牛', 'elephant': '大象',
-    'bear': '熊', 'zebra': '斑马', 'giraffe': '长颈鹿', 'backpack': '背包',
-    'umbrella': '雨伞', 'handbag': '手提包', 'tie': '领带', 'suitcase': '行李箱',
-    'frisbee': '飞盘', 'skis': '滑雪板', 'snowboard': '单板', 'sports ball': '球',
-    'kite': '风筝', 'baseball bat': '棒球棒', 'baseball glove': '棒球手套',
-    'skateboard': '滑板', 'surfboard': '冲浪板', 'tennis racket': '网球拍',
-    'bottle': '瓶子', 'wine glass': '酒杯', 'cup': '杯子', 'fork': '叉子',
-    'knife': '刀', 'spoon': '勺子', 'bowl': '碗', 'banana': '香蕉', 'apple': '苹果',
-    'sandwich': '三明治', 'orange': '橙子', 'broccoli': '西兰花', 'carrot': '胡萝卜',
-    'hot dog': '热狗', 'pizza': '披萨', 'donut': '甜甜圈', 'cake': '蛋糕', 'chair': '椅子',
-    'couch': '沙发', 'potted plant': '盆栽', 'bed': '床', 'dining table': '餐桌',
-    'toilet': '马桶', 'tv': '电视', 'laptop': '笔记本电脑', 'mouse': '鼠标',
-    'remote': '遥控器', 'keyboard': '键盘', 'cell phone': '手机', 'microwave': '微波炉',
-    'oven': '烤箱', 'toaster': '烤面包机', 'sink': '水槽', 'refrigerator': '冰箱',
-    'book': '书', 'clock': '时钟', 'vase': '花瓶', 'scissors': '剪刀',
-    'teddy bear': '泰迪熊', 'hair drier': '吹风机', 'toothbrush': '牙刷',
-  };
-
-  final List<String> _targetClasses = [];
-  double _confidence = 0.5;
-  int _checkIntervalMs = 500;
-  bool _autoClick = true;
-  bool _showTrackBox = false;
-  bool _detecting = false;
-  Timer? _detectTimer;
-  int _detectRegionX = 0;
-  int _detectRegionY = 0;
-  int _detectRegionW = 0;
-  int _detectRegionH = 0;
-  bool _hasRegion = false;
-  final List<_DetectionResult> _lastResults = [];
-  int _detectionCount = 0;
-  int _clickCount = 0;
-
-  static const _platformChannel = MethodChannel('com.clicker.pro/platform');
-
   @override
   void initState() {
     super.initState();
@@ -1145,7 +1199,6 @@ class _AiTrackerTabState extends State<_AiTrackerTab> {
 
   @override
   void dispose() {
-    _stopDetection();
     super.dispose();
   }
 
@@ -1165,10 +1218,33 @@ class _AiTrackerTabState extends State<_AiTrackerTab> {
 
     _onnxExists = await File('$dir\\onnxruntime.dll').exists();
     _modelExists = await File('$dir\\models\\yolo11n.onnx').exists();
+    // _paddleOcrExists = await _checkPaddleOcrInstalled();  // PaddleOCR 暂时禁用
     _dllDeployed = await _deployNativePlugin();
+
+    // 自动下载缺失的依赖
+    if (!_onnxExists) {
+      await _downloadOnnxRuntime();
+      _onnxExists = await File('$dir\\onnxruntime.dll').exists();
+    }
+    if (!_modelExists) {
+      await _downloadModel();
+      _modelExists = await File('$dir\\models\\yolo11n.onnx').exists();
+    }
 
     setState(() => _checking = false);
   }
+
+  // PaddleOCR 暂时禁用
+  // Future<bool> _checkPaddleOcrInstalled() async {
+  //   if (!Platform.isWindows) return false;
+  //   try {
+  //     const channel = MethodChannel('com.clicker.pro/platform');
+  //     final result = await channel.invokeMethod<Map>('checkPaddleOcr');
+  //     return result != null && result['available'] == true;
+  //   } catch (_) {
+  //     return false;
+  //   }
+  // }
 
   Future<bool> _deployNativePlugin() async {
     final dir = _pluginDir;
@@ -1449,6 +1525,8 @@ class _AiTrackerTabState extends State<_AiTrackerTab> {
       try { await Directory(extractDir).delete(recursive: true); } catch (_) {}
 
       _downloadStatus = 'ONNX Runtime 安装完成';
+      // 重新初始化YOLO插件
+      await _reinitYoloPlugin();
     } catch (e) {
       _errorMsg = e.toString().replaceFirst('Exception: ', '');
       _downloadStatus = '安装失败';
@@ -1477,6 +1555,8 @@ class _AiTrackerTabState extends State<_AiTrackerTab> {
       );
       _modelExists = true;
       _downloadStatus = 'YOLO11n 模型下载完成';
+      // 重新初始化YOLO插件以加载模型
+      await _reinitYoloPlugin();
     } catch (e) {
       _errorMsg = e.toString().replaceFirst('Exception: ', '');
       _downloadStatus = '下载失败';
@@ -1485,20 +1565,73 @@ class _AiTrackerTabState extends State<_AiTrackerTab> {
     setState(() => _downloading = false);
   }
 
+  static const _pipMirrors = <String, String>{
+    '默认源': '',
+    '清华源': 'https://pypi.tuna.tsinghua.edu.cn/simple',
+    '阿里源': 'https://mirrors.aliyun.com/pypi/simple/',
+    '腾讯源': 'https://mirrors.cloud.tencent.com/pypi/simple',
+  };
+
+  String _selectedPipMirror = '清华源';
+
+  // PaddleOCR 暂时禁用
+  // Future<void> _downloadPaddleOcr() async {
+  //   setState(() {
+  //     _downloading = true;
+  //     _downloadProgress = 0;
+  //     _downloadSize = '';
+  //     _errorMsg = '';
+  //     _downloadStatus = '正在通过 pip 安装 PaddleOCR...';
+  //   });
+  //
+  //   try {
+  //     const channel = MethodChannel('com.clicker.pro/platform');
+  //     final mirrorUrl = _pipMirrors[_selectedPipMirror] ?? '';
+  //     final args = mirrorUrl.isEmpty ? <String, dynamic>{} : <String, dynamic>{'mirror': mirrorUrl};
+  //     await channel.invokeMethod<bool>('installPaddleOcr', args);
+  //
+  //     _paddleOcrExists = true;
+  //     _downloadStatus = 'PaddleOCR 安装完成';
+  //     // 重新初始化PaddleOCR插件
+  //     await _reinitPaddleOcrPlugin();
+  //   } catch (e) {
+  //     _paddleOcrExists = false;
+  //     _errorMsg = 'pip 安装失败，请手动执行: pip install paddlepaddle paddleocr';
+  //     _downloadStatus = '安装失败';
+  //   }
+  //
+  //   setState(() => _downloading = false);
+  // }
+
   Future<void> _downloadAll() async {
     if (!_onnxExists) await _downloadOnnxRuntime();
     if (!_modelExists && _errorMsg.isEmpty) await _downloadModel();
+    // if (!_paddleOcrExists && _errorMsg.isEmpty && Platform.isWindows) await _downloadPaddleOcr();  // PaddleOCR 暂时禁用
     setState(() {});
   }
 
-  Future<void> _uninstallAll() async {
-    _stopDetection();
-
-    final aiPlugin = _getAiTrackerPlugin();
-    if (aiPlugin != null) {
-      aiPlugin.unloadNative();
+  Future<void> _reinitYoloPlugin() async {
+    final mgr = VisionPluginManager.instance;
+    mgr.resetInitialized('yolo_detect');
+    final plugin = mgr.getPlugin('yolo_detect');
+    if (plugin != null) {
+      final ok = await plugin.initialize();
+      debugPrint('[图像识别] YOLO插件重新初始化: $ok, available=${plugin.isAvailable}');
     }
+  }
 
+  // PaddleOCR 暂时禁用
+  // Future<void> _reinitPaddleOcrPlugin() async {
+  //   final mgr = VisionPluginManager.instance;
+  //   mgr.resetInitialized('plugin_paddle_ocr');
+  //   final plugin = mgr.getPlugin('plugin_paddle_ocr');
+  //   if (plugin != null) {
+  //     final ok = await plugin.initialize();
+  //     debugPrint('[图像识别] PaddleOCR插件重新初始化: $ok, available=${plugin.isAvailable}');
+  //   }
+  // }
+
+  Future<void> _uninstallAll() async {
     setState(() {
       _downloading = true;
       _downloadStatus = '正在卸载...';
@@ -1512,8 +1645,16 @@ class _AiTrackerTabState extends State<_AiTrackerTab> {
       }
       _onnxExists = false;
       _modelExists = false;
-      _modelLoaded = false;
       _dllDeployed = false;
+
+      if (Platform.isWindows) {
+        // PaddleOCR 暂时禁用
+        // try {
+        //   const channel = MethodChannel('com.clicker.pro/platform');
+        //   await channel.invokeMethod<bool>('uninstallPaddleOcr');
+        // } catch (_) {}
+      }
+      // _paddleOcrExists = false;  // PaddleOCR 暂时禁用
       _downloadStatus = '已卸载全部组件';
     } catch (e) {
       _errorMsg = e.toString().replaceFirst('Exception: ', '');
@@ -1529,323 +1670,15 @@ class _AiTrackerTabState extends State<_AiTrackerTab> {
     await Process.run('explorer', [_pluginDir]);
   }
 
-  Future<void> _selectDetectRegion() async {
-    final sel = await widget.onAreaSelect();
-    if (sel == null) return;
-    final (x1, y1, x2, y2) = sel;
-    setState(() {
-      _detectRegionX = x1;
-      _detectRegionY = y1;
-      _detectRegionW = x2 - x1;
-      _detectRegionH = y2 - y1;
-      _hasRegion = true;
-    });
-  }
-
-  void _useFullScreen() async {
-    try {
-      final result = await _platformChannel.invokeMethod<Map>('getScreenSize');
-      if (result != null) {
-        setState(() {
-          _detectRegionX = 0;
-          _detectRegionY = 0;
-          _detectRegionW = result['width'] as int;
-          _detectRegionH = result['height'] as int;
-          _hasRegion = true;
-        });
-      }
-    } on PlatformException {}
-  }
-
-  bool _modelLoaded = false;
-
-  void _startDetection() {
-    if (!_hasRegion) return;
-    setState(() {
-      _detecting = true;
-      _detectionCount = 0;
-      _clickCount = 0;
-      _lastResults.clear();
-    });
-
-    _ensureModelLoaded().then((_) {
-      _detectTimer = Timer.periodic(Duration(milliseconds: _checkIntervalMs), (_) {
-        _runDetection();
-      });
-    });
-  }
-
-  AiTrackerPlugin? _getAiTrackerPlugin() {
-    final registry = PluginRegistry.instance;
-    final plugin = registry.getPlugin('ai_tracker');
-    if (plugin is AiTrackerPlugin) return plugin;
-    return null;
-  }
-
-  Future<void> _ensureModelLoaded() async {
-    if (_modelLoaded) return;
-    if (!_onnxExists || !_modelExists) {
-      debugPrint('[AI] 组件未就绪: onnx=$_onnxExists model=$_modelExists');
-      return;
-    }
-
-    final aiPlugin = _getAiTrackerPlugin();
-    if (aiPlugin == null) {
-      debugPrint('[AI] 插件未注册');
-      return;
-    }
-
-    if (!aiPlugin.nativeLoaded) {
-      debugPrint('[AI] 尝试加载原生插件...');
-      final loaded = aiPlugin.loadNative();
-      debugPrint('[AI] 原生插件加载: $loaded');
-      if (!loaded) {
-        debugPrint('[AI] 原生DLL加载失败，请确认 ai_tracker.dll 已部署到 data/plugins/ai_tracker/windows/');
-        debugPrint('[AI] _pluginDir=$_pluginDir');
-        return;
-      }
-    }
-
-    final statusResult = aiPlugin.executeAction('get_status', '{}', returnOnError: true);
-    debugPrint('[AI] 插件状态: $statusResult');
-
-    if (statusResult == null) {
-      debugPrint('[AI] 无法获取插件状态，原生调用失败');
-      return;
-    }
-
-    if (statusResult.contains('"available":false')) {
-      debugPrint('[AI] ONNX Runtime 未加载，尝试重新初始化');
-      aiPlugin.unloadNative();
-      if (!aiPlugin.loadNative()) {
-        debugPrint('[AI] 重新加载失败');
-        return;
-      }
-      final retryStatus = aiPlugin.executeAction('get_status', '{}', returnOnError: true);
-      debugPrint('[AI] 重试状态: $retryStatus');
-      if (retryStatus == null || retryStatus.contains('"available":false')) {
-        debugPrint('[AI] ONNX Runtime 仍不可用');
-        return;
-      }
-    }
-
-    final modelFile = File('$_pluginDir${Platform.pathSeparator}models${Platform.pathSeparator}yolo11n.onnx');
-    if (!await modelFile.exists()) {
-      debugPrint('[AI] 模型文件不存在: ${modelFile.path}');
-      return;
-    }
-
-    final modelPath = modelFile.path;
-    debugPrint('[AI] 加载模型: $modelPath');
-    final result = aiPlugin.executeAction('load_model', '{"model_path":"${modelPath.replaceAll('\\', '\\\\')}"}', returnOnError: true);
-    debugPrint('[AI] 模型加载结果: $result');
-    if (result != null && result.contains('"success":true')) {
-      _modelLoaded = true;
-    }
-  }
-
-  void _stopDetection() {
-    _detectTimer?.cancel();
-    _detectTimer = null;
-    ScreenOverlayService.instance.stopOverlay();
-    if (mounted) {
-      setState(() => _detecting = false);
-    }
-  }
-
-  Future<void> _runDetection() async {
-    if (!_hasRegion || !mounted) return;
-
-    try {
-      final pixels = await _platformChannel.invokeMethod<Uint8List>(
-        'captureScreenRect',
-        [_detectRegionX, _detectRegionY, _detectRegionW, _detectRegionH],
-      );
-      if (pixels == null) {
-        debugPrint('[AI] 截图失败: 返回null');
-        return;
-      }
-      if (pixels.length < 4) {
-        debugPrint('[AI] 截图数据异常: length=${pixels.length}');
-        return;
-      }
-
-      List<_DetectionResult> nativeResults = [];
-
-      if (_modelLoaded && _onnxExists && _modelExists) {
-        nativeResults = await _runNativeDetection(pixels);
-      } else {
-        debugPrint('[AI] 原生检测不可用: modelLoaded=$_modelLoaded onnx=$_onnxExists model=$_modelExists');
-      }
-
-      if (nativeResults.isEmpty) {
-        final pluginManager = VisionPluginManager.instance;
-        final detector = pluginManager.getPluginForCapability(VisionCapability.objectDetect);
-        if (detector != null) {
-          await pluginManager.ensureInitialized(detector.info.id);
-          for (final targetLabel in _targetClasses) {
-            final det = await detector.detectObjects(
-              regionX: _detectRegionX,
-              regionY: _detectRegionY,
-              regionW: _detectRegionW,
-              regionH: _detectRegionH,
-              targetLabel: targetLabel,
-              confidence: _confidence,
-            );
-            for (final r in det) {
-              nativeResults.add(_DetectionResult(
-                x: r.x + _detectRegionX,
-                y: r.y + _detectRegionY,
-                width: r.width,
-                height: r.height,
-                score: r.score,
-                label: r.label ?? 'object',
-              ));
-            }
-          }
-        }
-      }
-
-      setState(() {
-        _lastResults.clear();
-        _lastResults.addAll(nativeResults);
-        _detectionCount++;
-      });
-
-      if (_showTrackBox && _lastResults.isNotEmpty) {
-        final boxes = _lastResults.map((r) => <String, dynamic>{
-          'x': r.x,
-          'y': r.y,
-          'w': r.width,
-          'h': r.height,
-          'confidence': r.score,
-          'class_id': r.classId,
-          'class_name': _cocoClassZh[r.label] ?? r.label,
-        }).toList();
-        if (ScreenOverlayService.instance.overlayActive) {
-          ScreenOverlayService.instance.updateDetectionBoxes(boxes);
-        } else {
-          ScreenOverlayService.instance.showDetectionBoxes(boxes);
-        }
-      } else if (_showTrackBox && _lastResults.isEmpty) {
-        ScreenOverlayService.instance.stopOverlay();
-      }
-
-      if (_autoClick && _lastResults.isNotEmpty) {
-        final best = _lastResults.first;
-        final clickX = best.x + best.width ~/ 2;
-        final clickY = best.y + best.height ~/ 2;
-        await _platformChannel.invokeMethod('sendClick', [clickX, clickY, 0]);
-        setState(() => _clickCount++);
-      }
-    } catch (e) {
-      debugPrint('[AI] _runDetection异常: $e');
-    }
-  }
-
-  Future<List<_DetectionResult>> _runNativeDetection(Uint8List pixels) async {
-    final aiPlugin = _getAiTrackerPlugin();
-    if (aiPlugin == null) {
-      debugPrint('[AI] 检测失败: 插件未注册');
-      return [];
-    }
-    if (!aiPlugin.nativeLoaded) {
-      debugPrint('[AI] 检测失败: 原生插件未加载');
-      return [];
-    }
-
-    final expectedLen = _detectRegionW * _detectRegionH * 4;
-    if (pixels.length != expectedLen) {
-      debugPrint('[AI] 像素数据大小不匹配: got=${pixels.length} expected=$expectedLen (${_detectRegionW}x$_detectRegionH*4)');
-      return [];
-    }
-
-    final pixelPtr = malloc<Uint8>(pixels.length);
-    try {
-      pixelPtr.asTypedList(pixels.length).setAll(0, pixels);
-
-      final ptrHex = pixelPtr.address.toRadixString(16);
-      final targetClass = '';
-
-      final params = '{"region_w":$_detectRegionW,'
-          '"region_h":$_detectRegionH,'
-          '"confidence":$_confidence,'
-          '"pixel_data_ptr":"$ptrHex",'
-          '"target_class":"$targetClass"}';
-
-      debugPrint('[AI] 检测参数: region=${_detectRegionW}x$_detectRegionH conf=$_confidence target=$targetClass ptr=$ptrHex pixels=${pixels.length} expected=${_detectRegionW * _detectRegionH * 4}');
-
-      final resultJson = aiPlugin.executeAction('detect_objects', params, returnOnError: true);
-      debugPrint('[AI] 检测结果: $resultJson');
-
-      if (resultJson == null) {
-        debugPrint('[AI] 检测返回null');
-        return [];
-      }
-
-      if (resultJson.contains('"error"')) {
-        debugPrint('[AI] 检测错误: $resultJson');
-        return [];
-      }
-
-      return _parseDetectionResults(resultJson);
-    } catch (e) {
-      debugPrint('[AI] 检测异常: $e');
-      return [];
-    } finally {
-      malloc.free(pixelPtr);
-    }
-  }
-
-  List<_DetectionResult> _parseDetectionResults(String jsonStr) {
-    final results = <_DetectionResult>[];
-    try {
-      final decoded = jsonDecode(jsonStr);
-      if (decoded is! Map) return results;
-      final detections = decoded['detections'];
-      if (detections is! List) return results;
-
-      for (final det in detections) {
-        if (det is! Map) continue;
-        final className = det['class_name'] as String? ?? '';
-        if (_targetClasses.isNotEmpty && !_targetClasses.contains(className)) continue;
-
-        results.add(_DetectionResult(
-          x: (det['x'] as num).toInt() + _detectRegionX,
-          y: (det['y'] as num).toInt() + _detectRegionY,
-          width: (det['w'] as num).toInt(),
-          height: (det['h'] as num).toInt(),
-          score: (det['confidence'] as num).toDouble(),
-          label: className,
-          classId: (det['class_id'] as num?)?.toInt() ?? 0,
-        ));
-      }
-    } catch (e) {
-      debugPrint('[AI] 解析检测结果异常: $e');
-    }
-    return results;
-  }
-
-  void _addClass(String cls) {
-    if (!_targetClasses.contains(cls)) {
-      setState(() => _targetClasses.add(cls));
-    }
-  }
-
-  void _removeClass(String cls) {
-    setState(() => _targetClasses.remove(cls));
-  }
-
   @override
   Widget build(BuildContext context) {
     final isDark = FluentTheme.of(context).brightness == Brightness.dark;
     final accent = FluentTheme.of(context).accentColor;
-    final allReady = _onnxExists && _modelExists;
 
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+    return SingleChildScrollView(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       if (_checking)
         const Center(child: ProgressRing())
-      else if (!allReady) ...[
+      else ...[
         _buildSection('下载源', isDark, [
           Row(children: [
             Text('当前源: ', style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
@@ -1884,27 +1717,70 @@ class _AiTrackerTabState extends State<_AiTrackerTab> {
         ]),
 
         _buildSection('依赖项', isDark, [
-          _buildDepCard(
-            icon: FluentIcons.processing,
-            name: 'ONNX Runtime v$_ortVersion',
-            desc: 'Microsoft 推理引擎 · ~200MB',
-            installed: _onnxExists,
-            isDark: isDark,
-            accent: accent,
-            onInstall: _downloading ? null : _downloadOnnxRuntime,
-          ),
-          _buildDepCard(
-            icon: FluentIcons.machine_learning,
-            name: 'YOLO11n 模型',
-            desc: 'Ultralytics 目标检测模型 · ~6MB',
-            installed: _modelExists,
-            isDark: isDark,
-            accent: accent,
-            onInstall: _downloading ? null : _downloadModel,
-          ),
+          if (Platform.isWindows) ...[
+            _buildDepCard(
+              icon: FluentIcons.processing,
+              name: 'ONNX Runtime v$_ortVersion',
+              desc: 'Microsoft 推理引擎 · YOLO目标检测必需 · ~200MB',
+              installed: _onnxExists,
+              isDark: isDark,
+              accent: accent,
+              onInstall: _downloading ? null : _downloadOnnxRuntime,
+            ),
+            _buildDepCard(
+              icon: FluentIcons.machine_learning,
+              name: 'YOLO11n 模型',
+              desc: 'Ultralytics 目标检测模型 · 条件触发-目标检测必需 · ~6MB',
+              installed: _modelExists,
+              isDark: isDark,
+              accent: accent,
+              onInstall: _downloading ? null : _downloadModel,
+            ),
+            // PaddleOCR 暂时禁用
+            // _buildDepCard(
+            //   icon: FluentIcons.text_document,
+            //   name: 'PaddleOCR',
+            //   desc: '百度文字识别引擎 · 通过 pip 安装 · 需 Python 环境',
+            //   installed: _paddleOcrExists,
+            //   isDark: isDark,
+            //   accent: accent,
+            //   onInstall: _downloading ? null : _downloadPaddleOcr,
+            // ),
+            // if (!_paddleOcrExists) Padding(
+            //   padding: const EdgeInsets.only(top: 4, left: 4),
+            //   child: Row(children: [
+            //     Text('pip源: ', style: TextStyle(fontSize: 11, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
+            //     ..._pipMirrors.keys.map((name) {
+            //       final isSelected = _selectedPipMirror == name;
+            //       return Padding(
+            //         padding: const EdgeInsets.only(right: 4),
+            //         child: Button(
+            //           style: ButtonStyle(
+            //             padding: WidgetStateProperty.all(const EdgeInsets.symmetric(horizontal: 8, vertical: 2)),
+            //             backgroundColor: WidgetStateProperty.all(isSelected
+            //               ? accent.withValues(alpha: 0.15)
+            //               : isDark ? const Color(0xFF1E1E36) : const Color(0xFFE8E8F4)),
+            //           ),
+            //           onPressed: _downloading ? null : () => setState(() => _selectedPipMirror = name),
+            //           child: Text(name, style: TextStyle(fontSize: 10, color: isSelected ? accent : (isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80)))),
+            //         ),
+            //       );
+            //     }),
+            //   ]),
+            // ),
+          ],
+          if (Platform.isAndroid) ...[
+            _buildDepCard(
+              icon: FluentIcons.text_document,
+              name: 'ML Kit OCR',
+              desc: 'Google 文字识别 · 内置 · 无需下载',
+              installed: true,
+              isDark: isDark,
+              accent: accent,
+              onInstall: null,
+            ),
+          ],
         ]),
-
-        const SizedBox(height: 16),
 
         Row(children: [
           FilledButton(
@@ -1950,9 +1826,9 @@ class _AiTrackerTabState extends State<_AiTrackerTab> {
           ]),
         ],
 
-        const SizedBox(height: 20),
+        const SizedBox(height: 12),
 
-        _buildSection('插件目录', isDark, [
+        Row(children: [
           Button(
             onPressed: _openPluginDir,
             child: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -1961,301 +1837,57 @@ class _AiTrackerTabState extends State<_AiTrackerTab> {
               Text('打开目录', style: TextStyle(fontSize: 12, color: accent)),
             ]),
           ),
-          const SizedBox(height: 6),
-          Text(_pluginDir, style: TextStyle(fontSize: 11, color: isDark ? const Color(0xFF707090) : const Color(0xFFA0A0B0))),
-        ]),
-      ] else ...[
-        _buildSection('检测区域', isDark, [
-          Row(children: [
-            Button(
-              onPressed: _detecting ? null : _selectDetectRegion,
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(FluentIcons.crop, size: 12, color: accent),
-                const SizedBox(width: 6),
-                Text('框选区域', style: TextStyle(fontSize: 12, color: accent)),
-              ]),
+          const SizedBox(width: 8),
+          Button(
+            onPressed: _downloading ? null : _uninstallAll,
+            style: ButtonStyle(
+              padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 10, vertical: 4)),
             ),
-            const SizedBox(width: 8),
-            Button(
-              onPressed: _detecting ? null : _useFullScreen,
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(FluentIcons.full_screen, size: 12, color: accent),
-                const SizedBox(width: 6),
-                Text('全屏', style: TextStyle(fontSize: 12, color: accent)),
-              ]),
-            ),
-          ]),
-          if (_hasRegion) ...[
-            const SizedBox(height: 6),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: isDark ? const Color(0x80252540) : const Color(0x80F0F0FA),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)),
-              ),
-              child: Text(
-                '区域: ($_detectRegionX, $_detectRegionY) ${_detectRegionW}×$_detectRegionH',
-                style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A)),
-              ),
-            ),
-          ],
-        ]),
-
-        _buildSection('目标类别', isDark, [
-          Wrap(spacing: 4, runSpacing: 4, children: [
-            ..._targetClasses.map((cls) => Button(
-              onPressed: () => _removeClass(cls),
-              style: ButtonStyle(
-                backgroundColor: WidgetStatePropertyAll(accent.withValues(alpha: 0.15)),
-                padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 8, vertical: 2)),
-              ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Text(_cocoClassZh[cls] ?? cls, style: TextStyle(fontSize: 11, color: accent, fontWeight: FontWeight.w600)),
-                const SizedBox(width: 4),
-                Icon(FluentIcons.cancel, size: 8, color: accent),
-              ]),
-            )),
-            Button(
-              onPressed: _detecting ? null : () => _showClassPicker(context, isDark, accent),
-              style: ButtonStyle(
-                padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 8, vertical: 4)),
-              ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(FluentIcons.add, size: 10, color: accent),
-                const SizedBox(width: 4),
-                Text('添加', style: TextStyle(fontSize: 11, color: accent)),
-              ]),
-            ),
-          ]),
-        ]),
-
-        _buildSection('参数设置', isDark, [
-          Row(children: [
-            const Text('置信度: ', style: TextStyle(fontSize: 12)),
-            Expanded(child: Slider(
-              value: _confidence,
-              min: 0.1, max: 0.95, divisions: 17,
-              onChanged: _detecting ? null : (v) => setState(() => _confidence = v),
-            )),
-            const SizedBox(width: 8),
-            Text(_confidence.toStringAsFixed(2), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-          ]),
-          const SizedBox(height: 8),
-          Row(children: [
-            const Text('检查间隔: ', style: TextStyle(fontSize: 12)),
-            Expanded(child: Slider(
-              value: _checkIntervalMs.toDouble(),
-              min: 100, max: 3000, divisions: 29,
-              onChanged: _detecting ? null : (v) => setState(() => _checkIntervalMs = v.round()),
-            )),
-            const SizedBox(width: 8),
-            Text('$_checkIntervalMs ms', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-          ]),
-          const SizedBox(height: 8),
-          Row(children: [
-            Checkbox(
-              checked: _autoClick,
-              onChanged: _detecting ? null : (v) => setState(() => _autoClick = v ?? true),
-            ),
-            const SizedBox(width: 8),
-            const Text('检测到目标后自动点击', style: TextStyle(fontSize: 12)),
-          ]),
-          const SizedBox(height: 4),
-          Row(children: [
-            Checkbox(
-              checked: _showTrackBox,
-              onChanged: (v) {
-                setState(() => _showTrackBox = v ?? false);
-                if (!_showTrackBox || !_detecting) {
-                  ScreenOverlayService.instance.stopOverlay();
-                }
-              },
-            ),
-            const SizedBox(width: 8),
-            const Text('显示追踪框', style: TextStyle(fontSize: 12)),
-          ]),
-        ]),
-
-        const SizedBox(height: 16),
-
-        Row(children: [
-          if (!_detecting)
-            FilledButton(
-              onPressed: _hasRegion ? _startDetection : null,
-              style: ButtonStyle(
-                backgroundColor: WidgetStatePropertyAll(accent.withValues(alpha: 0.15)),
-                padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 20, vertical: 10)),
-              ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(FluentIcons.play, size: 14, color: accent),
-                const SizedBox(width: 8),
-                Text('开始检测', style: TextStyle(color: accent, fontSize: 13, fontWeight: FontWeight.w600)),
-              ]),
-            ),
-          if (_detecting)
-            FilledButton(
-              onPressed: _stopDetection,
-              style: ButtonStyle(
-                backgroundColor: const WidgetStatePropertyAll(Color(0x1FFF0000)),
-                padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 20, vertical: 10)),
-              ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(FluentIcons.stop, size: 14, color: const Color(0xCCFF0000)),
-                const SizedBox(width: 8),
-                Text('停止检测', style: const TextStyle(color: Color(0xCCFF0000), fontSize: 13, fontWeight: FontWeight.w600)),
-              ]),
-            ),
-          const SizedBox(width: 12),
-          if (_detecting)
-            Container(
-              width: 8, height: 8,
-              decoration: BoxDecoration(
-                color: const Color(0xFF00E676),
-                borderRadius: BorderRadius.circular(4),
-              ),
-            ),
-          if (_detecting) ...[
-            const SizedBox(width: 6),
-            Text('检测中...', style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
-          ],
-        ]),
-
-        if (_detectionCount > 0 || _lastResults.isNotEmpty) ...[
-          const SizedBox(height: 16),
-          _buildSection('检测结果', isDark, [
-            Row(children: [
-              _statChip('检测次数', '$_detectionCount', isDark),
-              const SizedBox(width: 8),
-              _statChip('当前目标', '${_lastResults.length}', isDark),
-              const SizedBox(width: 8),
-              _statChip('点击次数', '$_clickCount', isDark),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(FluentIcons.delete, size: 10, color: const Color(0xFFFF0000)),
+              const SizedBox(width: 4),
+              Text('卸载', style: const TextStyle(fontSize: 11, color: Color(0xFFFF0000))),
             ]),
-            if (_lastResults.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              ..._lastResults.take(5).map((r) => Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: isDark ? const Color(0x80252540) : const Color(0x80F0F0FA),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)),
-                  ),
-                  child: Row(children: [
-                    Icon(FluentIcons.bullseye, size: 12, color: accent),
-                    const SizedBox(width: 8),
-                    Text(_cocoClassZh[r.label] ?? r.label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                    const SizedBox(width: 8),
-                    Text('(${r.x}, ${r.y}) ${r.width}×${r.height}', style: TextStyle(fontSize: 11, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                      decoration: BoxDecoration(
-                        color: const Color(0x1F00E676),
-                        borderRadius: BorderRadius.circular(3),
-                      ),
-                      child: Text('${(r.score * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w600, color: Color(0xFF00E676))),
-                    ),
-                  ]),
-                ),
-              )),
-              if (_lastResults.length > 5)
-                Text('...还有 ${_lastResults.length - 5} 个结果', style: TextStyle(fontSize: 11, color: isDark ? const Color(0xFF707090) : const Color(0xFFA0A0B0))),
-            ] else if (_detectionCount > 0) ...[
-              const SizedBox(height: 4),
-              Text('未检测到目标', style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF707090) : const Color(0xFFA0A0B0))),
-            ],
-          ]),
-        ],
-
-        const SizedBox(height: 20),
-
-        _buildSection('管理', isDark, [
-          Row(children: [
-            Button(
-              onPressed: _openPluginDir,
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(FluentIcons.folder_open, size: 12, color: accent),
-                const SizedBox(width: 6),
-                Text('打开目录', style: TextStyle(fontSize: 12, color: accent)),
-              ]),
-            ),
-            const SizedBox(width: 8),
-            Button(
-              onPressed: _detecting ? null : _uninstallAll,
-              style: ButtonStyle(
-                padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 10, vertical: 4)),
-              ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(FluentIcons.delete, size: 10, color: const Color(0xFFFF0000)),
-                const SizedBox(width: 4),
-                Text('卸载', style: const TextStyle(fontSize: 11, color: Color(0xFFFF0000))),
-              ]),
-            ),
-          ]),
-        ]),
-      ],
-    ]);
-  }
-
-  void _showClassPicker(BuildContext context, bool isDark, Color accent) {
-    final filtered = _cocoClasses.where((c) => !_targetClasses.contains(c)).toList();
-    showDialog(
-      context: context,
-      builder: (ctx) => ContentDialog(
-        title: const Text('选择目标类别'),
-        constraints: const BoxConstraints(maxWidth: 400, maxHeight: 500),
-        content: SizedBox(
-          width: 360,
-          height: 400,
-          child: ListView.builder(
-            itemCount: filtered.length,
-            itemBuilder: (_, i) {
-              final cls = filtered[i];
-              final zh = _cocoClassZh[cls] ?? cls;
-              return ListTile(
-                leading: Icon(FluentIcons.bullseye, size: 14, color: accent),
-                title: Text(zh, style: const TextStyle(fontSize: 13)),
-                subtitle: Text(cls, style: TextStyle(fontSize: 10, color: isDark ? const Color(0xFF707090) : const Color(0xFF909090))),
-                onPressed: () {
-                  _addClass(cls);
-                  Navigator.pop(ctx);
-                },
-              );
-            },
           ),
-        ),
-        actions: [
-          Button(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
-        ],
-      ),
-    );
-  }
+        ]),
 
-  Widget _statChip(String label, String value, bool isDark) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0x80252540) : const Color(0x80F0F0FA),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Text(label, style: TextStyle(fontSize: 10, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
-        const SizedBox(width: 4),
-        Text(value, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
-      ]),
-    );
+        const Divider(style: DividerThemeData(horizontalMargin: EdgeInsets.zero)),
+
+        const SizedBox(height: 8),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: const Color(0x1F4FC3F7),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: const Color(0x4D4FC3F7)),
+          ),
+          child: Row(children: [
+            Icon(FluentIcons.info, size: 14, color: const Color(0xFF4FC3F7)),
+            const SizedBox(width: 8),
+            Expanded(child: Text(
+              '安装依赖后，可在「条件触发」中使用「目标检测」条件类型。\n目标检测功能已整合到条件触发系统中。',
+              style: const TextStyle(fontSize: 12, color: Color(0xFF4FC3F7)),
+            )),
+          ]),
+        ),
+      ],
+    ]));
   }
 
   Widget _buildSection(String title, bool isDark, List<Widget> children) {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(title, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700,
-        color: isDark ? const Color(0xFFC0C0E8) : const Color(0xFF5A5A80))),
-      const SizedBox(height: 8),
+      Padding(padding: const EdgeInsets.only(bottom: 8), child: Row(children: [
+        Container(width: 3, height: 14, decoration: BoxDecoration(
+          color: FluentTheme.of(context).accentColor,
+          borderRadius: BorderRadius.circular(2),
+        )),
+        const SizedBox(width: 8),
+        Text(title, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700,
+          color: isDark ? const Color(0xFFC0C0E8) : const Color(0xFF5A5A80))),
+      ])),
       ...children,
-      const SizedBox(height: 8),
+      const SizedBox(height: 12),
     ]);
   }
 
@@ -2329,53 +1961,9 @@ class _AiTrackerTabState extends State<_AiTrackerTab> {
   }
 }
 
-class _DetectionResult {
-  final int x;
-  final int y;
-  final int width;
-  final int height;
-  final double score;
-  final String label;
-  final int classId;
-
-  _DetectionResult({
-    required this.x,
-    required this.y,
-    required this.width,
-    required this.height,
-    required this.score,
-    required this.label,
-    this.classId = 0,
-  });
-}
-
 // ─── Data Classes ────────────────────────────────────────────
 
-class _RegionEntry {
-  final String id;
-  String name;
-  double threshold;
-  bool enabled;
-  final int x, y, w, h;
-  final Color? targetColor;
-  Color? lastColor;
-
-  _RegionEntry({
-    required this.id, required this.name, required this.threshold,
-    required this.enabled, this.x = 0, this.y = 0, this.w = 100, this.h = 100,
-    this.targetColor,
-  });
-}
-
-class _RegionConfig {
-  final String name;
-  final int x, y, w, h;
-  final double threshold;
-  final Color? targetColor;
-  _RegionConfig({required this.name, required this.x, required this.y, required this.w, required this.h, required this.threshold, this.targetColor});
-}
-
-enum _TriggerConditionType { colorMatch, colorChange, colorDisappear, imageMatch, textMatch }
+enum _TriggerConditionType { colorMatch, colorChange, colorDisappear, imageMatch, textMatch, objectDetect }
 extension on _TriggerConditionType {
   String get label {
     switch (this) {
@@ -2384,15 +1972,17 @@ extension on _TriggerConditionType {
       case _TriggerConditionType.colorDisappear: return '颜色消失';
       case _TriggerConditionType.imageMatch: return '图像匹配';
       case _TriggerConditionType.textMatch: return '文字匹配';
+      case _TriggerConditionType.objectDetect: return '目标检测';
     }
   }
 }
 
-enum _TriggerActionType { click, keyPress, startClicker, stopClicker, runMacro }
+enum _TriggerActionType { click, clickTargetCenter, keyPress, startClicker, stopClicker, runMacro }
 extension on _TriggerActionType {
   String get label {
     switch (this) {
       case _TriggerActionType.click: return '点击';
+      case _TriggerActionType.clickTargetCenter: return '点击目标中心';
       case _TriggerActionType.keyPress: return '按键';
       case _TriggerActionType.startClicker: return '启动连点';
       case _TriggerActionType.stopClicker: return '停止连点';
@@ -2435,6 +2025,8 @@ class _TriggerEntry {
   final double matchThreshold;
   final String targetText;
   final _TextMatchMode textMatchMode;
+  final String targetObjectClass;
+  final double detectConfidence;
   final int actionX, actionY;
   final String actionKey;
   final String macroId;
@@ -2447,6 +2039,8 @@ class _TriggerEntry {
     this.targetColor, this.templateData, this.matchThreshold = 0.8,
     this.targetText = '',
     this.textMatchMode = _TextMatchMode.fuzzy,
+    this.targetObjectClass = '',
+    this.detectConfidence = 0.5,
     this.actionX = 0, this.actionY = 0,
     this.actionKey = '', this.macroId = '',
     this.intervalMs = 500,
@@ -2463,6 +2057,8 @@ class _TriggerConfig {
   final double matchThreshold;
   final String targetText;
   final _TextMatchMode textMatchMode;
+  final String targetObjectClass;
+  final double detectConfidence;
   final int actionX, actionY;
   final String actionKey;
   final String macroId;
@@ -2473,6 +2069,8 @@ class _TriggerConfig {
     this.targetColor, this.templateData, this.matchThreshold = 0.8,
     this.targetText = '',
     this.textMatchMode = _TextMatchMode.fuzzy,
+    this.targetObjectClass = '',
+    this.detectConfidence = 0.5,
     this.actionX = 0, this.actionY = 0,
     this.actionKey = '', this.macroId = '',
     this.intervalMs = 500,
@@ -2480,84 +2078,6 @@ class _TriggerConfig {
 }
 
 // ─── Add Region Dialog ──────────────────────────────────────
-
-class _AddRegionDialog extends StatefulWidget {
-  final int initialX, initialY, initialW, initialH;
-  const _AddRegionDialog({
-    this.initialX = 0, this.initialY = 0,
-    this.initialW = 100, this.initialH = 100,
-  });
-  @override
-  State<_AddRegionDialog> createState() => _AddRegionDialogState();
-}
-
-class _AddRegionDialogState extends State<_AddRegionDialog> {
-  late int _x, _y, _w, _h;
-  double _threshold = 0.85;
-  Color? _targetColor;
-  String _colorInfo = '';
-
-  @override
-  void initState() {
-    super.initState();
-    _x = widget.initialX;
-    _y = widget.initialY;
-    _w = widget.initialW;
-    _h = widget.initialH;
-  }
-
-  @override
-  void dispose() {
-    // Don't set handler here — main page owns it
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return ContentDialog(
-      title: const Text('添加监控区域'),
-      content: SizedBox(width: 380, child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: Colors.green.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
-          ),
-          child: Row(children: [
-            Icon(FluentIcons.checkbox_composite, size: 14, color: Colors.green),
-            const SizedBox(width: 6),
-            Text('已选区域: ($_x, $_y) ${_w}x$_h', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-          ]),
-        ),
-        const SizedBox(height: 12),
-        Row(children: [
-          SizedBox(width: 70, child: TextBox(placeholder: 'X', onChanged: (v) => _x = int.tryParse(v) ?? _x)),
-          const SizedBox(width: 6),
-          SizedBox(width: 70, child: TextBox(placeholder: 'Y', onChanged: (v) => _y = int.tryParse(v) ?? _y)),
-          const SizedBox(width: 6),
-          SizedBox(width: 70, child: TextBox(placeholder: '宽', onChanged: (v) => _w = int.tryParse(v) ?? _w)),
-          const SizedBox(width: 6),
-          SizedBox(width: 70, child: TextBox(placeholder: '高', onChanged: (v) => _h = int.tryParse(v) ?? _h)),
-        ]),
-        const SizedBox(height: 12),
-        Row(children: [
-          const Text('阈值: ', style: TextStyle(fontSize: 13)),
-          Expanded(child: Slider(value: _threshold, min: 0.5, max: 1.0, divisions: 50, onChanged: (v) => setState(() => _threshold = v))),
-          const SizedBox(width: 8),
-          Text('${(_threshold * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-        ]),
-      ])),
-      actions: [
-        Button(onPressed: () => Navigator.pop(context), child: const Text('取消')),
-        FilledButton(onPressed: () => Navigator.pop(context, _RegionConfig(
-          name: '监控区域', x: _x, y: _y, w: _w, h: _h,
-          threshold: _threshold, targetColor: _targetColor,
-        )), child: const Text('添加')),
-      ],
-    );
-  }
-}
 
 // ─── Add Trigger Dialog ─────────────────────────────────────
 
@@ -2581,6 +2101,7 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
   _TriggerConditionType _conditionType = _TriggerConditionType.colorMatch;
   _TriggerActionType _actionType = _TriggerActionType.click;
   late int _x, _y, _w, _h;
+  late final TextEditingController _xCtrl, _yCtrl, _wCtrl, _hCtrl;
   Color? _targetColor;
   int _actionX = 0, _actionY = 0;
   String _actionKey = '';
@@ -2593,6 +2114,8 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
   _TextMatchMode _textMatchMode = _TextMatchMode.fuzzy;
   TemplateData? _templateData;
   String _templateInfo = '';
+  String _targetObjectClass = '';
+  double _detectConfidence = 0.5;
 
   @override
   void initState() {
@@ -2607,6 +2130,8 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
       _matchThreshold = t.matchThreshold;
       _targetText = t.targetText;
       _textMatchMode = t.textMatchMode;
+      _targetObjectClass = t.targetObjectClass;
+      _detectConfidence = t.detectConfidence;
       _actionX = t.actionX; _actionY = t.actionY;
       _actionKey = t.actionKey;
       _macroId = t.macroId;
@@ -2621,6 +2146,19 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
       _w = widget.initialW;
       _h = widget.initialH;
     }
+    _xCtrl = TextEditingController(text: _x.toString());
+    _yCtrl = TextEditingController(text: _y.toString());
+    _wCtrl = TextEditingController(text: _w.toString());
+    _hCtrl = TextEditingController(text: _h.toString());
+  }
+
+  @override
+  void dispose() {
+    _xCtrl.dispose();
+    _yCtrl.dispose();
+    _wCtrl.dispose();
+    _hCtrl.dispose();
+    super.dispose();
   }
 
   bool get _isEditing => widget.initialTrigger != null;
@@ -2638,7 +2176,16 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
             value: t,
             child: Text(t.label),
           )).toList(),
-          onChanged: (v) { if (v != null) setState(() => _conditionType = v); },
+          onChanged: (v) {
+            if (v != null) {
+              setState(() {
+                _conditionType = v;
+                if (v == _TriggerConditionType.objectDetect && _actionType != _TriggerActionType.clickTargetCenter && _actionType != _TriggerActionType.keyPress) {
+                  _actionType = _TriggerActionType.clickTargetCenter;
+                }
+              });
+            }
+          },
         ),
 
         const SizedBox(height: 8),
@@ -2659,13 +2206,34 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
         ),
         const SizedBox(height: 8),
         Row(children: [
-          SizedBox(width: 70, child: TextBox(placeholder: 'X', onChanged: (v) => _x = int.tryParse(v) ?? _x)),
-          const SizedBox(width: 6),
-          SizedBox(width: 70, child: TextBox(placeholder: 'Y', onChanged: (v) => _y = int.tryParse(v) ?? _y)),
-          const SizedBox(width: 6),
-          SizedBox(width: 70, child: TextBox(placeholder: '宽', onChanged: (v) => _w = int.tryParse(v) ?? _w)),
-          const SizedBox(width: 6),
-          SizedBox(width: 70, child: TextBox(placeholder: '高', onChanged: (v) => _h = int.tryParse(v) ?? _h)),
+          SizedBox(width: 60, child: TextBox(controller: _xCtrl, placeholder: 'X', onChanged: (v) => _x = int.tryParse(v) ?? _x)),
+          const SizedBox(width: 4),
+          SizedBox(width: 60, child: TextBox(controller: _yCtrl, placeholder: 'Y', onChanged: (v) => _y = int.tryParse(v) ?? _y)),
+          const SizedBox(width: 4),
+          SizedBox(width: 60, child: TextBox(controller: _wCtrl, placeholder: '宽', onChanged: (v) => _w = int.tryParse(v) ?? _w)),
+          const SizedBox(width: 4),
+          SizedBox(width: 60, child: TextBox(controller: _hCtrl, placeholder: '高', onChanged: (v) => _h = int.tryParse(v) ?? _h)),
+          const SizedBox(width: 4),
+          Expanded(child: Button(
+            onPressed: () async {
+              final sel = await ScreenOverlayService.instance.startAreaSelect();
+              if (sel != null && mounted) {
+                final (sx, sy, sx2, sy2) = sel;
+                setState(() {
+                  _x = sx; _y = sy; _w = sx2 - sx; _h = sy2 - sy;
+                  _xCtrl.text = _x.toString();
+                  _yCtrl.text = _y.toString();
+                  _wCtrl.text = _w.toString();
+                  _hCtrl.text = _h.toString();
+                });
+              }
+            },
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(FluentIcons.edit, size: 12),
+              const SizedBox(width: 4),
+              const Text('重选'),
+            ]),
+          )),
         ]),
 
         // Image match specific: capture template + threshold
@@ -2701,7 +2269,7 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
           const SizedBox(height: 8),
           Row(children: [
             const Text('匹配阈值: ', style: TextStyle(fontSize: 13)),
-            Expanded(child: Slider(value: _matchThreshold, min: 0.5, max: 1.0, divisions: 50, onChanged: (v) => setState(() => _matchThreshold = v))),
+            Expanded(child: Slider(value: _matchThreshold, min: 0.5, max: 1.0, divisions: 50, label: '${(_matchThreshold * 100).toStringAsFixed(0)}%', onChanged: (v) => setState(() => _matchThreshold = v))),
             const SizedBox(width: 8),
             Text('${(_matchThreshold * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
           ]),
@@ -2724,6 +2292,40 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
           ),
           const SizedBox(height: 4),
           Text(_textMatchMode.hint, style: const TextStyle(fontSize: 11, color: Color(0xFF9090B0))),
+          if (Platform.isWindows) const SizedBox(height: 6),
+          if (Platform.isWindows) Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: const Color(0x1FFFF9800),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: const Color(0x4DFF9800)),
+            ),
+            child: Row(children: [
+              Icon(FluentIcons.info, size: 12, color: const Color(0xFFFF9800)),
+              const SizedBox(width: 4),
+              Expanded(child: Text(
+                'Windows OCR 已就绪，支持中英文识别',  // PaddleOCR 暂时禁用
+                style: const TextStyle(fontSize: 10, color: Color(0xFF00E676)),
+              )),
+            ]),
+          ),
+        ],
+
+        if (_conditionType == _TriggerConditionType.objectDetect) ...[
+          const SizedBox(height: 8),
+          TextBox(placeholder: '目标类别 (如 person, car, dog)', onChanged: (v) => _targetObjectClass = v),
+          const SizedBox(height: 4),
+          const Text('留空则检测所有目标', style: TextStyle(fontSize: 11, color: Color(0xFF9090B0))),
+          const SizedBox(height: 8),
+          Row(children: [
+            const Text('置信度: ', style: TextStyle(fontSize: 13)),
+            Expanded(child: Slider(value: _detectConfidence, min: 0.1, max: 0.95, divisions: 17, label: '${(_detectConfidence * 100).toStringAsFixed(0)}%', onChanged: (v) => setState(() => _detectConfidence = v))),
+            const SizedBox(width: 8),
+            Text('${(_detectConfidence * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          ]),
+          const SizedBox(height: 4),
+          const Text('需要先在「高级模型」中下载 ONNX Runtime 和 YOLO 模型', style: TextStyle(fontSize: 11, color: Color(0xFFFF9800))),
         ],
 
         const SizedBox(height: 12),
@@ -2764,6 +2366,25 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
             const SizedBox(width: 6),
             SizedBox(width: 70, child: TextBox(placeholder: 'Y', onChanged: (v) => _actionY = int.tryParse(v) ?? _actionY)),
           ]),
+        ] else if (_actionType == _TriggerActionType.clickTargetCenter) ...[
+          const SizedBox(height: 4),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFF5252).withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: const Color(0xFFFF5252).withValues(alpha: 0.2)),
+            ),
+            child: Row(children: [
+              const Icon(FluentIcons.machine_learning, size: 14, color: Color(0xFFFF5252)),
+              const SizedBox(width: 6),
+              Expanded(child: Text(
+                '检测到目标后，自动点击目标中心位置',
+                style: const TextStyle(fontSize: 11, color: Color(0xFFFF5252)),
+              )),
+            ]),
+          ),
         ] else if (_actionType == _TriggerActionType.keyPress) ...[
           const SizedBox(height: 4),
           SizedBox(width: 120, child: TextBox(placeholder: '按键 (如 A, Enter)', onChanged: (v) => _actionKey = v)),
@@ -2792,7 +2413,7 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
         const SizedBox(height: 8),
         Row(children: [
           const Text('检查间隔: ', style: TextStyle(fontSize: 13)),
-          Expanded(child: Slider(value: _intervalMs.toDouble(), min: 100, max: 5000, divisions: 49, onChanged: (v) => setState(() => _intervalMs = v.round()))),
+          Expanded(child: Slider(value: _intervalMs.toDouble(), min: 100, max: 5000, divisions: 49, label: '${_intervalMs}ms', onChanged: (v) => setState(() => _intervalMs = v.round()))),
           const SizedBox(width: 8),
           Text('$_intervalMs ms', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
         ]),
@@ -2809,6 +2430,8 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
           matchThreshold: _matchThreshold,
           targetText: _targetText,
           textMatchMode: _textMatchMode,
+          targetObjectClass: _targetObjectClass,
+          detectConfidence: _detectConfidence,
           actionX: _actionX, actionY: _actionY,
           actionKey: _actionKey,
           macroId: _macroId,

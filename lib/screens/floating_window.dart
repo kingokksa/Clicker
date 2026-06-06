@@ -67,7 +67,7 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener {
             GestureDetector(
               onPanStart: (_) => windowManager.startDragging(),
               child: Container(
-                height: 32,
+                height: 28,
                 padding: const EdgeInsets.symmetric(horizontal: 10),
                 decoration: BoxDecoration(
                   color: isDark ? const Color(0xFF252544).withValues(alpha: 0.95) : const Color(0xFFF0F0FA).withValues(alpha: 0.95),
@@ -116,7 +116,7 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener {
 
             // Content
             Padding(
-              padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+              padding: const EdgeInsets.fromLTRB(10, 6, 10, 8),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -127,7 +127,7 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener {
                     children: [
                       SizedBox(
                         width: 120,
-                        height: 30,
+                        height: 28,
                         child: FilledButton(
                           style: ButtonStyle(
                             backgroundColor: WidgetStateProperty.resolveWith((states) {
@@ -160,7 +160,7 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener {
                     ],
                   ),
 
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 4),
 
                   // Interval slider row
                   Row(

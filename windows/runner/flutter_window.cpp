@@ -8,6 +8,10 @@
 #include <algorithm>
 #include <vector>
 #include <thread>
+#include <set>
+#include <mutex>
+#include <atomic>
+#include <map>
 
 // C++/WinRT for Windows OCR
 #include <winrt/Windows.Foundation.h>
@@ -105,8 +109,12 @@ static int _runCommandHidden(const std::string& cmd, std::string& output) {
 
   CloseHandle(hReadPipe);
 
-  WaitForSingleObject(pi.hProcess, INFINITE);
+  // Wait with timeout (60 seconds max for OCR operations)
+  DWORD waitResult = WaitForSingleObject(pi.hProcess, 60000);
   DWORD exitCode = 1;
+  if (waitResult == WAIT_TIMEOUT) {
+    TerminateProcess(pi.hProcess, 1);
+  }
   GetExitCodeProcess(pi.hProcess, &exitCode);
   CloseHandle(pi.hProcess);
   CloseHandle(pi.hThread);
@@ -150,13 +158,67 @@ static struct {
 
 static volatile UINT g_clicker_stopped_msg = 0;
 static volatile UINT g_perform_click_msg = 0;
+static volatile UINT g_findimage_result_msg = 0;
+
+// Structure to pass findImage result from background thread to main thread
+struct FindImageResultData {
+  flutter::MethodResult<>* result_ptr;
+  double bestScore;
+  int bestX;
+  int bestY;
+  int tplW;
+  int tplH;
+};
+static std::mutex g_findimage_mutex;
+static std::map<int, FindImageResultData> g_findimage_results;
+static std::atomic<int> g_findimage_next_id{0};
 
 // ─── OCR Fallback Methods ──────────────────────────────────
 // Save BGRA pixels to a temp BMP file (shared by fallback methods)
-static std::string _ocrSaveTempBmp(const std::vector<uint8_t>& pixels, int w, int h) {
+// Get a temp directory that avoids non-ASCII path issues (e.g. Chinese usernames)
+static std::string _getSafeTempDir() {
+  // Try exe directory first — usually ASCII-safe
+  char exePath[MAX_PATH];
+  GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+  std::string exeDir(exePath);
+  auto lastSlash = exeDir.find_last_of("\\/");
+  if (lastSlash != std::string::npos) exeDir = exeDir.substr(0, lastSlash);
+
+  std::string safeDir = exeDir + "\\clicker_temp";
+  CreateDirectoryA(safeDir.c_str(), nullptr);
+  // Verify we can actually write here
+  std::string testPath = safeDir + "\\_test_" + std::to_string(GetTickCount64()) + ".tmp";
+  FILE* f = nullptr;
+  fopen_s(&f, testPath.c_str(), "w");
+  if (f) {
+    fclose(f);
+    remove(testPath.c_str());
+    // Clean up old temp files from previous sessions
+    WIN32_FIND_DATAA findData;
+    std::string searchPattern = safeDir + "\\clicker_*";
+    HANDLE hFind = FindFirstFileA(searchPattern.c_str(), &findData);
+    if (hFind != INVALID_HANDLE_VALUE) {
+      do {
+        std::string oldFile = safeDir + "\\" + findData.cFileName;
+        DeleteFileA(oldFile.c_str());
+      } while (FindNextFileA(hFind, &findData));
+      FindClose(hFind);
+    }
+    return safeDir + "\\";
+  }
+  // Fallback to Windows TEMP with short path (8.3 format avoids non-ASCII)
   char tempDir[MAX_PATH];
   GetTempPathA(MAX_PATH, tempDir);
-  std::string tempPath = std::string(tempDir) + "clicker_ocr_" +
+  char shortPath[MAX_PATH];
+  if (GetShortPathNameA(tempDir, shortPath, MAX_PATH)) {
+    return std::string(shortPath);
+  }
+  return std::string(tempDir);
+}
+
+static std::string _ocrSaveTempBmp(const std::vector<uint8_t>& pixels, int w, int h) {
+  std::string tempDir = _getSafeTempDir();
+  std::string tempPath = tempDir + "clicker_ocr_" +
     std::to_string(GetCurrentProcessId()) + "_" + std::to_string(GetTickCount64()) + ".bmp";
 
   FILE* f = nullptr;
@@ -204,9 +266,8 @@ static bool _ocrFallbackPython(const std::vector<uint8_t>& pixels, int w, int h,
   else if (lang == "ko") tessLang = "kor";
 
   // Write a temp Python script
-  char tempDir[MAX_PATH];
-  GetTempPathA(MAX_PATH, tempDir);
-  std::string pyPath = std::string(tempDir) + "clicker_ocr_" +
+  std::string tempDir = _getSafeTempDir();
+  std::string pyPath = tempDir + "clicker_ocr_" +
     std::to_string(GetCurrentProcessId()) + "_" + std::to_string(GetTickCount64()) + ".py";
 
   FILE* pyf = nullptr;
@@ -256,9 +317,8 @@ static bool _ocrFallbackPowerShell(const std::vector<uint8_t>& pixels, int w, in
   std::string bmpPath = _ocrSaveTempBmp(pixels, w, h);
   if (bmpPath.empty()) return false;
 
-  char tempDir[MAX_PATH];
-  GetTempPathA(MAX_PATH, tempDir);
-  std::string ps1Path = std::string(tempDir) + "clicker_ocr_" +
+  std::string tempDir = _getSafeTempDir();
+  std::string ps1Path = tempDir + "clicker_ocr_" +
     std::to_string(GetCurrentProcessId()) + "_" + std::to_string(GetTickCount64()) + ".ps1";
 
   FILE* ps1f = nullptr;
@@ -895,6 +955,7 @@ bool FlutterWindow::OnCreate() {
   g_clicker_stopped_msg = clicker_stopped_msg_;
 
   g_perform_click_msg = RegisterWindowMessageW(L"ClickerPerformClick");
+  g_findimage_result_msg = RegisterWindowMessageW(L"ClickerFindImageResult");
 
   HWND hwnd = GetHandle();
 
@@ -989,8 +1050,14 @@ bool FlutterWindow::OnCreate() {
           }
           int x = GetInt(args->at(0));
           int y = GetInt(args->at(1));
+          // Convert logical pixels to physical pixels for GetPixel
+          UINT dpi = GetDpiForWindow(nullptr);
+          if (dpi == 0) dpi = 96;
+          double dpiScale = dpi / 96.0;
+          int physX = static_cast<int>(x * dpiScale);
+          int physY = static_cast<int>(y * dpiScale);
           HDC hdc = GetDC(nullptr);
-          COLORREF color = GetPixel(hdc, x, y);
+          COLORREF color = GetPixel(hdc, physX, physY);
           ReleaseDC(nullptr, hdc);
           int r = GetRValue(color);
           int g = GetGValue(color);
@@ -1011,33 +1078,71 @@ bool FlutterWindow::OnCreate() {
           int y = GetInt(args->at(1));
           int w = GetInt(args->at(2));
           int h = GetInt(args->at(3));
-          if (w <= 0 || h <= 0 || w > 1920 || h > 1080) {
+          if (w <= 0 || h <= 0 || w > 3840 || h > 2160) {
             result->Error("INVALID_SIZE", "Capture size out of range");
             return;
           }
+          // Convert logical pixels to physical pixels for screen capture
+          UINT dpi = GetDpiForWindow(nullptr);
+          if (dpi == 0) dpi = 96;
+          double dpiScale = dpi / 96.0;
+          int physX = static_cast<int>(x * dpiScale);
+          int physY = static_cast<int>(y * dpiScale);
+          int physW = static_cast<int>(std::ceil(w * dpiScale));
+          int physH = static_cast<int>(std::ceil(h * dpiScale));
+
           HDC hdcScreen = GetDC(nullptr);
           HDC hdcMem = CreateCompatibleDC(hdcScreen);
-          HBITMAP hBitmap = CreateCompatibleBitmap(hdcScreen, w, h);
+          HBITMAP hBitmap = CreateCompatibleBitmap(hdcScreen, physW, physH);
           HBITMAP hOld = (HBITMAP)SelectObject(hdcMem, hBitmap);
-          BitBlt(hdcMem, 0, 0, w, h, hdcScreen, x, y, SRCCOPY);
-          SelectObject(hdcMem, hOld);
+          BitBlt(hdcMem, 0, 0, physW, physH, hdcScreen, physX, physY, SRCCOPY);
 
           BITMAPINFOHEADER bi = {};
           bi.biSize = sizeof(BITMAPINFOHEADER);
-          bi.biWidth = w;
-          bi.biHeight = -h;
+          bi.biWidth = physW;
+          bi.biHeight = -physH;
           bi.biPlanes = 1;
           bi.biBitCount = 32;
           bi.biCompression = BI_RGB;
 
-          std::vector<uint8_t> pixels(w * h * 4);
-          GetDIBits(hdcMem, hBitmap, 0, h, pixels.data(), (BITMAPINFO*)&bi, DIB_RGB_COLORS);
+          std::vector<uint8_t> physPixels(physW * physH * 4);
+          GetDIBits(hdcMem, hBitmap, 0, physH, physPixels.data(), (BITMAPINFO*)&bi, DIB_RGB_COLORS);
 
+          SelectObject(hdcMem, hOld);
           DeleteObject(hBitmap);
           DeleteDC(hdcMem);
           ReleaseDC(nullptr, hdcScreen);
 
-          result->Success(flutter::EncodableValue(pixels));
+          // Check if captured data is all zeros
+          int nonZeroCount = 0;
+          for (size_t i = 0; i < physPixels.size() && nonZeroCount < 10; i++) {
+            if (physPixels[i] != 0) nonZeroCount++;
+          }
+          OutputDebugStringA(("[captureScreenRect] physPixels nonZero(first10)=" + std::to_string(nonZeroCount) + "/" + std::to_string(physPixels.size()) + "\n").c_str());
+
+          // Downscale physical pixels back to logical pixel size for Dart
+          std::vector<uint8_t> pixels(w * h * 4);
+          OutputDebugStringA(("[captureScreenRect] x=" + std::to_string(x) + " y=" + std::to_string(y) + " w=" + std::to_string(w) + " h=" + std::to_string(h) + " physW=" + std::to_string(physW) + " physH=" + std::to_string(physH) + " dpiScale=" + std::to_string(dpiScale) + " physPixels=" + std::to_string(physPixels.size()) + "\n").c_str());
+          if (dpiScale == 1.0) {
+            pixels = std::move(physPixels);
+          } else {
+            for (int ly = 0; ly < h; ly++) {
+              int sy = static_cast<int>(ly * dpiScale);
+              if (sy >= physH) sy = physH - 1;
+              for (int lx = 0; lx < w; lx++) {
+                int sx = static_cast<int>(lx * dpiScale);
+                if (sx >= physW) sx = physW - 1;
+                int srcIdx = (sy * physW + sx) * 4;
+                int dstIdx = (ly * w + lx) * 4;
+                pixels[dstIdx]     = physPixels[srcIdx];
+                pixels[dstIdx + 1] = physPixels[srcIdx + 1];
+                pixels[dstIdx + 2] = physPixels[srcIdx + 2];
+                pixels[dstIdx + 3] = physPixels[srcIdx + 3];
+              }
+            }
+          }
+
+          result->Success(flutter::EncodableValue(std::move(pixels)));
         } else if (call.method_name() == "getScreenSize") {
           int w = GetSystemMetrics(SM_CXSCREEN);
           int h = GetSystemMetrics(SM_CYSCREEN);
@@ -1173,6 +1278,7 @@ bool FlutterWindow::OnCreate() {
           int regionW = GetInt(args->at(2));
           int regionH = GetInt(args->at(3));
           const auto* tplBytes = std::get_if<flutter::EncodableList>(&args->at(4));
+          const auto* tplBytesUint8 = std::get_if<std::vector<uint8_t>>(&args->at(4));
           int tplW = GetInt(args->at(5));
           int tplH = GetInt(args->at(6));
           double threshold = 0.8;
@@ -1180,42 +1286,98 @@ bool FlutterWindow::OnCreate() {
           else if (const auto* i32 = std::get_if<int32_t>(&args->at(7))) threshold = static_cast<double>(*i32);
           else if (const auto* i64 = std::get_if<int64_t>(&args->at(7))) threshold = static_cast<double>(*i64);
 
-          if (!tplBytes || tplW <= 0 || tplH <= 0 || regionW <= 0 || regionH <= 0) {
+          if ((!tplBytes && !tplBytesUint8) || tplW <= 0 || tplH <= 0 || regionW <= 0 || regionH <= 0) {
             result->Error("INVALID_ARGS", "Invalid template or region dimensions");
             return;
           }
 
-          // Convert EncodableList to uint8_t vector
-          std::vector<uint8_t> tplData(tplBytes->size());
-          for (size_t idx = 0; idx < tplBytes->size(); idx++) {
-            if (const auto* b32 = std::get_if<int32_t>(&tplBytes->at(idx))) tplData[idx] = static_cast<uint8_t>(*b32);
-            else if (const auto* b64 = std::get_if<int64_t>(&tplBytes->at(idx))) tplData[idx] = static_cast<uint8_t>(*b64);
+          // Convert template bytes to uint8_t vector
+          std::vector<uint8_t> tplData;
+          if (tplBytesUint8) {
+            tplData = std::move(*const_cast<std::vector<uint8_t>*>(tplBytesUint8));
+          } else {
+            tplData.resize(tplBytes->size());
+            for (size_t idx = 0; idx < tplBytes->size(); idx++) {
+              if (const auto* b32 = std::get_if<int32_t>(&tplBytes->at(idx))) tplData[idx] = static_cast<uint8_t>(*b32);
+              else if (const auto* b64 = std::get_if<int64_t>(&tplBytes->at(idx))) tplData[idx] = static_cast<uint8_t>(*b64);
+            }
+          }
+          size_t expectedTplSize = (size_t)tplW * tplH * 4;
+          if (tplData.size() < expectedTplSize) {
+            result->Error("INVALID_ARGS", "Template data size mismatch: expected " + std::to_string(expectedTplSize) + " got " + std::to_string(tplData.size()));
+            return;
+          }
+          // Check template data
+          {
+            int nonZeroCount = 0;
+            for (size_t i = 0; i < tplData.size() && nonZeroCount < 10; i++) {
+              if (tplData[i] != 0) nonZeroCount++;
+            }
+            OutputDebugStringA(("[findImage] tplData nonZero(first10)=" + std::to_string(nonZeroCount) + "/" + std::to_string(tplData.size()) + " expectedTplSize=" + std::to_string(expectedTplSize) + "\n").c_str());
           }
 
-          // Capture the screen region
+          // Get DPI scale factor: capture at physical pixels, then downscale to logical for matching
+          UINT dpi = GetDpiForWindow(nullptr);
+          if (dpi == 0) dpi = 96;
+          double dpiScale = dpi / 96.0;
+          int physRegionX = static_cast<int>(regionX * dpiScale);
+          int physRegionY = static_cast<int>(regionY * dpiScale);
+          int physRegionW = static_cast<int>(std::ceil(regionW * dpiScale));
+          int physRegionH = static_cast<int>(std::ceil(regionH * dpiScale));
+
+          // Capture the screen region (physical pixel coordinates)
           HDC hdcScreen = GetDC(nullptr);
           HDC hdcMem = CreateCompatibleDC(hdcScreen);
-          HBITMAP hBitmap = CreateCompatibleBitmap(hdcScreen, regionW, regionH);
+          HBITMAP hBitmap = CreateCompatibleBitmap(hdcScreen, physRegionW, physRegionH);
           HBITMAP hOld = (HBITMAP)SelectObject(hdcMem, hBitmap);
-          BitBlt(hdcMem, 0, 0, regionW, regionH, hdcScreen, regionX, regionY, SRCCOPY);
+          BitBlt(hdcMem, 0, 0, physRegionW, physRegionH, hdcScreen, physRegionX, physRegionY, SRCCOPY);
 
           BITMAPINFOHEADER bi = {};
           bi.biSize = sizeof(BITMAPINFOHEADER);
-          bi.biWidth = regionW;
-          bi.biHeight = -regionH;
+          bi.biWidth = physRegionW;
+          bi.biHeight = -physRegionH;
           bi.biPlanes = 1;
           bi.biBitCount = 32;
           bi.biCompression = BI_RGB;
 
-          std::vector<uint8_t> regionPixels(regionW * regionH * 4);
-          GetDIBits(hdcMem, hBitmap, 0, regionH, regionPixels.data(), (BITMAPINFO*)&bi, DIB_RGB_COLORS);
+          std::vector<uint8_t> physRegionPixels(physRegionW * physRegionH * 4);
+          GetDIBits(hdcMem, hBitmap, 0, physRegionH, physRegionPixels.data(), (BITMAPINFO*)&bi, DIB_RGB_COLORS);
           SelectObject(hdcMem, hOld);
           DeleteObject(hBitmap);
           DeleteDC(hdcMem);
           ReleaseDC(nullptr, hdcScreen);
 
-          // Template matching using normalized cross-correlation (simplified: sum of absolute differences)
-          // Run on a background thread to avoid blocking the platform thread.
+          // Downscale physical pixels back to logical pixel size for template matching
+          std::vector<uint8_t> regionPixels(regionW * regionH * 4);
+          if (dpiScale == 1.0) {
+            regionPixels = std::move(physRegionPixels);
+          } else {
+            for (int ly = 0; ly < regionH; ly++) {
+              int sy = static_cast<int>(ly * dpiScale);
+              if (sy >= physRegionH) sy = physRegionH - 1;
+              for (int lx = 0; lx < regionW; lx++) {
+                int sx = static_cast<int>(lx * dpiScale);
+                if (sx >= physRegionW) sx = physRegionW - 1;
+                int srcIdx = (sy * physRegionW + sx) * 4;
+                int dstIdx = (ly * regionW + lx) * 4;
+                regionPixels[dstIdx]     = physRegionPixels[srcIdx];
+                regionPixels[dstIdx + 1] = physRegionPixels[srcIdx + 1];
+                regionPixels[dstIdx + 2] = physRegionPixels[srcIdx + 2];
+                regionPixels[dstIdx + 3] = physRegionPixels[srcIdx + 3];
+              }
+            }
+          }
+
+          // Check if captured data is all zeros
+          {
+            int nonZeroCount = 0;
+            for (size_t i = 0; i < physRegionPixels.size() && nonZeroCount < 10; i++) {
+              if (physRegionPixels[i] != 0) nonZeroCount++;
+            }
+            OutputDebugStringA(("[findImage] physRegionPixels nonZero(first10)=" + std::to_string(nonZeroCount) + "/" + std::to_string(physRegionPixels.size()) + "\n").c_str());
+          }
+
+          // Template matching using normalized cross-correlation (in logical pixel space)
           int searchW = regionW - tplW + 1;
           int searchH = regionH - tplH + 1;
           if (searchW <= 0 || searchH <= 0) {
@@ -1224,54 +1386,214 @@ bool FlutterWindow::OnCreate() {
           }
 
           auto result_ptr = result.release();
-          std::thread([result_ptr, regionPixels=std::move(regionPixels), tplData=std::move(tplData),
-                       regionX, regionY, regionW, regionH, tplW, tplH, threshold, searchW, searchH]() {
-            // Sample step for performance (skip pixels for large searches)
-            int step = 1;
-            if (searchW * searchH > 500000) step = 2;
-            if (searchW * searchH > 2000000) step = 3;
+          int resultId = g_findimage_next_id.fetch_add(1);
+          HWND hwnd = GetHandle();
 
-            double bestScore = 0;
+          std::thread([result_ptr, regionPixels=std::move(regionPixels), tplData=std::move(tplData),
+                       regionX, regionY, regionW, regionH, tplW, tplH,
+                       threshold, searchW, searchH, resultId, hwnd]() {
+            double bestScore = -2;
             int bestX = -1, bestY = -1;
 
-            for (int sy = 0; sy < searchH; sy += step) {
-              for (int sx = 0; sx < searchW; sx += step) {
-                double totalDiff = 0;
-                int sampleCount = 0;
-                for (int ty = 0; ty < tplH; ty += 2) {
-                  for (int tx = 0; tx < tplW; tx += 2) {
+            // Pre-compute template mean (over ALL pixels)
+            int tplPixelCount = tplW * tplH;
+            double tplSumB = 0, tplSumG = 0, tplSumR = 0;
+            for (int i = 0; i < tplPixelCount; i++) {
+              tplSumB += tplData[i * 4];
+              tplSumG += tplData[i * 4 + 1];
+              tplSumR += tplData[i * 4 + 2];
+            }
+            double tplMeanB = tplSumB / tplPixelCount;
+            double tplMeanG = tplSumG / tplPixelCount;
+            double tplMeanR = tplSumR / tplPixelCount;
+
+            // Full-pixel template norm (for refine phase)
+            double tplFullVarSum = 0;
+            for (int i = 0; i < tplPixelCount; i++) {
+              double db = tplData[i * 4] - tplMeanB;
+              double dg = tplData[i * 4 + 1] - tplMeanG;
+              double dr = tplData[i * 4 + 2] - tplMeanR;
+              tplFullVarSum += db * db + dg * dg + dr * dr;
+            }
+            double tplFullNorm = sqrt(tplFullVarSum);
+            if (tplFullNorm < 1.0) tplFullNorm = 1.0;
+
+            // Coarse search parameters
+            int coarseStep = 4;
+            if (searchW * searchH > 1000000) coarseStep = 8;
+            int sampleStep = 4;
+            if (tplW * tplH < 5000) sampleStep = 2;
+            if (tplW * tplH < 1000) sampleStep = 1;
+
+            // Pre-compute sampled template norm (for coarse phase)
+            // This is critical: must use same sampled pixels as coarse NCC
+            double tplSampledVarSum = 0;
+            int sampledCount = 0;
+            for (int ty = 0; ty < tplH; ty += sampleStep) {
+              for (int tx = 0; tx < tplW; tx += sampleStep) {
+                int tIdx = (ty * tplW + tx) * 4;
+                if (tIdx + 3 >= (int)tplData.size()) continue;
+                double db = tplData[tIdx] - tplMeanB;
+                double dg = tplData[tIdx + 1] - tplMeanG;
+                double dr = tplData[tIdx + 2] - tplMeanR;
+                tplSampledVarSum += db * db + dg * dg + dr * dr;
+                sampledCount++;
+              }
+            }
+            double tplSampledNorm = sqrt(tplSampledVarSum);
+            if (tplSampledNorm < 1.0) tplSampledNorm = 1.0;
+
+            double coarseThreshold = std::max(threshold - 0.2, 0.3);
+
+            struct CoarseMatch { int sx; int sy; double score; };
+            std::vector<CoarseMatch> candidates;
+
+            // Phase 1: Coarse search with sampled NCC
+            for (int sy = 0; sy < searchH; sy += coarseStep) {
+              for (int sx = 0; sx < searchW; sx += coarseStep) {
+                // Compute region mean over sampled pixels
+                double regSumB = 0, regSumG = 0, regSumR = 0;
+                int sCount = 0;
+                for (int ty = 0; ty < tplH; ty += sampleStep) {
+                  for (int tx = 0; tx < tplW; tx += sampleStep) {
+                    int rIdx = ((sy + ty) * regionW + (sx + tx)) * 4;
+                    if (rIdx + 3 >= (int)regionPixels.size()) continue;
+                    regSumB += regionPixels[rIdx];
+                    regSumG += regionPixels[rIdx + 1];
+                    regSumR += regionPixels[rIdx + 2];
+                    sCount++;
+                  }
+                }
+                if (sCount == 0) continue;
+                double regMeanB = regSumB / sCount;
+                double regMeanG = regSumG / sCount;
+                double regMeanR = regSumR / sCount;
+
+                // Compute NCC over sampled pixels
+                double nccNum = 0, regSampledVarSum = 0;
+                for (int ty = 0; ty < tplH; ty += sampleStep) {
+                  for (int tx = 0; tx < tplW; tx += sampleStep) {
                     int rIdx = ((sy + ty) * regionW + (sx + tx)) * 4;
                     int tIdx = (ty * tplW + tx) * 4;
                     if (rIdx + 3 >= (int)regionPixels.size() || tIdx + 3 >= (int)tplData.size()) continue;
-                    int db = abs((int)regionPixels[rIdx] - (int)tplData[tIdx]);
-                    int dg = abs((int)regionPixels[rIdx+1] - (int)tplData[tIdx+1]);
-                    int dr = abs((int)regionPixels[rIdx+2] - (int)tplData[tIdx+2]);
-                    totalDiff += (db + dg + dr) / (255.0 * 3.0);
-                    sampleCount++;
+                    double rdB = regionPixels[rIdx] - regMeanB;
+                    double rdG = regionPixels[rIdx + 1] - regMeanG;
+                    double rdR = regionPixels[rIdx + 2] - regMeanR;
+                    double tdB = tplData[tIdx] - tplMeanB;
+                    double tdG = tplData[tIdx + 1] - tplMeanG;
+                    double tdR = tplData[tIdx + 2] - tplMeanR;
+                    nccNum += rdB * tdB + rdG * tdG + rdR * tdR;
+                    regSampledVarSum += rdB * rdB + rdG * rdG + rdR * rdR;
                   }
                 }
-                if (sampleCount == 0) continue;
-                double score = 1.0 - (totalDiff / sampleCount);
-                if (score >= threshold && score > bestScore) {
-                  bestScore = score;
+                double regSampledNorm = sqrt(regSampledVarSum);
+                if (regSampledNorm < 1.0) regSampledNorm = 1.0;
+
+                // Correct NCC: both numerator and denominator use same sampled pixels
+                double ncc = nccNum / (tplSampledNorm * regSampledNorm);
+                if (ncc > 1.0) ncc = 1.0;
+                if (ncc < -1.0) ncc = -1.0;
+
+                if (ncc > bestScore) {
+                  bestScore = ncc;
                   bestX = regionX + sx;
                   bestY = regionY + sy;
+                }
+
+                if (ncc >= coarseThreshold) {
+                  candidates.push_back({sx, sy, ncc});
                 }
               }
             }
 
-            flutter::EncodableList matches;
-            if (bestX >= 0 && bestY >= 0) {
-              flutter::EncodableMap match;
-              match[flutter::EncodableValue("x")] = flutter::EncodableValue(bestX);
-              match[flutter::EncodableValue("y")] = flutter::EncodableValue(bestY);
-              match[flutter::EncodableValue("width")] = flutter::EncodableValue(tplW);
-              match[flutter::EncodableValue("height")] = flutter::EncodableValue(tplH);
-              match[flutter::EncodableValue("score")] = flutter::EncodableValue(bestScore);
-              matches.push_back(flutter::EncodableValue(match));
+            OutputDebugStringA(("[findImage] coarse done: bestScore=" + std::to_string(bestScore) + " candidates=" + std::to_string(candidates.size()) + "\n").c_str());
+
+            // Phase 2: Refine top candidates with full-pixel NCC
+            std::sort(candidates.begin(), candidates.end(),
+              [](const CoarseMatch& a, const CoarseMatch& b) { return a.score > b.score; });
+            if (candidates.size() > 30) candidates.resize(30);
+
+            // Add neighbors
+            std::set<std::pair<int,int>> refineSet;
+            for (auto& c : candidates) {
+              for (int dy = -coarseStep; dy <= coarseStep; dy++) {
+                for (int dx = -coarseStep; dx <= coarseStep; dx++) {
+                  int nx = c.sx + dx;
+                  int ny = c.sy + dy;
+                  if (nx >= 0 && nx < searchW && ny >= 0 && ny < searchH) {
+                    refineSet.insert({nx, ny});
+                  }
+                }
+              }
             }
-            result_ptr->Success(flutter::EncodableValue(matches));
-            delete result_ptr;
+
+            double refineBestScore = -2;
+            int refineBestX = -1, refineBestY = -1;
+            for (auto& [sx, sy] : refineSet) {
+              double regSumB = 0, regSumG = 0, regSumR = 0;
+              for (int ty = 0; ty < tplH; ty++) {
+                for (int tx = 0; tx < tplW; tx++) {
+                  int rIdx = ((sy + ty) * regionW + (sx + tx)) * 4;
+                  if (rIdx + 3 >= (int)regionPixels.size()) continue;
+                  regSumB += regionPixels[rIdx];
+                  regSumG += regionPixels[rIdx + 1];
+                  regSumR += regionPixels[rIdx + 2];
+                }
+              }
+              double regMeanB = regSumB / tplPixelCount;
+              double regMeanG = regSumG / tplPixelCount;
+              double regMeanR = regSumR / tplPixelCount;
+
+              double nccNum = 0, regFullVarSum = 0;
+              for (int ty = 0; ty < tplH; ty++) {
+                for (int tx = 0; tx < tplW; tx++) {
+                  int rIdx = ((sy + ty) * regionW + (sx + tx)) * 4;
+                  int tIdx = (ty * tplW + tx) * 4;
+                  if (rIdx + 3 >= (int)regionPixels.size() || tIdx + 3 >= (int)tplData.size()) continue;
+                  double rdB = regionPixels[rIdx] - regMeanB;
+                  double rdG = regionPixels[rIdx + 1] - regMeanG;
+                  double rdR = regionPixels[rIdx + 2] - regMeanR;
+                  double tdB = tplData[tIdx] - tplMeanB;
+                  double tdG = tplData[tIdx + 1] - tplMeanG;
+                  double tdR = tplData[tIdx + 2] - tplMeanR;
+                  nccNum += rdB * tdB + rdG * tdG + rdR * tdR;
+                  regFullVarSum += rdB * rdB + rdG * rdG + rdR * rdR;
+                }
+              }
+              double regFullNorm = sqrt(regFullVarSum);
+              if (regFullNorm < 1.0) regFullNorm = 1.0;
+              double ncc = nccNum / (tplFullNorm * regFullNorm);
+              if (ncc > 1.0) ncc = 1.0;
+
+              if (ncc > refineBestScore) {
+                refineBestScore = ncc;
+                refineBestX = regionX + sx;
+                refineBestY = regionY + sy;
+              }
+            }
+
+            // Use the better of coarse and refine results
+            if (refineBestScore > bestScore) {
+              bestScore = refineBestScore;
+              bestX = refineBestX;
+              bestY = refineBestY;
+            }
+
+            OutputDebugStringA(("[findImage] final: bestScore=" + std::to_string(bestScore) + " bestX=" + std::to_string(bestX) + " bestY=" + std::to_string(bestY) + "\n").c_str());
+
+            // Post result back to main thread via Windows message
+            {
+              FindImageResultData data;
+              data.result_ptr = result_ptr;
+              data.bestScore = bestScore;
+              data.bestX = bestX;
+              data.bestY = bestY;
+              data.tplW = tplW;
+              data.tplH = tplH;
+              std::lock_guard<std::mutex> lock(g_findimage_mutex);
+              g_findimage_results[resultId] = data;
+            }
+            PostMessage(hwnd, g_findimage_result_msg, (WPARAM)resultId, 0);
           }).detach();
         } else if (call.method_name() == "ocrRegion") {
           // OCR a screen region using Windows.Media.Ocr (C++/WinRT)
@@ -1295,31 +1617,40 @@ bool FlutterWindow::OnCreate() {
             return;
           }
 
-          // Capture the region as BGRA pixels
+          // Convert logical pixels to physical pixels for screen capture
+          UINT dpi = GetDpiForWindow(nullptr);
+          if (dpi == 0) dpi = 96;
+          double dpiScale = dpi / 96.0;
+          int physOcrX = static_cast<int>(ocrX * dpiScale);
+          int physOcrY = static_cast<int>(ocrY * dpiScale);
+          int physOcrW = static_cast<int>(std::ceil(ocrW * dpiScale));
+          int physOcrH = static_cast<int>(std::ceil(ocrH * dpiScale));
+
+          // Capture the region as BGRA pixels (physical pixel coordinates)
           HDC hdcScreen = GetDC(nullptr);
           HDC hdcMem = CreateCompatibleDC(hdcScreen);
-          HBITMAP hBitmap = CreateCompatibleBitmap(hdcScreen, ocrW, ocrH);
+          HBITMAP hBitmap = CreateCompatibleBitmap(hdcScreen, physOcrW, physOcrH);
           HBITMAP hOld = (HBITMAP)SelectObject(hdcMem, hBitmap);
-          BitBlt(hdcMem, 0, 0, ocrW, ocrH, hdcScreen, ocrX, ocrY, SRCCOPY);
+          BitBlt(hdcMem, 0, 0, physOcrW, physOcrH, hdcScreen, physOcrX, physOcrY, SRCCOPY);
 
           BITMAPINFOHEADER bi = {};
           bi.biSize = sizeof(BITMAPINFOHEADER);
-          bi.biWidth = ocrW;
-          bi.biHeight = -ocrH; // top-down
+          bi.biWidth = physOcrW;
+          bi.biHeight = -physOcrH; // top-down
           bi.biPlanes = 1;
           bi.biBitCount = 32;
           bi.biCompression = BI_RGB;
 
-          std::vector<uint8_t> pixels(ocrW * ocrH * 4);
-          GetDIBits(hdcMem, hBitmap, 0, ocrH, pixels.data(), (BITMAPINFO*)&bi, DIB_RGB_COLORS);
+          std::vector<uint8_t> pixels(physOcrW * physOcrH * 4);
+          GetDIBits(hdcMem, hBitmap, 0, physOcrH, pixels.data(), (BITMAPINFO*)&bi, DIB_RGB_COLORS);
           SelectObject(hdcMem, hOld);
           DeleteObject(hBitmap);
           DeleteDC(hdcMem);
           ReleaseDC(nullptr, hdcScreen);
 
           // Convert BGRA to RGBA for SoftwareBitmap
-          std::vector<uint8_t> rgba(ocrW * ocrH * 4);
-          for (int i = 0; i < ocrW * ocrH; i++) {
+          std::vector<uint8_t> rgba(physOcrW * physOcrH * 4);
+          for (int i = 0; i < physOcrW * physOcrH; i++) {
             rgba[i*4+0] = pixels[i*4+2]; // R
             rgba[i*4+1] = pixels[i*4+1]; // G
             rgba[i*4+2] = pixels[i*4+0]; // B
@@ -1327,18 +1658,16 @@ bool FlutterWindow::OnCreate() {
           }
 
           // Run OCR on a background thread to avoid blocking the platform thread.
-          // Screen capture is done on the platform thread (GDI requires it),
-          // but OCR processing is CPU-intensive and must not freeze the UI.
           auto result_ptr = result.release();
           std::thread([result_ptr, rgba=std::move(rgba), pixels=std::move(pixels),
-                       ocrX, ocrY, ocrW, ocrH, lang]() {
+                       ocrX, ocrY, ocrW, ocrH, physOcrW, physOcrH, lang]() {
             try {
               // Initialize WinRT on this background thread (multi-threaded apartment for background use)
               winrt::init_apartment(winrt::apartment_type::multi_threaded);
 
               auto softwareBitmap = winrt::Windows::Graphics::Imaging::SoftwareBitmap(
                 winrt::Windows::Graphics::Imaging::BitmapPixelFormat::Rgba8,
-                ocrW, ocrH,
+                physOcrW, physOcrH,
                 winrt::Windows::Graphics::Imaging::BitmapAlphaMode::Premultiplied);
 
               {
@@ -1349,11 +1678,26 @@ bool FlutterWindow::OnCreate() {
               }
 
               winrt::Windows::Media::Ocr::OcrEngine ocrEngine = nullptr;
-              if (lang != "en" && lang != "") {
-                try {
-                  auto language = winrt::Windows::Globalization::Language(winrt::to_hstring(lang));
-                  ocrEngine = winrt::Windows::Media::Ocr::OcrEngine::TryCreateFromLanguage(language);
-                } catch (...) {}
+              if (lang != "" && lang != "en") {
+                std::vector<std::string> langCandidates;
+                if (lang.find("zh") != std::string::npos) {
+                  langCandidates = {"zh-Hans-CN", "zh-CN", "zh-Hans", "zh-CHS"};
+                } else if (lang.find("ja") != std::string::npos) {
+                  langCandidates = {"ja", "ja-JP"};
+                } else if (lang.find("ko") != std::string::npos) {
+                  langCandidates = {"ko", "ko-KR"};
+                } else if (lang.find("en") != std::string::npos) {
+                  langCandidates = {"en-US", "en-GB", "en"};
+                } else {
+                  langCandidates = {lang};
+                }
+                for (const auto& lc : langCandidates) {
+                  try {
+                    auto language = winrt::Windows::Globalization::Language(winrt::to_hstring(lc));
+                    ocrEngine = winrt::Windows::Media::Ocr::OcrEngine::TryCreateFromLanguage(language);
+                    if (ocrEngine != nullptr) break;
+                  } catch (...) {}
+                }
               }
               if (ocrEngine == nullptr) {
                 ocrEngine = winrt::Windows::Media::Ocr::OcrEngine::TryCreateFromUserProfileLanguages();
@@ -1377,8 +1721,8 @@ bool FlutterWindow::OnCreate() {
             } catch (const winrt::hresult_error& ex) {
               std::string winrtError = winrt::to_string(ex.message());
               std::string ocrText;
-              bool fallbackOk = _ocrFallbackPython(pixels, ocrW, ocrH, lang, ocrText)
-                             || _ocrFallbackPowerShell(pixels, ocrW, ocrH, lang, ocrText);
+              bool fallbackOk = _ocrFallbackPython(pixels, physOcrW, physOcrH, lang, ocrText)
+                             || _ocrFallbackPowerShell(pixels, physOcrW, physOcrH, lang, ocrText);
               if (fallbackOk) {
                 flutter::EncodableMap resultMap;
                 resultMap[flutter::EncodableValue("text")] = flutter::EncodableValue(ocrText);
@@ -1392,8 +1736,8 @@ bool FlutterWindow::OnCreate() {
               }
             } catch (const std::exception& ex) {
               std::string ocrText;
-              bool fallbackOk = _ocrFallbackPython(pixels, ocrW, ocrH, lang, ocrText)
-                             || _ocrFallbackPowerShell(pixels, ocrW, ocrH, lang, ocrText);
+              bool fallbackOk = _ocrFallbackPython(pixels, physOcrW, physOcrH, lang, ocrText)
+                             || _ocrFallbackPowerShell(pixels, physOcrW, physOcrH, lang, ocrText);
               if (fallbackOk) {
                 flutter::EncodableMap resultMap;
                 resultMap[flutter::EncodableValue("text")] = flutter::EncodableValue(ocrText);
@@ -1407,8 +1751,8 @@ bool FlutterWindow::OnCreate() {
               }
             } catch (...) {
               std::string ocrText;
-              bool fallbackOk = _ocrFallbackPython(pixels, ocrW, ocrH, lang, ocrText)
-                             || _ocrFallbackPowerShell(pixels, ocrW, ocrH, lang, ocrText);
+              bool fallbackOk = _ocrFallbackPython(pixels, physOcrW, physOcrH, lang, ocrText)
+                             || _ocrFallbackPowerShell(pixels, physOcrW, physOcrH, lang, ocrText);
               if (fallbackOk) {
                 flutter::EncodableMap resultMap;
                 resultMap[flutter::EncodableValue("text")] = flutter::EncodableValue(ocrText);
@@ -1495,6 +1839,24 @@ bool FlutterWindow::OnCreate() {
             SendInput(2, inputs, sizeof(INPUT));
           }
           result->Success();
+
+        } else if (call.method_name() == "checkOcrAvailable") {
+          // Check if Windows OCR engine is available (WinRT)
+          auto result_ptr = result.release();
+          std::thread([result_ptr]() {
+            try {
+              winrt::init_apartment(winrt::apartment_type::multi_threaded);
+              auto ocrEngine = winrt::Windows::Media::Ocr::OcrEngine::TryCreateFromUserProfileLanguages();
+              flutter::EncodableMap checkMap;
+              checkMap[flutter::EncodableValue("available")] = flutter::EncodableValue(ocrEngine != nullptr);
+              result_ptr->Success(flutter::EncodableValue(checkMap));
+            } catch (...) {
+              flutter::EncodableMap checkMap;
+              checkMap[flutter::EncodableValue("available")] = flutter::EncodableValue(false);
+              result_ptr->Success(flutter::EncodableValue(checkMap));
+            }
+            delete result_ptr;
+          }).detach();
 
         } else if (call.method_name() == "checkOcrTools") {
           // Check if Tesseract and Python+pytesseract are available.
@@ -1597,6 +1959,354 @@ bool FlutterWindow::OnCreate() {
           } else {
             result->Error("INVALID_TOOL", "Unknown tool: " + tool);
           }
+
+        } else if (call.method_name() == "checkPaddleOcr") {
+          auto result_ptr = result.release();
+          std::thread([result_ptr]() {
+            bool pyOk = false;
+            for (const char* pyCmd : {"python", "python3", "py"}) {
+              std::string cmd = std::string(pyCmd) + " -c \"import paddleocr\" 2>nul";
+              int ret = _runCommandHidden(cmd);
+              if (ret == 0) { pyOk = true; break; }
+            }
+            flutter::EncodableMap checkMap;
+            checkMap[flutter::EncodableValue("available")] = flutter::EncodableValue(pyOk);
+            result_ptr->Success(flutter::EncodableValue(checkMap));
+            delete result_ptr;
+          }).detach();
+
+        } else if (call.method_name() == "installPaddleOcr") {
+          auto result_ptr = result.release();
+          std::string mirrorUrl;
+          if (const auto* args = std::get_if<flutter::EncodableMap>(call.arguments())) {
+            if (auto it = args->find(flutter::EncodableValue("mirror")); it != args->end()) {
+              if (const auto* s = std::get_if<std::string>(&it->second)) {
+                mirrorUrl = *s;
+              }
+            }
+          }
+          std::thread([result_ptr, mirrorUrl]() {
+            bool ok = false;
+            if (!mirrorUrl.empty()) {
+              for (const char* pipCmd : {"python -m pip", "python3 -m pip", "py -m pip"}) {
+                std::string cmd = std::string(pipCmd) + " install paddlepaddle paddleocr -i " + mirrorUrl + " 2>&1";
+                int ret = _runCommandHidden(cmd);
+                if (ret == 0) { ok = true; break; }
+              }
+            }
+            if (!ok) {
+              for (const char* pipCmd : {"python -m pip", "python3 -m pip", "py -m pip"}) {
+                std::string cmd = std::string(pipCmd) + " install paddlepaddle paddleocr 2>&1";
+                int ret = _runCommandHidden(cmd);
+                if (ret == 0) { ok = true; break; }
+              }
+            }
+            if (!ok) {
+              for (const char* pipCmd : {"python -m pip", "python3 -m pip", "py -m pip"}) {
+                std::string cmd = std::string(pipCmd) + " install paddlepaddle paddleocr -i https://pypi.tuna.tsinghua.edu.cn/simple 2>&1";
+                int ret = _runCommandHidden(cmd);
+                if (ret == 0) { ok = true; break; }
+              }
+            }
+            if (ok) result_ptr->Success();
+            else result_ptr->Error("INSTALL_FAILED", "Failed to install PaddleOCR. Please install manually: pip install paddlepaddle paddleocr");
+            delete result_ptr;
+          }).detach();
+
+        } else if (call.method_name() == "uninstallPaddleOcr") {
+          auto result_ptr = result.release();
+          std::thread([result_ptr]() {
+            for (const char* pipCmd : {"python -m pip", "python3 -m pip", "py -m pip"}) {
+              std::string cmd = std::string(pipCmd) + " uninstall paddleocr paddlepaddle -y 2>&1";
+              _runCommandHidden(cmd);
+            }
+            result_ptr->Success();
+            delete result_ptr;
+          }).detach();
+
+        } else if (call.method_name() == "paddleOcrRegion") {
+          const auto* args = std::get_if<flutter::EncodableList>(call.arguments());
+          if (!args || args->size() < 4) {
+            result->Error("INVALID_ARGS", "Expected [x, y, w, h, language?]");
+            return;
+          }
+          int ocrX = GetInt(args->at(0));
+          int ocrY = GetInt(args->at(1));
+          int ocrW = GetInt(args->at(2));
+          int ocrH = GetInt(args->at(3));
+          std::string lang = "ch";
+          if (args->size() >= 5) {
+            if (const auto* s = std::get_if<std::string>(&args->at(4))) {
+              if (s->find("zh") != std::string::npos || s->find("ch") != std::string::npos) lang = "ch";
+              else if (s->find("en") != std::string::npos) lang = "en";
+              else if (s->find("ja") != std::string::npos) lang = "japan";
+              else if (s->find("ko") != std::string::npos) lang = "korean";
+              else lang = *s;
+            }
+          }
+
+          if (ocrW <= 0 || ocrH <= 0 || ocrW > 3840 || ocrH > 2160) {
+            result->Error("INVALID_SIZE", "OCR region size out of range");
+            return;
+          }
+
+          HDC hdcScreen = GetDC(nullptr);
+          HDC hdcMem = CreateCompatibleDC(hdcScreen);
+          HBITMAP hBitmap = CreateCompatibleBitmap(hdcScreen, ocrW, ocrH);
+          HBITMAP hOld = (HBITMAP)SelectObject(hdcMem, hBitmap);
+          BitBlt(hdcMem, 0, 0, ocrW, ocrH, hdcScreen, ocrX, ocrY, SRCCOPY);
+
+          BITMAPINFOHEADER bi = {};
+          bi.biSize = sizeof(BITMAPINFOHEADER);
+          bi.biWidth = ocrW;
+          bi.biHeight = -ocrH;
+          bi.biPlanes = 1;
+          bi.biBitCount = 32;
+          bi.biCompression = BI_RGB;
+
+          std::vector<uint8_t> pixels(ocrW * ocrH * 4);
+          GetDIBits(hdcMem, hBitmap, 0, ocrH, pixels.data(), (BITMAPINFO*)&bi, DIB_RGB_COLORS);
+          SelectObject(hdcMem, hOld);
+          DeleteObject(hBitmap);
+          DeleteDC(hdcMem);
+          ReleaseDC(nullptr, hdcScreen);
+
+          std::string bmpPath = _ocrSaveTempBmp(pixels, ocrW, ocrH);
+          if (bmpPath.empty()) {
+            result->Error("SAVE_FAILED", "Failed to save temp BMP for PaddleOCR");
+            return;
+          }
+
+          auto result_ptr = result.release();
+          std::thread([result_ptr, bmpPath, ocrX, ocrY, ocrW, ocrH, lang]() {
+            std::string safeTempDir = _getSafeTempDir();
+            std::string pyPath = safeTempDir + "clicker_paddle_" +
+              std::to_string(GetCurrentProcessId()) + "_" + std::to_string(GetTickCount64()) + ".py";
+
+            FILE* pyf = nullptr;
+            fopen_s(&pyf, pyPath.c_str(), "w");
+            if (!pyf) {
+              remove(bmpPath.c_str());
+              result_ptr->Error("SCRIPT_ERROR", "Failed to create PaddleOCR script");
+              delete result_ptr;
+              return;
+            }
+
+            fprintf(pyf,
+              "import sys\n"
+              "import json\n"
+              "import traceback\n"
+              "import os\n"
+              "import shutil\n"
+              "os.environ['FLAGS_fraction_of_gpu_memory_to_use'] = '0.1'\n"
+              "def try_ocr(lang, img_path, retry=True):\n"
+              "  try:\n"
+              "    from paddleocr import PaddleOCR\n"
+              "    ocr = PaddleOCR(use_angle_cls=True, lang=lang)\n"
+              "    result = ocr.ocr(img_path, cls=True)\n"
+              "    lines = []\n"
+              "    all_text = []\n"
+              "    if result and result[0]:\n"
+              "      for line in result[0]:\n"
+              "        text = line[1][0]\n"
+              "        confidence = line[1][1]\n"
+              "        box = line[0]\n"
+              "        x1 = int(box[0][0])\n"
+              "        y1 = int(box[0][1])\n"
+              "        x2 = int(box[2][0])\n"
+              "        y2 = int(box[2][1])\n"
+              "        lines.append({'text': text, 'x': x1, 'y': y1, 'width': x2-x1, 'height': y2-y1, 'confidence': confidence})\n"
+              "        all_text.append(text)\n"
+              "    output = {'text': '\\n'.join(all_text), 'lines': lines}\n"
+              "    return output\n"
+              "  except Exception as e:\n"
+              "    err_str = str(e)\n"
+              "    if 'parse_error' in err_str and retry:\n"
+              "      for cache_dir in [os.path.expanduser('~/.paddleocr'), os.path.expanduser('~/inference')]:\n"
+              "        if os.path.exists(cache_dir):\n"
+              "          shutil.rmtree(cache_dir, ignore_errors=True)\n"
+              "      return try_ocr(lang, img_path, retry=False)\n"
+              "    raise\n"
+              "try:\n"
+              "  output = try_ocr('%s', r'%s')\n"
+              "  print('<<PADDLE_OCR_JSON>>' + json.dumps(output, ensure_ascii=False))\n"
+              "except Exception as e:\n"
+              "  paddle_ver = 'unknown'\n"
+              "  ocr_ver = 'unknown'\n"
+              "  try:\n"
+              "    import paddle; paddle_ver = paddle.__version__\n"
+              "  except: pass\n"
+              "  try:\n"
+              "    import paddleocr; ocr_ver = paddleocr.__version__\n"
+              "  except: pass\n"
+              "  err_info = 'paddle=' + paddle_ver + ' paddleocr=' + ocr_ver + ' error=' + str(e)\n"
+              "  print('<<PADDLE_OCR_JSON>>' + json.dumps({'error': err_info, 'traceback': traceback.format_exc()}, ensure_ascii=False))\n",
+              lang.c_str(), bmpPath.c_str());
+            fclose(pyf);
+
+            std::string ocrOutput;
+            std::string lastPyCmd;
+            int lastRet = -1;
+            bool foundPy = false;
+            for (const char* pyCmd : {"python", "python3", "py"}) {
+              std::string cmd = std::string(pyCmd) + " \"" + pyPath + "\"";
+              lastPyCmd = cmd;
+              std::string output;
+              int ret = _runCommandHidden(cmd, output);
+              lastRet = ret;
+              if (ret == 0) {
+                ocrOutput = output;
+                foundPy = true;
+                break;
+              }
+              // If python is found but script fails, keep the error output
+              if (!output.empty()) {
+                ocrOutput = output;
+              }
+            }
+
+            remove(bmpPath.c_str());
+            remove(pyPath.c_str());
+
+            if (!foundPy || ocrOutput.empty()) {
+              std::string errMsg = "PaddleOCR execution failed";
+              if (lastRet != -1) {
+                errMsg += " (exit=" + std::to_string(lastRet) + ")";
+              }
+              if (!ocrOutput.empty()) {
+                // Append last few lines of output for diagnosis
+                size_t maxLen = std::min(ocrOutput.size(), (size_t)500);
+                errMsg += ": " + ocrOutput.substr(ocrOutput.size() - maxLen);
+              }
+              result_ptr->Error("PADDLE_OCR_ERROR", errMsg.c_str());
+              delete result_ptr;
+              return;
+            }
+
+            while (!ocrOutput.empty() && (ocrOutput.back() == '\n' || ocrOutput.back() == '\r' || ocrOutput.back() == ' '))
+              ocrOutput.pop_back();
+
+            // Try to find JSON output using our marker — PaddlePaddle may output
+            // warnings/errors to stderr (like json.exception.parse_error) which we ignore
+            const char* marker = "<<PADDLE_OCR_JSON>>";
+            size_t markerPos = ocrOutput.find(marker);
+            if (markerPos == std::string::npos) {
+              // No JSON found — return raw output for diagnosis
+              std::string rawErr = "PaddleOCR: no JSON output";
+              if (!ocrOutput.empty()) {
+                size_t maxLen = std::min(ocrOutput.size(), (size_t)500);
+                rawErr += ": " + ocrOutput.substr(0, maxLen);
+              }
+              result_ptr->Error("PADDLE_OCR_ERROR", rawErr.c_str());
+              delete result_ptr;
+              return;
+            }
+            std::string jsonStr = ocrOutput.substr(markerPos + strlen(marker));
+
+            std::string fullText;
+            flutter::EncodableList lineList;
+            bool hasError = false;
+            std::string errorMsg;
+
+            size_t textPos = jsonStr.find("\"text\":");
+            size_t errorPos = jsonStr.find("\"error\":");
+
+            if (errorPos != std::string::npos && (textPos == std::string::npos || errorPos < textPos)) {
+              size_t q1 = jsonStr.find('"', errorPos + 8);
+              if (q1 != std::string::npos) {
+                size_t q2 = jsonStr.find('"', q1 + 1);
+                if (q2 != std::string::npos) errorMsg = jsonStr.substr(q1 + 1, q2 - q1 - 1);
+              }
+              hasError = true;
+            }
+
+            if (hasError) {
+              result_ptr->Error("PADDLE_OCR_ERROR", ("PaddleOCR: " + errorMsg).c_str());
+              delete result_ptr;
+              return;
+            }
+
+            if (textPos != std::string::npos) {
+              size_t q1 = jsonStr.find('"', textPos + 7);
+              if (q1 != std::string::npos) {
+                size_t q2 = q1 + 1;
+                while (q2 < jsonStr.size()) {
+                  if (jsonStr[q2] == '"' && jsonStr[q2-1] != '\\') break;
+                  q2++;
+                }
+                fullText = jsonStr.substr(q1 + 1, q2 - q1 - 1);
+                std::string escNewline = "\\n";
+                size_t pos = 0;
+                while ((pos = fullText.find(escNewline, pos)) != std::string::npos) {
+                  fullText.replace(pos, 2, "\n");
+                  pos++;
+                }
+              }
+            }
+
+            size_t linesPos = jsonStr.find("\"lines\":");
+            if (linesPos != std::string::npos) {
+              size_t arrStart = jsonStr.find('[', linesPos);
+              if (arrStart != std::string::npos) {
+                int depth = 0;
+                size_t arrEnd = arrStart;
+                for (size_t i = arrStart; i < jsonStr.size(); i++) {
+                  if (jsonStr[i] == '[') depth++;
+                  else if (jsonStr[i] == ']') { depth--; if (depth == 0) { arrEnd = i; break; } }
+                }
+                std::string linesArr = jsonStr.substr(arrStart, arrEnd - arrStart + 1);
+
+                size_t searchPos = 0;
+                while (true) {
+                  size_t objStart = linesArr.find('{', searchPos);
+                  if (objStart == std::string::npos) break;
+                  size_t objEnd = linesArr.find('}', objStart);
+                  if (objEnd == std::string::npos) break;
+                  std::string obj = linesArr.substr(objStart, objEnd - objStart + 1);
+                  searchPos = objEnd + 1;
+
+                  auto extractStr = [&](const std::string& key) -> std::string {
+                    size_t kp = obj.find("\"" + key + "\":");
+                    if (kp == std::string::npos) return "";
+                    size_t q1 = obj.find('"', kp + key.size() + 3);
+                    if (q1 == std::string::npos) return "";
+                    size_t q2 = obj.find('"', q1 + 1);
+                    if (q2 == std::string::npos) return "";
+                    return obj.substr(q1 + 1, q2 - q1 - 1);
+                  };
+                  auto extractInt = [&](const std::string& key) -> int {
+                    size_t kp = obj.find("\"" + key + "\":");
+                    if (kp == std::string::npos) return 0;
+                    size_t vp = kp + key.size() + 2;
+                    while (vp < obj.size() && (obj[vp] == ' ' || obj[vp] == ':')) vp++;
+                    std::string numStr;
+                    while (vp < obj.size() && (obj[vp] == '-' || (obj[vp] >= '0' && obj[vp] <= '9'))) {
+                      numStr += obj[vp]; vp++;
+                    }
+                    return numStr.empty() ? 0 : std::stoi(numStr);
+                  };
+
+                  flutter::EncodableMap lineMap;
+                  lineMap[flutter::EncodableValue("text")] = flutter::EncodableValue(extractStr("text"));
+                  lineMap[flutter::EncodableValue("x")] = flutter::EncodableValue(extractInt("x"));
+                  lineMap[flutter::EncodableValue("y")] = flutter::EncodableValue(extractInt("y"));
+                  lineMap[flutter::EncodableValue("width")] = flutter::EncodableValue(extractInt("width"));
+                  lineMap[flutter::EncodableValue("height")] = flutter::EncodableValue(extractInt("height"));
+                  lineList.push_back(flutter::EncodableValue(lineMap));
+                }
+              }
+            }
+
+            flutter::EncodableMap resultMap;
+            resultMap[flutter::EncodableValue("text")] = flutter::EncodableValue(fullText);
+            resultMap[flutter::EncodableValue("x")] = flutter::EncodableValue(ocrX);
+            resultMap[flutter::EncodableValue("y")] = flutter::EncodableValue(ocrY);
+            resultMap[flutter::EncodableValue("width")] = flutter::EncodableValue(ocrW);
+            resultMap[flutter::EncodableValue("height")] = flutter::EncodableValue(ocrH);
+            resultMap[flutter::EncodableValue("lines")] = flutter::EncodableValue(lineList);
+            result_ptr->Success(flutter::EncodableValue(resultMap));
+            delete result_ptr;
+          }).detach();
 
         } else if (call.method_name() == "saveScreenshot") {
           // Save a screen region as PNG file
@@ -2330,6 +3040,32 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
           {flutter::EncodableValue("generation"), flutter::EncodableValue(g_clicker.dart_generation)},
         }));
     }
+    return 0;
+  }
+
+  if (g_findimage_result_msg != 0 && message == g_findimage_result_msg) {
+    int id = (int)wparam;
+    FindImageResultData data;
+    {
+      std::lock_guard<std::mutex> lock(g_findimage_mutex);
+      auto it = g_findimage_results.find(id);
+      if (it == g_findimage_results.end()) return 0;
+      data = it->second;
+      g_findimage_results.erase(it);
+    }
+    // Always return best match with score so Dart can log it
+    flutter::EncodableMap match;
+    match[flutter::EncodableValue("x")] = flutter::EncodableValue(data.bestX);
+    match[flutter::EncodableValue("y")] = flutter::EncodableValue(data.bestY);
+    match[flutter::EncodableValue("width")] = flutter::EncodableValue(data.tplW);
+    match[flutter::EncodableValue("height")] = flutter::EncodableValue(data.tplH);
+    match[flutter::EncodableValue("score")] = flutter::EncodableValue(data.bestScore);
+    match[flutter::EncodableValue("matched")] = flutter::EncodableValue(data.bestX >= 0 && data.bestScore >= 0.3);
+    flutter::EncodableList matches;
+    matches.push_back(flutter::EncodableValue(match));
+    OutputDebugStringA(("[findImage] main thread callback: bestScore=" + std::to_string(data.bestScore) + " bestX=" + std::to_string(data.bestX) + " bestY=" + std::to_string(data.bestY) + "\n").c_str());
+    data.result_ptr->Success(flutter::EncodableValue(matches));
+    delete data.result_ptr;
     return 0;
   }
 

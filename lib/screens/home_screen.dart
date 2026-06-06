@@ -32,8 +32,10 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
   final Map<String, ({Widget widget, GlobalKey key})> _pluginPageCache = {};
   final Map<String, ({Widget widget, GlobalKey key})> _lazyPages = {};
 
+  List<ClickerPlugin> get _navPlugins => PluginRegistry.instance.enabledPlugins.where((p) => p.manifest.showInNav).toList();
+
   int _pageIdToIndex(String pageId) {
-    final plugins = PluginRegistry.instance.enabledPlugins;
+    final plugins = _navPlugins;
     if (pageId == 'clicker') return 0;
     for (int i = 0; i < plugins.length; i++) {
       if (plugins[i].manifest.id == pageId) return i + 1;
@@ -45,7 +47,7 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
   }
 
   String _indexToPageId(int index) {
-    final plugins = PluginRegistry.instance.enabledPlugins;
+    final plugins = _navPlugins;
     final pluginCount = plugins.length;
     if (index == 0) return 'clicker';
     if (index >= 1 && index <= pluginCount) return plugins[index - 1].manifest.id;
@@ -58,7 +60,7 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
     final existing = _lazyPages[pageId];
     if (existing != null) return existing.widget;
 
-    final plugins = PluginRegistry.instance.enabledPlugins;
+    final plugins = _navPlugins;
 
     Widget page;
     GlobalKey key;
@@ -244,7 +246,7 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
       return FloatingWindow(onSwitchToMain: _switchToMain);
     }
 
-    final plugins = PluginRegistry.instance.enabledPlugins;
+    final plugins = _navPlugins;
     final appState = context.watch<AppState>();
 
     _getOrCreatePage(_currentPageId);
