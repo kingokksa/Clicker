@@ -3,14 +3,27 @@ library;
 
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:provider/provider.dart';
-import 'package:window_manager/window_manager.dart';
 import '../../services/app_state.dart';
+import '../../services/plugin_registry.dart';
+import '../../services/screen_overlay_service.dart';
 import '../../models/clicker_config.dart';
 import '../../models/hotkey_config.dart';
-import '../../widgets/position_picker_dialog.dart' show PositionPickerOverlay;
 
-class ClickerPage extends StatelessWidget {
+class ClickerPage extends StatefulWidget {
   const ClickerPage({super.key});
+
+  @override
+  State<ClickerPage> createState() => _ClickerPageState();
+}
+
+class _ClickerPageState extends State<ClickerPage> {
+  final _textTypeController = TextEditingController();
+
+  @override
+  void dispose() {
+    _textTypeController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -19,6 +32,15 @@ class ClickerPage extends StatelessWidget {
     final config = state.clickerConfig;
     final isKeyboard = config.clickMode == ClickMode.keyboard;
     final isWide = MediaQuery.of(context).size.width >= 700;
+
+    // Sync controller text with config (only when different to avoid cursor reset)
+    if (_textTypeController.text != config.textToType) {
+      final sel = _textTypeController.selection;
+      _textTypeController.text = config.textToType;
+      if (sel.start >= 0 && sel.end! <= config.textToType.length) {
+        _textTypeController.selection = sel;
+      }
+    }
 
     final modeSections = <Widget>[
       _section(title: '操作模式', icon: FluentIcons.switch_widget, child: _buildModeSelector(context, config, state, theme)),
@@ -43,7 +65,6 @@ class ClickerPage extends StatelessWidget {
         if (config.keyActionMode == KeyActionMode.text) ...[
           _spacing, _section(title: '自动打字', icon: FluentIcons.font, child: _buildTextTypeEditor(context, config, state, theme)),
         ],
-        _spacing, _section(title: '防检测', icon: FluentIcons.shield, child: _buildJitterSettings(config, state, theme)),
       ]);
     } else {
       modeSections.addAll([
@@ -57,12 +78,26 @@ class ClickerPage extends StatelessWidget {
     final settingsSections = <Widget>[
       _inlineSection(title: isKeyboard ? '按键间隔' : '点击间隔', child: _buildIntervalSlider(config, state, theme)),
       _spacing,
-      _inlineSection(title: '随机延迟', child: _buildRandomDelay(config, state, theme)),
+      _section(title: '随机延迟', icon: FluentIcons.clock, child: _buildRandomDelay(config, state, theme)),
       _spacing,
-      _inlineSection(title: '重复模式', child: _buildRepeatModeSelector(config, state, theme)),
-      _spacing,
-      _inlineSection(title: '按住触发', child: _buildHoldTrigger(context, config, state, theme)),
+      if (isKeyboard) ...[
+        _section(title: '防检测', icon: FluentIcons.shield, child: _buildJitterSettings(config, state, theme)),
+        _spacing,
+      ],
+      _section(title: '重复模式', icon: FluentIcons.refresh, child: _buildRepeatModeSelector(config, state, theme)),
     ];
+
+    // Plugin sections — when plugin is installed, settings move to sidebar page
+    final enabledPluginIds = PluginRegistry.instance.enabledPlugins.map((p) => p.manifest.id).toSet();
+    final hasHoldTriggerPlugin = enabledPluginIds.contains('hold_trigger');
+
+    // Only show on home page if plugin is NOT installed (no sidebar page)
+    if (!hasHoldTriggerPlugin) {
+      settingsSections.addAll([
+        _spacing,
+        _inlineSection(title: '按住触发', child: _buildHoldTrigger(context, config, state, theme)),
+      ]);
+    }
 
     final pageContent = ScaffoldPage.scrollable(
       padding: const EdgeInsets.all(20),
@@ -378,7 +413,7 @@ class ClickerPage extends StatelessWidget {
 
   Widget _buildTextTypeEditor(BuildContext context, ClickerConfig config, AppState state, FluentThemeData theme) {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      TextBox(maxLines: 4, placeholder: '在此输入文本内容...', controller: TextEditingController(text: config.textToType),
+      TextBox(maxLines: 4, placeholder: '在此输入文本内容...', controller: _textTypeController,
         onChanged: (v) => state.setClickerConfig(config.copyWith(textToType: v))),
       const SizedBox(height: 10),
       Row(children: [
@@ -522,21 +557,11 @@ class ClickerPage extends StatelessWidget {
   }
 
   Future<void> _pickPosition(BuildContext context, AppState state) async {
-    final config = state.clickerConfig;
-    final wasAlwaysOnTop = await windowManager.isAlwaysOnTop();
-    await windowManager.setAlwaysOnTop(true);
-    await windowManager.setFullScreen(true);
-    await Future.delayed(const Duration(milliseconds: 100));
-
-    final result = await showGeneralDialog<({int x, int y})>(
-      context: context, barrierDismissible: true, barrierLabel: '选取位置',
-      barrierColor: Colors.transparent, transitionDuration: const Duration(milliseconds: 150),
-      pageBuilder: (ctx, a1, a2) => PositionPickerOverlay(initialX: config.fixedX, initialY: config.fixedY),
-    );
-
-    await windowManager.setFullScreen(false);
-    if (!wasAlwaysOnTop) await windowManager.setAlwaysOnTop(false);
-    if (result != null) state.setClickerConfig(state.clickerConfig.copyWith(fixedX: result.x, fixedY: result.y));
+    final result = await ScreenOverlayService.instance.startPick();
+    if (result != null) {
+      final (x, y) = result;
+      state.setClickerConfig(state.clickerConfig.copyWith(fixedX: x, fixedY: y));
+    }
   }
 
   // ─── Interval ─────────────────────────────────────────────
@@ -620,9 +645,11 @@ class ClickerPage extends StatelessWidget {
 
   Widget _buildRepeatModeSelector(ClickerConfig config, AppState state, FluentThemeData theme) {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Wrap(spacing: 6, children: [
+      Row(mainAxisAlignment: MainAxisAlignment.center, children: [
         _selectChip('无限重复', config.repeatMode == ClickRepeatMode.infinite, () => state.setClickerConfig(config.copyWith(repeatMode: ClickRepeatMode.infinite))),
+        const SizedBox(width: 8),
         _selectChip('指定次数', config.repeatMode == ClickRepeatMode.count, () => state.setClickerConfig(config.copyWith(repeatMode: ClickRepeatMode.count))),
+        const SizedBox(width: 8),
         _selectChip('定时关闭', config.repeatMode == ClickRepeatMode.duration, () => state.setClickerConfig(config.copyWith(repeatMode: ClickRepeatMode.duration))),
       ]),
       const SizedBox(height: 10),
@@ -670,6 +697,8 @@ class ClickerPage extends StatelessWidget {
       ],
     ]);
   }
+
+  // ─── Background Click (from plugin) ────────────────────────
 
   Widget _buildHotkeySelector(BuildContext context, {required String currentKey, required void Function(String) onChanged}) {
     final parsed = HotkeyConfig.splitHotkey(currentKey);

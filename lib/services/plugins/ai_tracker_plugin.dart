@@ -329,10 +329,19 @@ class AiTrackerPlugin extends ClickerPlugin {
   @override
   Future<void> onUninstall() async {
     unloadNative();
+    // Give the OS time to release the DLL file handle
+    await Future.delayed(const Duration(milliseconds: 200));
     final path = await AppPaths.getPluginDir('ai_tracker');
     final dir = Directory(path);
     if (await dir.exists()) {
-      await dir.delete(recursive: true);
+      for (int i = 0; i < 3; i++) {
+        try {
+          await dir.delete(recursive: true);
+          break;
+        } catch (_) {
+          if (i < 2) await Future.delayed(const Duration(milliseconds: 300));
+        }
+      }
     }
   }
 

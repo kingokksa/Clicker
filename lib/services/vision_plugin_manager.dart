@@ -29,21 +29,30 @@ class VisionPluginManager {
         .toList();
   }
 
-  /// Get the first available plugin with a specific capability
+  /// Get the first plugin with a specific capability (prefers available, but returns registered if none available)
   /// Non-builtin plugins (e.g. PaddleOCR) are preferred over builtin ones
   VisionPlugin? getPluginForCapability(VisionCapability cap) {
     VisionPlugin? builtin;
+    VisionPlugin? builtinAvailable;
     VisionPlugin? external;
+    VisionPlugin? externalAvailable;
     for (final p in _plugins.values) {
-      if (p.info.capabilities.contains(cap) && p.enabled && p.isAvailable) {
+      if (p.info.capabilities.contains(cap) && p.enabled) {
         if (p.info.isBuiltin) {
+          if (p.isAvailable) {
+            builtinAvailable ??= p;
+          }
           builtin ??= p;
         } else {
+          if (p.isAvailable) {
+            externalAvailable ??= p;
+          }
           external ??= p;
         }
       }
     }
-    return external ?? builtin;
+    // Prefer available plugins, fall back to registered (can be initialized later)
+    return externalAvailable ?? builtinAvailable ?? external ?? builtin;
   }
 
   bool _builtinRegistered = false;

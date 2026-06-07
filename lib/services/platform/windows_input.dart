@@ -256,17 +256,54 @@ class WindowsInput extends PlatformInput {
 
   @override
   Future<void> keyType(String text, {int delayMs = 30}) async {
-    for (final c in text.split('')) {
-      final p = calloc<INPUT>();
-      p.ref.type = INPUT_KEYBOARD;
-      p.ref.ki.wScan = c.codeUnitAt(0);
-      p.ref.ki.dwFlags = KEYBD_EVENT_FLAGS(KEYEVENTF_UNICODE);
-      SendInput(1, p, sizeOf<INPUT>());
-      p.ref.ki.dwFlags = KEYBD_EVENT_FLAGS(KEYEVENTF_UNICODE | KEYEVENTF_KEYUP);
-      SendInput(1, p, sizeOf<INPUT>());
-      calloc.free(p);
-      await Future.delayed(Duration(milliseconds: delayMs));
+    // Use clipboard paste for reliable full-text input
+    await _pasteText(text);
+  }
+
+  /// Paste text via clipboard: save clipboard, set text, Ctrl+V, restore clipboard
+  Future<void> _pasteText(String text) async {
+    // Save current clipboard
+    String? savedClip;
+    try {
+      savedClip = await Clipboard.getData(Clipboard.kTextPlain).then((d) => d?.text);
+    } catch (_) {}
+
+    // Set clipboard text
+    await Clipboard.setData(ClipboardData(text: text));
+    // Small delay for clipboard to settle
+    await Future.delayed(const Duration(milliseconds: 30));
+
+    // Send Ctrl+V
+    _sendKey(VK_CONTROL, KEYBD_EVENT_FLAGS(0));
+    _sendKey(0x56, KEYBD_EVENT_FLAGS(0)); // V key
+    await Future.delayed(const Duration(milliseconds: 10));
+    _sendKey(0x56, KEYBD_EVENT_FLAGS(KEYEVENTF_KEYUP));
+    _sendKey(VK_CONTROL, KEYBD_EVENT_FLAGS(KEYEVENTF_KEYUP));
+
+    // Wait for paste to complete
+    await Future.delayed(const Duration(milliseconds: 50));
+
+    // Restore clipboard
+    try {
+      if (savedClip != null && savedClip.isNotEmpty) {
+        await Clipboard.setData(ClipboardData(text: savedClip));
+      }
+    } catch (_) {}
+  }
+
+  /// Release all modifier keys to prevent them from interfering with text input
+  void _releaseModifiers() {
+    const modifiers = [VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN];
+    final p = calloc<INPUT>();
+    p.ref.type = INPUT_KEYBOARD;
+    p.ref.ki.dwFlags = KEYEVENTF_KEYUP;
+    for (final vk in modifiers) {
+      if (GetAsyncKeyState(vk) & 0x8000 != 0) {
+        p.ref.ki.wVk = VIRTUAL_KEY(vk);
+        SendInput(1, p, sizeOf<INPUT>());
+      }
     }
+    calloc.free(p);
   }
 
   void _sendKey(int vk, KEYBD_EVENT_FLAGS flags) {

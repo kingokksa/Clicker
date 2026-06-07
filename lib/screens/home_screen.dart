@@ -19,11 +19,14 @@ import 'floating_window.dart';
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
+  /// Global key to access HomeScreen state for navigation
+  static final GlobalKey<HomeScreenState> globalKey = GlobalKey();
+
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  State<HomeScreen> createState() => HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with WindowListener {
+class HomeScreenState extends State<HomeScreen> with WindowListener {
   String _currentPageId = 'clicker';
   bool _isFloatingMode = false;
   bool _isMaximized = false;
@@ -31,6 +34,11 @@ class _HomeScreenState extends State<HomeScreen> with WindowListener {
 
   final Map<String, ({Widget widget, GlobalKey key})> _pluginPageCache = {};
   final Map<String, ({Widget widget, GlobalKey key})> _lazyPages = {};
+
+  /// Navigate to a specific page by ID (e.g., 'hold_trigger', 'background_execution')
+  void navigateTo(String pageId) {
+    if (mounted) setState(() => _currentPageId = pageId);
+  }
 
   List<ClickerPlugin> get _navPlugins => PluginRegistry.instance.enabledPlugins.where((p) => p.manifest.showInNav).toList();
 
