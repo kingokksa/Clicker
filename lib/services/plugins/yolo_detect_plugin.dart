@@ -253,10 +253,16 @@ class YoloDetectPlugin extends VisionPlugin {
     String? targetLabel,
     double confidence = 0.5,
   }) async {
-    if (!_available) return [];
+    if (!_available) {
+      debugPrint('[YoloDetectPlugin] detectObjects: 插件不可用');
+      return [];
+    }
 
     final aiPlugin = _getAiTrackerPlugin();
-    if (aiPlugin == null || !aiPlugin.nativeLoaded) return [];
+    if (aiPlugin == null || !aiPlugin.nativeLoaded) {
+      debugPrint('[YoloDetectPlugin] detectObjects: aiPlugin不可用 nativeLoaded=${aiPlugin?.nativeLoaded}');
+      return [];
+    }
 
     try {
       final pixels = await _captureScreenRect(regionX, regionY, regionW, regionH);
@@ -265,26 +271,49 @@ class YoloDetectPlugin extends VisionPlugin {
         return [];
       }
 
-      // captureScreenRect returns logical pixel data (DPI-adjusted), size = regionW * regionH * 4
+      // Determine actual dimensions from pixel data
+      int actualW = regionW;
+      int actualH = regionH;
       final expectedLen = regionW * regionH * 4;
       if (pixels.length != expectedLen) {
-        debugPrint('[YoloDetectPlugin] 像素数据大小不匹配: got=${pixels.length} expected=$expectedLen');
-        return [];
+        // Try to infer dimensions from pixel data length
+        final pixelCount = pixels.length ~/ 4;
+        // Try common aspect ratios
+        for (int tryW = regionW - 200; tryW <= regionW + 200; tryW++) {
+          if (tryW > 0 && pixelCount % tryW == 0) {
+            final tryH = pixelCount ~/ tryW;
+            if (tryH > 0) {
+              actualW = tryW;
+              actualH = tryH;
+              break;
+            }
+          }
+        }
+        debugPrint('[YoloDetectPlugin] 像素大小不匹配: got=${pixels.length} expected=$expectedLen, 推断尺寸=${actualW}x${actualH}');
       }
+
+      debugPrint('[YoloDetectPlugin] 开始推理: region=(${regionX},${regionY},${regionW},${regionH}) actualSize=${actualW}x${actualH} pixels=${pixels.length}');
 
       final pixelPtr = malloc<Uint8>(pixels.length);
       try {
         pixelPtr.asTypedList(pixels.length).setAll(0, pixels);
 
         final ptrHex = pixelPtr.address.toRadixString(16);
-        final params = '{"region_w":$regionW,'
-            '"region_h":$regionH,'
+        final params = '{"region_w":$actualW,'
+            '"region_h":$actualH,'
             '"confidence":$confidence,'
             '"pixel_data_ptr":"$ptrHex",'
             '"target_class":"${targetLabel ?? ''}"}';
 
+        debugPrint('[YoloDetectPlugin] 调用detect_objects: params=$params');
         final resultJson = aiPlugin.executeAction('detect_objects', params, returnOnError: true);
-        if (resultJson == null || resultJson.contains('"error"')) {
+        debugPrint('[YoloDetectPlugin] detect_objects返回: ${resultJson?.substring(0, (resultJson.length > 500 ? 500 : resultJson.length)) ?? "null"}');
+
+        if (resultJson == null) {
+          debugPrint('[YoloDetectPlugin] detect_objects返回null');
+          return [];
+        }
+        if (resultJson.contains('"error"')) {
           debugPrint('[YoloDetectPlugin] detect_objects返回错误: $resultJson');
           return [];
         }
@@ -293,8 +322,8 @@ class YoloDetectPlugin extends VisionPlugin {
       } finally {
         malloc.free(pixelPtr);
       }
-    } catch (e) {
-      debugPrint('[YoloDetectPlugin] detectObjects异常: $e');
+    } catch (e, st) {
+      debugPrint('[YoloDetectPlugin] detectObjects异常: $e\n$st');
       return [];
     }
   }
@@ -342,7 +371,10 @@ class YoloDetectPlugin extends VisionPlugin {
           label: det['class_name'] as String? ?? '',
         ));
       }
-    } catch (_) {}
+      debugPrint('[YoloDetectPlugin] _parseResults: parsed ${results.length} detections from ${detections.length} raw');
+    } catch (e) {
+      debugPrint('[YoloDetectPlugin] _parseResults异常: $e');
+    }
     return results;
   }
 

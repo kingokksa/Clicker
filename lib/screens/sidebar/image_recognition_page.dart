@@ -18,7 +18,106 @@ import '../../services/vision_plugin.dart';
 import '../../services/vision_plugin_manager.dart';
 import '../../services/platform/windows_input.dart';
 import '../../services/app_paths.dart';
+import '../../widgets/app_slider.dart';
 import '../../services/screen_overlay_service.dart';
+
+/// COCO 80 classes: Chinese name → English name
+const _cocoClasses = <MapEntry<String, String>>[
+  MapEntry('人物', 'person'),
+  MapEntry('自行车', 'bicycle'),
+  MapEntry('汽车', 'car'),
+  MapEntry('摩托车', 'motorcycle'),
+  MapEntry('飞机', 'airplane'),
+  MapEntry('公交车', 'bus'),
+  MapEntry('火车', 'train'),
+  MapEntry('卡车', 'truck'),
+  MapEntry('船', 'boat'),
+  MapEntry('红绿灯', 'traffic light'),
+  MapEntry('消防栓', 'fire hydrant'),
+  MapEntry('停车牌', 'stop sign'),
+  MapEntry('停车计时器', 'parking meter'),
+  MapEntry('长椅', 'bench'),
+  MapEntry('鸟', 'bird'),
+  MapEntry('猫', 'cat'),
+  MapEntry('狗', 'dog'),
+  MapEntry('马', 'horse'),
+  MapEntry('羊', 'sheep'),
+  MapEntry('牛', 'cow'),
+  MapEntry('大象', 'elephant'),
+  MapEntry('熊', 'bear'),
+  MapEntry('斑马', 'zebra'),
+  MapEntry('长颈鹿', 'giraffe'),
+  MapEntry('背包', 'backpack'),
+  MapEntry('雨伞', 'umbrella'),
+  MapEntry('手提包', 'handbag'),
+  MapEntry('领带', 'tie'),
+  MapEntry('行李箱', 'suitcase'),
+  MapEntry('飞盘', 'frisbee'),
+  MapEntry('滑雪板', 'skis'),
+  MapEntry('单板滑雪', 'snowboard'),
+  MapEntry('运动球', 'sports ball'),
+  MapEntry('风筝', 'kite'),
+  MapEntry('棒球棒', 'baseball bat'),
+  MapEntry('棒球手套', 'baseball glove'),
+  MapEntry('滑板', 'skateboard'),
+  MapEntry('冲浪板', 'surfboard'),
+  MapEntry('网球拍', 'tennis racket'),
+  MapEntry('瓶子', 'bottle'),
+  MapEntry('酒杯', 'wine glass'),
+  MapEntry('杯子', 'cup'),
+  MapEntry('叉子', 'fork'),
+  MapEntry('刀', 'knife'),
+  MapEntry('勺子', 'spoon'),
+  MapEntry('碗', 'bowl'),
+  MapEntry('香蕉', 'banana'),
+  MapEntry('苹果', 'apple'),
+  MapEntry('三明治', 'sandwich'),
+  MapEntry('橙子', 'orange'),
+  MapEntry('西兰花', 'broccoli'),
+  MapEntry('胡萝卜', 'carrot'),
+  MapEntry('热狗', 'hot dog'),
+  MapEntry('披萨', 'pizza'),
+  MapEntry('甜甜圈', 'donut'),
+  MapEntry('蛋糕', 'cake'),
+  MapEntry('椅子', 'chair'),
+  MapEntry('沙发', 'couch'),
+  MapEntry('盆栽', 'potted plant'),
+  MapEntry('床', 'bed'),
+  MapEntry('餐桌', 'dining table'),
+  MapEntry('马桶', 'toilet'),
+  MapEntry('电视', 'tv'),
+  MapEntry('笔记本电脑', 'laptop'),
+  MapEntry('鼠标', 'mouse'),
+  MapEntry('遥控器', 'remote'),
+  MapEntry('键盘', 'keyboard'),
+  MapEntry('手机', 'cell phone'),
+  MapEntry('微波炉', 'microwave'),
+  MapEntry('烤箱', 'oven'),
+  MapEntry('烤面包机', 'toaster'),
+  MapEntry('水槽', 'sink'),
+  MapEntry('冰箱', 'refrigerator'),
+  MapEntry('书', 'book'),
+  MapEntry('时钟', 'clock'),
+  MapEntry('花瓶', 'vase'),
+  MapEntry('剪刀', 'scissors'),
+  MapEntry('泰迪熊', 'teddy bear'),
+  MapEntry('吹风机', 'hair drier'),
+  MapEntry('牙刷', 'toothbrush'),
+];
+
+String _cocoEnToZh(String en) {
+  for (final e in _cocoClasses) {
+    if (e.value == en) return e.key;
+  }
+  return en;
+}
+
+String _cocoZhToEn(String zh) {
+  for (final e in _cocoClasses) {
+    if (e.key == zh) return e.value;
+  }
+  return zh;
+}
 
 class ImageRecognitionPage extends StatefulWidget {
   const ImageRecognitionPage({super.key});
@@ -193,6 +292,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
             actionKey: m['actionKey'] ?? '',
             macroId: m['macroId'] ?? '',
             intervalMs: m['intervalMs'] ?? 500,
+            showTrackingBox: m['showTrackingBox'] ?? true,
             templateData: () {
               final td = m['templateData'];
               if (td == null) return null;
@@ -286,6 +386,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
       'detectConfidence': t.detectConfidence,
       'actionX': t.actionX, 'actionY': t.actionY,
       'actionKey': t.actionKey, 'macroId': t.macroId, 'intervalMs': t.intervalMs,
+      'showTrackingBox': t.showTrackingBox,
       if (t.templateData != null) 'templateData': {
         'width': t.templateData!.width,
         'height': t.templateData!.height,
@@ -318,6 +419,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
   void _stopTriggerChecker() {
     _triggerCheckTimer?.cancel();
     _triggerCheckTimer = null;
+    ScreenOverlayService.instance.hideDetectionBoxes();
   }
 
   bool _checkingTriggers = false;
@@ -448,8 +550,23 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
               );
               conditionMet = detections.isNotEmpty;
               statusText = conditionMet ? '检测到${detections.length}个目标' : '未检测到目标';
+              debugPrint('[条件触发] 目标检测: trigger=${trigger.name} found=${detections.length} met=$conditionMet');
               if (conditionMet && detections.isNotEmpty) {
                 _lastDetectionResults[trigger.id] = detections.first;
+                // Show tracking boxes if enabled
+                if (trigger.showTrackingBox) {
+                  final boxes = detections.map((d) => {
+                    'x': trigger.x + d.x,
+                    'y': trigger.y + d.y,
+                    'w': d.width,
+                    'h': d.height,
+                    'confidence': d.score,
+                    'class_name': d.label ?? '',
+                  }).toList();
+                  ScreenOverlayService.instance.showDetectionBoxes(boxes);
+                }
+              } else if (trigger.showTrackingBox) {
+                ScreenOverlayService.instance.hideDetectionBoxes();
               }
             }
             break;
@@ -878,6 +995,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
                                           actionKey: result.actionKey,
                                           macroId: result.macroId,
                                           intervalMs: result.intervalMs,
+                                          showTrackingBox: result.showTrackingBox,
                                         );
                                       }
                                     });
@@ -946,7 +1064,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
                                 Row(children: [
                                   const Text('目标:', style: TextStyle(fontSize: 11)),
                                   const SizedBox(width: 4),
-                                  Text(t.targetObjectClass.isNotEmpty ? t.targetObjectClass : '所有目标',
+                                  Text(t.targetObjectClass.isNotEmpty ? _cocoEnToZh(t.targetObjectClass) : '所有目标',
                                     style: const TextStyle(fontSize: 11, color: Color(0xFFE040FB))),
                                   const SizedBox(width: 8),
                                   const Text('置信度:', style: TextStyle(fontSize: 11)),
@@ -975,7 +1093,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
                                 const SizedBox(width: 2),
                                 Text('${t.intervalMs}ms', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
                                 const SizedBox(width: 4),
-                                Expanded(child: Slider(
+                                Expanded(child: AppSlider(
                                   value: t.intervalMs.toDouble(),
                                   min: 100, max: 5000, divisions: 49,
                                   label: '${t.intervalMs}ms',
@@ -1145,6 +1263,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
           actionKey: result.actionKey,
           macroId: result.macroId,
           intervalMs: result.intervalMs,
+          showTrackingBox: result.showTrackingBox,
           enabled: true,
         ));
       });
@@ -2031,6 +2150,7 @@ class _TriggerEntry {
   final String actionKey;
   final String macroId;
   int intervalMs;
+  bool showTrackingBox;
 
   _TriggerEntry({
     required this.id, required this.name, required this.conditionType,
@@ -2044,6 +2164,7 @@ class _TriggerEntry {
     this.actionX = 0, this.actionY = 0,
     this.actionKey = '', this.macroId = '',
     this.intervalMs = 500,
+    this.showTrackingBox = true,
   });
 }
 
@@ -2063,6 +2184,7 @@ class _TriggerConfig {
   final String actionKey;
   final String macroId;
   final int intervalMs;
+  final bool showTrackingBox;
   _TriggerConfig({
     required this.name, required this.conditionType, required this.actionType,
     required this.x, required this.y, required this.w, required this.h,
@@ -2074,6 +2196,7 @@ class _TriggerConfig {
     this.actionX = 0, this.actionY = 0,
     this.actionKey = '', this.macroId = '',
     this.intervalMs = 500,
+    this.showTrackingBox = true,
   });
 }
 
@@ -2116,6 +2239,7 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
   String _templateInfo = '';
   String _targetObjectClass = '';
   double _detectConfidence = 0.5;
+  bool _showTrackingBox = true;
 
   @override
   void initState() {
@@ -2136,6 +2260,7 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
       _actionKey = t.actionKey;
       _macroId = t.macroId;
       _intervalMs = t.intervalMs;
+      _showTrackingBox = t.showTrackingBox;
       _templateData = t.templateData;
       if (t.templateData != null) {
         _templateInfo = '${t.templateData!.width}x${t.templateData!.height}';
@@ -2269,7 +2394,7 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
           const SizedBox(height: 8),
           Row(children: [
             const Text('匹配阈值: ', style: TextStyle(fontSize: 13)),
-            Expanded(child: Slider(value: _matchThreshold, min: 0.5, max: 1.0, divisions: 50, label: '${(_matchThreshold * 100).toStringAsFixed(0)}%', onChanged: (v) => setState(() => _matchThreshold = v))),
+            Expanded(child: AppSlider(value: _matchThreshold, min: 0.5, max: 1.0, divisions: 50, label: '${(_matchThreshold * 100).toStringAsFixed(0)}%', onChanged: (v) => setState(() => _matchThreshold = v))),
             const SizedBox(width: 8),
             Text('${(_matchThreshold * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
           ]),
@@ -2314,18 +2439,37 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
 
         if (_conditionType == _TriggerConditionType.objectDetect) ...[
           const SizedBox(height: 8),
-          TextBox(placeholder: '目标类别 (如 person, car, dog)', onChanged: (v) => _targetObjectClass = v),
-          const SizedBox(height: 4),
-          const Text('留空则检测所有目标', style: TextStyle(fontSize: 11, color: Color(0xFF9090B0))),
+          Row(children: [
+            const Text('目标类别: ', style: TextStyle(fontSize: 13)),
+            const SizedBox(width: 4),
+            Expanded(child: ComboBox<String>(
+              value: _targetObjectClass.isEmpty ? '' : _cocoEnToZh(_targetObjectClass),
+              items: [
+                ComboBoxItem<String>(value: '', child: Text('所有目标', style: TextStyle(fontSize: 12, color: FluentTheme.of(context).brightness == Brightness.dark ? const Color(0xFF8080A0) : const Color(0xFF8A8AA0)))),
+                ..._cocoClasses.map((e) => ComboBoxItem<String>(value: e.key, child: Text('${e.key} (${e.value})', style: const TextStyle(fontSize: 12)))),
+              ],
+              onChanged: (v) => setState(() => _targetObjectClass = v == null || v.isEmpty ? '' : _cocoZhToEn(v)),
+              isExpanded: true,
+            )),
+          ]),
           const SizedBox(height: 8),
           Row(children: [
             const Text('置信度: ', style: TextStyle(fontSize: 13)),
-            Expanded(child: Slider(value: _detectConfidence, min: 0.1, max: 0.95, divisions: 17, label: '${(_detectConfidence * 100).toStringAsFixed(0)}%', onChanged: (v) => setState(() => _detectConfidence = v))),
+            Expanded(child: AppSlider(value: _detectConfidence, min: 0.1, max: 0.95, divisions: 17, label: '${(_detectConfidence * 100).toStringAsFixed(0)}%', onChanged: (v) => setState(() => _detectConfidence = v))),
             const SizedBox(width: 8),
             Text('${(_detectConfidence * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
           ]),
           const SizedBox(height: 4),
           const Text('需要先在「高级模型」中下载 ONNX Runtime 和 YOLO 模型', style: TextStyle(fontSize: 11, color: Color(0xFFFF9800))),
+          const SizedBox(height: 6),
+          Row(children: [
+            Checkbox(
+              checked: _showTrackingBox,
+              onChanged: (v) => setState(() => _showTrackingBox = v ?? true),
+            ),
+            const SizedBox(width: 4),
+            const Text('显示追踪框', style: TextStyle(fontSize: 13)),
+          ]),
         ],
 
         const SizedBox(height: 12),
@@ -2413,7 +2557,7 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
         const SizedBox(height: 8),
         Row(children: [
           const Text('检查间隔: ', style: TextStyle(fontSize: 13)),
-          Expanded(child: Slider(value: _intervalMs.toDouble(), min: 100, max: 5000, divisions: 49, label: '${_intervalMs}ms', onChanged: (v) => setState(() => _intervalMs = v.round()))),
+          Expanded(child: AppSlider(value: _intervalMs.toDouble(), min: 100, max: 5000, divisions: 49, label: '${_intervalMs}ms', onChanged: (v) => setState(() => _intervalMs = v.round()))),
           const SizedBox(width: 8),
           Text('$_intervalMs ms', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
         ]),
@@ -2436,6 +2580,7 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
           actionKey: _actionKey,
           macroId: _macroId,
           intervalMs: _intervalMs,
+          showTrackingBox: _showTrackingBox,
         )), child: Text(_isEditing ? '保存' : '添加')),
       ],
     );

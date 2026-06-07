@@ -12,6 +12,7 @@ import 'package:path/path.dart' as p;
 import '../../services/app_state.dart';
 import '../../models/macro_model.dart';
 import '../../models/hotkey_config.dart';
+import '../../widgets/app_slider.dart';
 
 class MacroPage extends StatelessWidget {
   const MacroPage({super.key});
@@ -1524,7 +1525,7 @@ class _DelayBuilderDialogState extends State<_DelayBuilderDialog> {
         const SizedBox(height: 10),
         // Delay
         Row(children: [const Text('等待时长:', style: TextStyle(fontSize: 13)), const SizedBox(width: 8), Text(delayStr, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13))]),
-        Slider(value: _delayMs.toDouble(), min: 100, max: 30000, divisions: 299, label: delayStr, onChanged: (v) => setState(() => _delayMs = v.round())),
+        AppSlider(value: _delayMs.toDouble(), min: 100, max: 30000, divisions: 299, label: delayStr, onChanged: (v) => setState(() => _delayMs = v.round())),
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('100ms', style: TextStyle(fontSize: 11, color: FluentTheme.of(context).brightness == Brightness.dark ? const Color(0xFF707090) : const Color(0xFF9A9AAA))), Text('30s', style: TextStyle(fontSize: 11, color: FluentTheme.of(context).brightness == Brightness.dark ? const Color(0xFF707090) : const Color(0xFF9A9AAA)))]),
         const SizedBox(height: 8),
         // Presets

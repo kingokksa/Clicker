@@ -140,6 +140,13 @@ class ScreenOverlayService {
     } on PlatformException {}
   }
 
+  Future<void> hideDetectionBoxes() async {
+    try {
+      await _channel.invokeMethod('stopOverlay');
+      _overlayActive = false;
+    } on PlatformException {}
+  }
+
   Future<void> stopOverlay() async {
     try {
       await _channel.invokeMethod('stopOverlay');

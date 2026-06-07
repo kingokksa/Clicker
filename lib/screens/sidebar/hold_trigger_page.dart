@@ -6,6 +6,7 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'package:provider/provider.dart';
 import '../../models/hold_trigger_key.dart';
 import '../../services/app_state.dart';
+import '../../widgets/app_slider.dart';
 
 class HoldTriggerPage extends StatefulWidget {
   const HoldTriggerPage({super.key});
@@ -374,7 +375,7 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
 
             // Interval
             Text('间隔 ${intervalMs.toInt()}ms', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80))),
-            Slider(
+            AppSlider(
               value: intervalMs,
               min: 10,
               max: 5000,

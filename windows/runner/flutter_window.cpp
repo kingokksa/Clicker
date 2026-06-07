@@ -2697,6 +2697,26 @@ bool FlutterWindow::OnCreate() {
           SetForegroundWindow(hw);
 
           result->Success(flutter::EncodableValue(true));
+        } else if (call.method_name() == "resizeFloatingWindow") {
+          // Resize floating window: args = [width, height] in logical pixels
+          const auto* args = std::get_if<flutter::EncodableList>(call.arguments());
+          if (!args || args->size() < 2) {
+            result->Error("INVALID_ARGS", "Expected [width, height]");
+            return;
+          }
+          const auto* wPtr = std::get_if<int>(&args->at(0));
+          const auto* hPtr = std::get_if<int>(&args->at(1));
+          if (!wPtr || !hPtr) {
+            result->Error("INVALID_ARGS", "Expected int width and height");
+            return;
+          }
+          HWND hw = GetHandle();
+          UINT dpi = GetDpiForWindow(hw);
+          double scale = dpi / 96.0;
+          int w = static_cast<int>(*wPtr * scale);
+          int h = static_cast<int>(*hPtr * scale);
+          SetWindowPos(hw, nullptr, 0, 0, w, h, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+          result->Success(flutter::EncodableValue(true));
         } else if (call.method_name() == "reapplyDwmFixes") {
           // Re-apply DWM frame extension after flutter_acrylic overrides it.
           HWND hw = GetHandle();

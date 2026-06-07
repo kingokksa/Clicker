@@ -812,7 +812,8 @@ PLUGIN_EXPORT int32_t PLUGIN_CALL plugin_execute_action(
              << ",\"num_attrs\":" << num_attrs
              << ",\"raw_dets\":" << dets.size()
              << ",\"conf_thresh\":" << conf
-             << ",\"region\":" << region_w << "x" << region_h
+             << ",\"region_w\":" << region_w
+             << ",\"region_h\":" << region_h
              << "}}";
 
         std::string result = json.str();
