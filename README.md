@@ -1,111 +1,91 @@
 # Clicker Pro
 
-> 🖱 跨平台连点器 / 按键精灵 · Windows `.exe` + Android `.apk`
+> Windows 自动化工具 · 连点器 / 宏录制 / 图像识别 / 目标检测
 
-现代化的自动点击与宏录制工具，基于 Flutter + Material Design 3。
+基于 Flutter + Fluent Design 的桌面自动化工具，集成 YOLO 目标检测和模板匹配。
 
-## ✨ 功能
+## 功能
 
-| 功能 | 说明 |
-|------|------|
-| **自动连点** | 单击/双击、左/右/中键、跟随鼠标或固定位置、10ms~10s 间隔 |
-| **位置选取** | 全屏半透明十字光标，点击即获取坐标 |
-| **重复模式** | 无限点击 / 指定次数 / 定时关闭 |
-| **宏录制** | 录制鼠标+键盘事件序列，保存复用 |
-| **宏回放** | 速度调节、循环播放、进度显示 |
-| **全局快捷键** | F6 启停、F8 录制、F12 紧急停止（可自定义） |
-| **配置管理** | 保存/加载多套配置方案 |
-| **暗色/亮色** | Material Design 3 双主题 |
-| **📱 跨平台** | Windows EXE + Android APK 同一套代码 |
+### 核心功能
+- **自动连点** — 单击/双击、左/右/中键、跟随鼠标或固定位置、10ms~10s 间隔
+- **宏录制** — 录制鼠标+键盘事件序列，保存复用，速度调节、循环播放
+- **全局快捷键** — F6 启停、F8 录制、Alt+F12 紧急停止（可自定义）
 
-## 🚀 构建
+### 图像识别
+- **模板匹配** — 截取区域模板，NCC 归一化互相关算法实时匹配
+- **OCR 文字识别** — PaddleOCR 引擎，中英文识别，模糊/精确匹配
+- **颜色检测** — 指定位置颜色匹配、颜色变化/消失检测
+- **YOLO 目标检测** — YOLO11n 模型，COCO 80 类目标实时检测，追踪框可视化
+
+### 条件触发系统
+- 检测到目标后自动执行动作：点击、按键、启动/停止连点、运行宏
+- 支持多种条件组合：颜色匹配、图像匹配、文字匹配、目标检测
+- 可配置检测间隔和置信度阈值
+
+### 其他
+- **悬浮窗** — 迷你控制面板，可拖拽，屏幕边缘自动收起/弹出
+- **插件系统** — 可扩展的插件架构，支持第三方插件
+- **暗色/亮色主题** — Fluent Design 双主题 + 主题色自定义
+
+## 构建
 
 ### 环境要求
 
-- **Flutter SDK** >= 3.16（[安装指引](https://docs.flutter.dev/get-started/install)）
-- **Windows**: Visual Studio 2022（勾选 "使用 C++ 的桌面开发"）
-- **Android**: Android Studio + Android SDK 33+
+- **Flutter SDK** >= 3.16
+- **Visual Studio 2022**（勾选 "使用 C++ 的桌面开发"）
 
-### 克隆并安装依赖
+### 构建 Release
 
 ```bash
-cd Clicker
 flutter pub get
-```
-
-### Windows 构建 `.exe`
-
-```bash
-# 调试运行
-flutter run -d windows
-
-# 发布构建（输出在 build/windows/x64/runner/Release/）
 flutter build windows --release
 ```
 
-### Android 构建 `.apk`
+输出在 `build/windows/x64/runner/Release/`
 
-```bash
-# 调试运行
-flutter run -d android
+### 目标检测依赖（可选）
 
-# 发布构建（输出在 build/app/outputs/flutter-apk/）
-flutter build apk --release
+如需使用 YOLO 目标检测，在应用内「高级模型」页面下载：
+- ONNX Runtime (~200MB)
+- YOLO11n 模型 (~6MB)
 
-# 分 ABI 打包（体积更小）
-flutter build apk --split-per-abi
-```
-
-> ⚠️ **Android 使用须知**：安装后需在 **设置 → 无障碍 → 已安装的服务** 中启用 "Clicker Pro" 才能使用自动点击。
-
-## 🏗 项目结构
+## 项目结构
 
 ```
-Clicker/
-├── lib/                               # Dart 源码
-│   ├── main.dart                      # 入口 + 窗口配置
-│   ├── app.dart                       # MaterialApp + Provider
-│   ├── models/                        # 数据模型
-│   ├── services/                      # 业务逻辑层
-│   │   ├── app_state.dart             # 全局状态
-│   │   ├── click_service.dart         # 点击引擎
-│   │   ├── macro_service.dart         # 录制/回放引擎
-│   │   ├── hotkey_service.dart        # 快捷键服务
-│   │   └── platform/                  # 平台输入抽象层
-│   ├── screens/                       # 页面
-│   │   ├── home_screen.dart
-│   │   ├── clicker/clicker_page.dart
-│   │   ├── macro/macro_page.dart
-│   │   └── settings/settings_page.dart
-│   ├── widgets/                       # 通用组件
-│   └── theme/                         # Material 3 主题
-├── windows/                           # Windows 原生层 (C++/Win32)
-│   ├── CMakeLists.txt
-│   └── runner/
-│       ├── input_simulator.h          # Win32 SendInput 封装
-│       ├── input_plugin.cpp           # Flutter Channel 桥接
-│       ├── main.cpp                   # Win32 入口
-│       └── *.cpp / *.h                # Flutter 窗口框架
-├── android/                           # Android 原生层 (Kotlin)
-│   ├── settings.gradle
-│   ├── app/build.gradle
-│   └── app/src/main/
-│       ├── AndroidManifest.xml
-│       ├── res/xml/accessibility_service_config.xml
-│       └── kotlin/.../MainActivity.kt # AccessibilityService
-├── profiles/                          # 配置方案保存
-└── macros/                            # 宏 JSON 保存
+lib/
+├── main.dart                    # 入口
+├── app.dart                     # FluentApp + Provider
+├── models/                      # 数据模型
+├── screens/
+│   ├── clicker/                 # 连点器页面
+│   ├── macro/                   # 宏录制页面
+│   ├── settings/                # 设置页面
+│   ├── sidebar/                 # 侧边栏页面
+│   │   ├── image_recognition_page.dart  # 图像识别 + 条件触发
+│   │   ├── hold_trigger_page.dart       # 按键触发
+│   │   ├── plugin_page.dart             # 插件管理
+│   │   └── theme_center_page.dart       # 主题中心
+│   ├── floating_window.dart     # 悬浮窗
+│   └── home_screen.dart         # 主界面
+├── services/
+│   ├── app_state.dart           # 全局状态
+│   ├── click_service.dart       # 点击引擎
+│   ├── macro_service.dart       # 录制/回放引擎
+│   ├── hotkey_service.dart      # 快捷键服务
+│   ├── vision_service.dart      # 图像识别服务
+│   ├── vision_plugin.dart       # 视觉插件接口
+│   ├── screen_overlay_service.dart  # 屏幕覆盖层
+│   ├── plugins/                 # 插件实现
+│   └── platform/                # 平台输入抽象层
+├── widgets/                     # 通用组件
+plugins/
+└── ai_tracker/                  # YOLO 目标检测插件 (C++/ONNX)
+windows/
+└── runner/
+    └── flutter_window.cpp       # Windows 原生层 (截图/输入/覆盖层)
 ```
 
-## 🔌 扩展开发
+## 许可
 
-分层架构，易于扩展：
-
-- **新增平台** → 实现 `PlatformInput` 抽象接口
-- **新增功能** → 在 `services/` 添加服务，经 `AppState` 暴露
-- **新增页面** → 在 `screens/` 创建，注册到 `HomeScreen`
-- **快捷键** → 在 `HotkeyService` 注册新的按键映射
-
-## 📄 许可
-
-MIT License
+CC BY-NC 4.0 — 详见 [LICENSE](LICENSE) 文件。
+本作品可自由使用和修改，但**禁止商用**。
