@@ -540,7 +540,36 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
             if (detector == null) {
               statusText = '无检测插件(需安装ONNX Runtime+模型)';
             } else if (!detector.isAvailable) {
-              statusText = '检测插件不可用: ${detector.info.name}';
+              // Try initializing the plugin first
+              final ok = await pluginManager.ensureInitialized(detector.info.id);
+              if (!ok || !detector.isAvailable) {
+                statusText = '检测插件不可用: ${detector.info.name}（请检查ONNX Runtime和模型是否已安装）';
+              } else {
+                final detections = await detector.detectObjects(
+                  regionX: trigger.x, regionY: trigger.y, regionW: trigger.w, regionH: trigger.h,
+                  targetLabel: trigger.targetObjectClass.isNotEmpty ? trigger.targetObjectClass : null,
+                  confidence: trigger.detectConfidence,
+                );
+                conditionMet = detections.isNotEmpty;
+                statusText = conditionMet ? '检测到${detections.length}个目标' : '未检测到目标';
+                debugPrint('[条件触发] 目标检测: trigger=${trigger.name} found=${detections.length} met=$conditionMet');
+                if (conditionMet && detections.isNotEmpty) {
+                  _lastDetectionResults[trigger.id] = detections.first;
+                  if (trigger.showTrackingBox) {
+                    final boxes = detections.map((d) => {
+                      'x': trigger.x + d.x,
+                      'y': trigger.y + d.y,
+                      'w': d.width,
+                      'h': d.height,
+                      'confidence': d.score,
+                      'class_name': d.label ?? '',
+                    }).toList();
+                    ScreenOverlayService.instance.showDetectionBoxes(boxes);
+                  }
+                } else if (trigger.showTrackingBox) {
+                  ScreenOverlayService.instance.hideDetectionBoxes();
+                }
+              }
             } else {
               await pluginManager.ensureInitialized(detector.info.id);
               final detections = await detector.detectObjects(
@@ -553,7 +582,6 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
               debugPrint('[条件触发] 目标检测: trigger=${trigger.name} found=${detections.length} met=$conditionMet');
               if (conditionMet && detections.isNotEmpty) {
                 _lastDetectionResults[trigger.id] = detections.first;
-                // Show tracking boxes if enabled
                 if (trigger.showTrackingBox) {
                   final boxes = detections.map((d) => {
                     'x': trigger.x + d.x,
@@ -712,17 +740,6 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     final isDark = FluentTheme.of(context).brightness == Brightness.dark;
 
     if (!_initialized) {
-      // Use read() instead of watch() during loading to avoid unnecessary rebuilds
-      final config = context.read<AppState>().clickerConfig;
-      if (!config.imageRecognitionEnabled) {
-        return ScaffoldPage(
-          content: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-            const Icon(FluentIcons.image_pixel, size: 48, color: Colors.grey),
-            const SizedBox(height: 12),
-            const Text('图像识别未启用', style: TextStyle(fontSize: 16)),
-          ])),
-        );
-      }
       return ScaffoldPage(
         content: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
           const SizedBox(width: 32, height: 32, child: ProgressRing()),
@@ -733,16 +750,6 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     }
 
     final state = context.watch<AppState>();
-
-    if (!state.clickerConfig.imageRecognitionEnabled) {
-      return ScaffoldPage(
-        content: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Icon(FluentIcons.image_pixel, size: 48, color: Colors.grey),
-          const SizedBox(height: 12),
-          const Text('图像识别未启用', style: TextStyle(fontSize: 16)),
-        ])),
-      );
-    }
 
     return ScaffoldPage.scrollable(
       padding: const EdgeInsets.all(20),
@@ -1331,6 +1338,7 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
   bool _dllDeployed = false;
 
   Future<void> _checkDependencies() async {
+    if (!mounted) return;
     setState(() => _checking = true);
     final dir = await _getPluginDir();
     _pluginDir = dir;
@@ -1340,17 +1348,9 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
     // _paddleOcrExists = await _checkPaddleOcrInstalled();  // PaddleOCR 暂时禁用
     _dllDeployed = await _deployNativePlugin();
 
-    // 自动下载缺失的依赖
-    if (!_onnxExists) {
-      await _downloadOnnxRuntime();
-      _onnxExists = await File('$dir\\onnxruntime.dll').exists();
-    }
-    if (!_modelExists) {
-      await _downloadModel();
-      _modelExists = await File('$dir\\models\\yolo11n.onnx').exists();
-    }
+    // 不自动下载，只检查状态，由用户手动触发下载
 
-    setState(() => _checking = false);
+    if (mounted) setState(() => _checking = false);
   }
 
   // PaddleOCR 暂时禁用
@@ -1491,6 +1491,7 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
       await response.stream.forEach((chunk) {
         sink.add(chunk);
         received += chunk.length;
+        if (!mounted) return;
         if (total > 0) {
           final progress = received / total;
           setState(() {
@@ -1542,6 +1543,7 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
     String? lastError;
 
     for (final mirror in order) {
+      if (!mounted) throw Exception('Widget已销毁');
       final prefix = _mirrors[mirror] ?? '';
       final url = prefix.isEmpty ? githubUrl : '$prefix$githubUrl';
 
@@ -1557,7 +1559,7 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
           savePath: savePath,
           label: '$label [源: $mirror]',
         );
-        setState(() => _selectedMirror = mirror);
+        if (mounted) setState(() => _selectedMirror = mirror);
         return mirror;
       } catch (e) {
         lastError = e.toString().replaceFirst('Exception: ', '');
@@ -1566,9 +1568,11 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
           try { await file.delete(); } catch (_) {}
         }
         if (mirror != order.last) {
-          setState(() {
-            _downloadStatus = '源 $mirror 失败，尝试下一个镜像...';
-          });
+          if (mounted) {
+            setState(() {
+              _downloadStatus = '源 $mirror 失败，尝试下一个镜像...';
+            });
+          }
           await Future.delayed(const Duration(milliseconds: 500));
         }
       }
@@ -1606,6 +1610,7 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
   }
 
   Future<void> _downloadOnnxRuntime() async {
+    if (!mounted) return;
     setState(() {
       _downloading = true;
       _downloadProgress = 0;
@@ -1624,6 +1629,7 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
         label: '正在下载 ONNX Runtime v$_ortVersion',
       );
 
+      if (!mounted) return;
       setState(() {
         _downloadStatus = '正在解压 ONNX Runtime...';
         _downloadProgress = 0;
@@ -1651,10 +1657,11 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
       _downloadStatus = '安装失败';
     }
 
-    setState(() => _downloading = false);
+    if (mounted) setState(() => _downloading = false);
   }
 
   Future<void> _downloadModel() async {
+    if (!mounted) return;
     setState(() {
       _downloading = true;
       _downloadProgress = 0;
@@ -1681,7 +1688,7 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
       _downloadStatus = '下载失败';
     }
 
-    setState(() => _downloading = false);
+    if (mounted) setState(() => _downloading = false);
   }
 
   static const _pipMirrors = <String, String>{

@@ -142,6 +142,8 @@ class ClickService {
       } catch (e) {
         _log('action error: $e');
       }
+      // stop() may have been called inside _performAction (e.g. text mode)
+      if (_status != ClickerStatus.running) return;
       _clickCount++;
       if (_shouldStop()) { stop(); return; }
       _scheduleClick();

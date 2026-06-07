@@ -88,7 +88,7 @@ class _ClickerAppState extends State<ClickerApp> {
             builder: (context, child) {
               return ExcludeSemantics(child: child!);
             },
-            home: const HomeScreen(),
+            home: HomeScreen(key: HomeScreen.globalKey),
           );
         },
       ),

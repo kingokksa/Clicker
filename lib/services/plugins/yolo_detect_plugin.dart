@@ -44,16 +44,16 @@ class YoloDetectPlugin extends VisionPlugin {
       return false;
     }
 
-    // 在加载原生插件之前，确保 onnxruntime.dll 存在
-    if (!await _ensureOnnxRuntimeDll()) {
-      debugPrint('[YoloDetectPlugin] ONNX Runtime DLL 不可用且下载失败');
+    // 检查 onnxruntime.dll 是否存在（不自动下载）
+    if (!await _checkOnnxRuntimeDll()) {
+      debugPrint('[YoloDetectPlugin] ONNX Runtime DLL 不存在，请在高级模型中安装');
       _available = false;
       return false;
     }
 
-    // 确保模型文件存在
-    if (await _findModelPath() == null) {
-      debugPrint('[YoloDetectPlugin] YOLO模型文件未找到且下载失败');
+    // 检查模型文件是否存在（不自动下载）
+    if (await _findModelPathLocal() == null) {
+      debugPrint('[YoloDetectPlugin] YOLO模型文件未找到，请在高级模型中安装');
       _available = false;
       return false;
     }
@@ -75,32 +75,9 @@ class YoloDetectPlugin extends VisionPlugin {
           statusResult.contains('"ort_api":false');
 
       if (versionMismatch) {
-        debugPrint('[YoloDetectPlugin] ONNX Runtime 版本过旧（API不匹配），尝试下载新版本...');
-        final downloaded = await _downloadOnnxRuntime();
-        if (downloaded) {
-          // 卸载旧插件并重新加载
-          aiPlugin.unloadNative();
-          final reloaded = await aiPlugin.loadNativeAsync();
-          if (reloaded) {
-            statusResult = aiPlugin.executeAction('get_status', '{}', returnOnError: true);
-            if (statusResult != null && !statusResult.contains('"available":false')) {
-              debugPrint('[YoloDetectPlugin] ONNX Runtime 新版本加载成功');
-              // 继续往下执行
-            } else {
-              debugPrint('[YoloDetectPlugin] 新版本加载后仍不可用: $statusResult，请重启应用');
-              _available = false;
-              return false;
-            }
-          } else {
-            debugPrint('[YoloDetectPlugin] 下载新版本后重新加载失败，请重启应用');
-            _available = false;
-            return false;
-          }
-        } else {
-          debugPrint('[YoloDetectPlugin] ONNX Runtime 新版本下载失败');
-          _available = false;
-          return false;
-        }
+        debugPrint('[YoloDetectPlugin] ONNX Runtime 版本过旧（API不匹配），请在高级模型中更新');
+        _available = false;
+        return false;
       } else {
         debugPrint('[YoloDetectPlugin] ONNX Runtime 不可用: $statusResult');
         _available = false;
@@ -131,7 +108,27 @@ class YoloDetectPlugin extends VisionPlugin {
     return true;
   }
 
-  Future<String?> _findModelPath() async {
+  /// Check if onnxruntime.dll exists (no auto-download)
+  Future<bool> _checkOnnxRuntimeDll() async {
+    final pluginDir = await AppPaths.getPluginDir('ai_tracker');
+    final sep = Platform.pathSeparator;
+    final candidates = [
+      '$pluginDir${sep}onnxruntime.dll',
+    ];
+    final exePath = Platform.resolvedExecutable;
+    final exeDir = File(exePath).parent.path;
+    candidates.addAll([
+      '$exeDir${sep}onnxruntime.dll',
+      '$exeDir${sep}data${sep}plugins${sep}ai_tracker${sep}onnxruntime.dll',
+    ]);
+    for (final path in candidates) {
+      if (await File(path).exists()) return true;
+    }
+    return false;
+  }
+
+  /// Find model path locally (no auto-download)
+  Future<String?> _findModelPathLocal() async {
     final pluginDir = await AppPaths.getPluginDir('ai_tracker');
     final modelFile = File('$pluginDir${Platform.pathSeparator}models${Platform.pathSeparator}yolo11n.onnx');
     if (await modelFile.exists()) return modelFile.path;
@@ -141,64 +138,22 @@ class YoloDetectPlugin extends VisionPlugin {
     final altModel = File('$exeDir${Platform.pathSeparator}data${Platform.pathSeparator}plugins${Platform.pathSeparator}ai_tracker${Platform.pathSeparator}models${Platform.pathSeparator}yolo11n.onnx');
     if (await altModel.exists()) return altModel.path;
 
-    // 自动下载模型
-    debugPrint('[YoloDetectPlugin] 模型文件未找到，尝试自动下载...');
-    try {
-      final modelsDir = Directory('$pluginDir${Platform.pathSeparator}models');
-      if (!await modelsDir.exists()) await modelsDir.create(recursive: true);
-
-      const modelUrl = 'https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11n.onnx';
-      const mirrors = [
-        '', // GitHub direct
-        'https://ghfast.top/',
-        'https://gh-proxy.com/',
-        'https://ghproxy.net/',
-      ];
-
-      for (final mirror in mirrors) {
-        try {
-          final url = '${mirror}$modelUrl';
-          debugPrint('[YoloDetectPlugin] 尝试从 $url 下载模型...');
-          final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 60));
-          if (response.statusCode == 200 && response.bodyBytes.length > 1000000) {
-            await modelFile.writeAsBytes(response.bodyBytes);
-            debugPrint('[YoloDetectPlugin] 模型下载成功: ${response.bodyBytes.length} bytes');
-            return modelFile.path;
-          }
-        } catch (_) {}
-      }
-      debugPrint('[YoloDetectPlugin] 所有镜像源均下载失败');
-    } catch (e) {
-      debugPrint('[YoloDetectPlugin] 自动下载模型异常: $e');
-    }
-
     return null;
   }
 
-  Future<bool> _ensureOnnxRuntimeDll() async {
-    // 检查多个可能的位置
-    final pluginDir = await AppPaths.getPluginDir('ai_tracker');
-    final sep = Platform.pathSeparator;
-
-    final candidates = [
-      '$pluginDir${sep}onnxruntime.dll',
-    ];
-
-    // 添加 exe 目录下的搜索路径
-    final exePath = Platform.resolvedExecutable;
-    final exeDir = File(exePath).parent.path;
-    candidates.addAll([
-      '$exeDir${sep}onnxruntime.dll',
-      '$exeDir${sep}data${sep}plugins${sep}ai_tracker${sep}onnxruntime.dll',
-    ]);
-
-    for (final path in candidates) {
-      if (await File(path).exists()) return true;
-    }
-
-    // 不存在则自动下载
-    return await _downloadOnnxRuntime();
+  Future<String?> _findModelPath() async {
+    return _findModelPathLocal();
   }
+
+  Future<bool> _ensureOnnxRuntimeDll() async {
+    return _checkOnnxRuntimeDll();
+  }
+
+  /// Download ONNX Runtime (called from advanced models page only)
+  Future<bool> downloadOnnxRuntime() => _downloadOnnxRuntime();
+
+  /// Download YOLO model (called from advanced models page only)
+  Future<bool> downloadModel() => _downloadModel();
 
   Future<bool> _downloadOnnxRuntime() async {
     try {
@@ -235,6 +190,40 @@ class YoloDetectPlugin extends VisionPlugin {
       debugPrint('[YoloDetectPlugin] 所有镜像源均下载ONNX Runtime失败');
     } catch (e) {
       debugPrint('[YoloDetectPlugin] 下载ONNX Runtime异常: $e');
+    }
+    return false;
+  }
+
+  Future<bool> _downloadModel() async {
+    try {
+      final pluginDir = await AppPaths.getPluginDir('ai_tracker');
+      final modelFile = File('$pluginDir${Platform.pathSeparator}models${Platform.pathSeparator}yolo11n.onnx');
+      final modelsDir = Directory('$pluginDir${Platform.pathSeparator}models');
+      if (!await modelsDir.exists()) await modelsDir.create(recursive: true);
+
+      const modelUrl = 'https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11n.onnx';
+      const mirrors = [
+        '', // GitHub direct
+        'https://ghfast.top/',
+        'https://gh-proxy.com/',
+        'https://ghproxy.net/',
+      ];
+
+      for (final mirror in mirrors) {
+        try {
+          final url = '${mirror}$modelUrl';
+          debugPrint('[YoloDetectPlugin] 尝试从 $url 下载模型...');
+          final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 60));
+          if (response.statusCode == 200 && response.bodyBytes.length > 1000000) {
+            await modelFile.writeAsBytes(response.bodyBytes);
+            debugPrint('[YoloDetectPlugin] 模型下载成功: ${response.bodyBytes.length} bytes');
+            return true;
+          }
+        } catch (_) {}
+      }
+      debugPrint('[YoloDetectPlugin] 所有镜像源均下载失败');
+    } catch (e) {
+      debugPrint('[YoloDetectPlugin] 下载模型异常: $e');
     }
     return false;
   }
