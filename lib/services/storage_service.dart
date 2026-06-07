@@ -1,13 +1,13 @@
-/// Persistent storage service using shared_preferences.
-/// Handles app config, profiles, macros, and import/export.
+/// Persistent storage service using local JSON file.
+/// All data is stored in {appDir}/data/config.json alongside the executable.
 library;
 
 import 'dart:convert';
 import 'dart:typed_data';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
 import 'app_paths.dart';
+import 'local_storage.dart';
 import '../models/clicker_config.dart';
 import '../models/hold_trigger_key.dart';
 import '../models/hotkey_config.dart';
@@ -25,14 +25,15 @@ class StorageService {
   static const _keyProfiles = 'profiles';
   static const _keyHoldTriggerKeys = 'hold_trigger_keys';
 
-  late SharedPreferences _prefs;
   late String _macrosDir;
 
   Future<void> init() async {
-    _prefs = await SharedPreferences.getInstance();
+    await LocalStorage.instance.init();
     _macrosDir = await AppPaths.getMacrosDir();
     await Directory(_macrosDir).create(recursive: true);
   }
+
+  LocalStorage get _prefs => LocalStorage.instance;
 
   // ─── Clicker Config ───────────────────────────────────────
 

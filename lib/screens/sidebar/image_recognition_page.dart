@@ -7,7 +7,7 @@ import 'dart:io';
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import '../../services/local_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:archive/archive.dart';
 import '../../services/app_state.dart';
@@ -265,7 +265,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
   static const _kTriggersKey = 'img_rec_triggers';
 
   Future<void> _loadPersistedData() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = LocalStorage.instance;
 
     // Load triggers
     final triggersJson = prefs.getString(_kTriggersKey);
@@ -372,7 +372,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
   // }
 
   Future<void> _saveTriggers() async {
-    final prefs = await SharedPreferences.getInstance();
+    final prefs = LocalStorage.instance;
     final list = _triggers.map((t) => {
       'id': t.id, 'name': t.name,
       'conditionType': t.conditionType.name,

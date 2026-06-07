@@ -7,15 +7,13 @@ build/
 *.iml
 .idea/
 .vscode/
-*.lock
-.**/
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Build outputs
-windows/Flutter/
+# Build outputs (ephemeral only, not generated CMake files)
+windows/flutter/ephemeral/
 android/.gradle/
 android/app/build/
 android/local.properties
