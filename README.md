@@ -1,8 +1,14 @@
 # Clicker Pro
 
-> Windows 自动化工具 · 连点器 / 宏录制 / 图像识别 / 目标检测
+#### 作者的话
+明明是很简单的工具，但是很少见到功能够用的开源项目，所以自己写了一个简单的，欢迎PR。由于作者不是很熟悉flutter，很多地方用了AI开发，希望有专业的开发者帮忙一起完善。
+~~最后，Dart是世界上最狗屎的语言~~
 
-基于 Flutter + Fluent Design 的桌面自动化工具，集成 YOLO 目标检测和模板匹配。
+> 自用自动化工具 · 连点器 / 宏录制 / 图像识别 / 目标检测
+
+
+
+基于 Flutter 的跨平台自动化工具，集成 YOLO 目标检测、模板匹配和可扩展插件系统。
 
 ## 功能
 
@@ -22,19 +28,27 @@
 - 支持多种条件组合：颜色匹配、图像匹配、文字匹配、目标检测
 - 可配置检测间隔和置信度阈值
 
+### 插件系统
+- **Dart 内置插件** — 编译时打包，按需加载，支持懒初始化
+- **C/C++ 原生插件** — 通过 FFI 动态加载 .dll/.so/.dylib，支持模板匹配、OCR、自定义动作
+- **插件 SDK** — 完整 C API 头文件 + 项目模板，快速开发原生插件
+- 详见 [插件开发文档](docs/PLUGIN_DEV.md)
+
 ### 其他
 - **悬浮窗** — 迷你控制面板，可拖拽，屏幕边缘自动收起/弹出
-- **插件系统** — 可扩展的插件架构，支持第三方插件
+- **后台执行** — 向后台窗口发送点击指令（Windows）
 - **暗色/亮色主题** — Fluent Design 双主题 + 主题色自定义
+- **跨平台** — Windows + Android 同一套代码
 
 ## 构建
 
 ### 环境要求
 
 - **Flutter SDK** >= 3.16
-- **Visual Studio 2022**（勾选 "使用 C++ 的桌面开发"）
+- **Windows**: Visual Studio 2022（勾选 "使用 C++ 的桌面开发"）
+- **Android**: Android Studio + Android SDK 33+
 
-### 构建 Release
+### Windows 构建
 
 ```bash
 flutter pub get
@@ -42,6 +56,19 @@ flutter build windows --release
 ```
 
 输出在 `build/windows/x64/runner/Release/`
+
+### Android 构建
+
+```bash
+flutter build apk --release
+
+# 分 ABI 打包（体积更小）
+flutter build apk --split-per-abi
+```
+
+输出在 `build/app/outputs/flutter-apk/`
+
+> Android 使用须知：安装后需在 **设置 → 无障碍 → 已安装的服务** 中启用 "Clicker Pro"。
 
 ### 目标检测依赖（可选）
 
@@ -68,21 +95,36 @@ lib/
 │   ├── floating_window.dart     # 悬浮窗
 │   └── home_screen.dart         # 主界面
 ├── services/
-│   ├── app_state.dart           # 全局状态
+│   ├── plugin_system.dart       # 插件框架（ClickerPlugin / NativeClickerPlugin）
+│   ├── plugin_registry.dart     # 插件注册中心（安装/启用/持久化）
+│   ├── plugin_store.dart        # 插件商店（远程索引/下载）
+│   ├── native_plugin_loader.dart # FFI 原生插件加载器
+│   ├── vision_plugin.dart       # 视觉插件接口（模板匹配/OCR/检测）
+│   ├── vision_service.dart      # 图像识别服务
+│   ├── screen_overlay_service.dart  # 屏幕覆盖层
 │   ├── click_service.dart       # 点击引擎
 │   ├── macro_service.dart       # 录制/回放引擎
 │   ├── hotkey_service.dart      # 快捷键服务
-│   ├── vision_service.dart      # 图像识别服务
-│   ├── vision_plugin.dart       # 视觉插件接口
-│   ├── screen_overlay_service.dart  # 屏幕覆盖层
-│   ├── plugins/                 # 插件实现
+│   ├── plugins/                 # 内置插件实现
 │   └── platform/                # 平台输入抽象层
 ├── widgets/                     # 通用组件
+sdk/
+├── clicker_plugin.h             # 插件 SDK C API 头文件
+└── template/                    # 插件项目模板
+    ├── manifest.json
+    └── src/
+        ├── main.c              # 模板代码
+        ├── build_windows.bat
+        └── build_unix.sh
 plugins/
+├── plugin_index.json            # 插件商店索引
 └── ai_tracker/                  # YOLO 目标检测插件 (C++/ONNX)
 windows/
 └── runner/
     └── flutter_window.cpp       # Windows 原生层 (截图/输入/覆盖层)
+android/
+└── app/src/main/
+    └── kotlin/                  # Android 无障碍服务
 ```
 
 ## 许可
