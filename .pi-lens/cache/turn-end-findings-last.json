@@ -1,0 +1,4 @@
+{
+  "signature": "lib/services/platform/windows_input.dart|lib/theme/app_theme.dart::Unresolved from this turn — lib/theme/app_theme.dart:\n🔴 STOP — 2 issue(s) must be fixed:\n  L13: The value of the field '_success' isn't used.\n  Try removing the field, or using it.\n    💡 Fix: Remove the unused declaration or rename with '_' prefix if intentionally unused.\n  L13: [UNUSED_FIELD] The value of the field '_success' isn't used.\n    💡 Fix: Remove the unused declaration or rename with '_' prefix if intentionally unused.",
+  "sessionId": "lens-mpgjjnf3-f7bdcb85"
+}

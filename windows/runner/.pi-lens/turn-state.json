@@ -1,0 +1,98 @@
+{
+  "files": {
+    "win32_window.h": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 40
+        }
+      ],
+      "importsChanged": false,
+      "lastEdit": "2026-05-22T06:59:39.026Z"
+    },
+    "flutter_window.cpp": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 48
+        }
+      ],
+      "importsChanged": false,
+      "lastEdit": "2026-05-22T07:00:17.176Z"
+    },
+    "main.cpp": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 34
+        }
+      ],
+      "importsChanged": false,
+      "lastEdit": "2026-05-22T07:00:17.205Z"
+    },
+    "flutter_window.h": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 24
+        }
+      ],
+      "importsChanged": false,
+      "lastEdit": "2026-05-22T07:00:17.221Z"
+    },
+    "utils.h": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 12
+        }
+      ],
+      "importsChanged": false,
+      "lastEdit": "2026-05-22T07:01:23.745Z"
+    },
+    "run_loop.cpp": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 24
+        }
+      ],
+      "importsChanged": false,
+      "lastEdit": "2026-05-22T07:01:23.774Z"
+    },
+    "utils.cpp": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 51
+        }
+      ],
+      "importsChanged": false,
+      "lastEdit": "2026-05-22T07:01:23.792Z"
+    },
+    "run_loop.h": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 25
+        }
+      ],
+      "importsChanged": false,
+      "lastEdit": "2026-05-22T07:01:23.808Z"
+    },
+    "win32_window.cpp": {
+      "modifiedRanges": [
+        {
+          "start": 159,
+          "end": 160
+        }
+      ],
+      "importsChanged": false,
+      "lastEdit": "2026-05-22T07:01:47.029Z"
+    }
+  },
+  "turnCycles": 0,
+  "maxCycles": 3,
+  "lastUpdated": "2026-05-22T07:01:47.030Z",
+  "sessionId": "lens-mpgjjnf3-f7bdcb85"
+}

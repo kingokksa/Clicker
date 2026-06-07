@@ -1,0 +1,194 @@
+{
+  "version": "v2",
+  "timestamp": 1779430927862,
+  "ruleHash": "eab761dbfef58938",
+  "queries": [
+    {
+      "id": "goto-into-block",
+      "name": "Goto Should Not Jump Into Blocks",
+      "severity": "warning",
+      "language": "c",
+      "message": "goto statements should not be used to jump into blocks",
+      "query": "  (function_definition\n    body: (compound_statement\n      (goto_statement\n        (statement_identifier) @TARGET) @GOTO))",
+      "metavars": [
+        "TARGET",
+        "GOTO"
+      ],
+      "post_filter": "goto_targets_inner_block",
+      "defect_class": "correctness",
+      "inline_tier": "blocking",
+      "filePath": "C:\\Users\\哈永亮\\.pi\\agent\\npm\\node_modules\\pi-lens\\rules\\tree-sitter-queries\\c\\goto-into-block.yml"
+    },
+    {
+      "id": "goto-label-order",
+      "name": "Goto Should Jump to Later Labels",
+      "severity": "warning",
+      "language": "c",
+      "message": "goto should jump to labels declared later in the same function",
+      "query": "  (function_definition\n    body: (compound_statement\n      (goto_statement\n        (statement_identifier) @LABEL) @GOTO))",
+      "metavars": [
+        "LABEL",
+        "GOTO"
+      ],
+      "post_filter": "goto_jumps_backward",
+      "defect_class": "correctness",
+      "inline_tier": "warning",
+      "filePath": "C:\\Users\\哈永亮\\.pi\\agent\\npm\\node_modules\\pi-lens\\rules\\tree-sitter-queries\\c\\goto-label-order.yml"
+    },
+    {
+      "id": "c-hardcoded-secrets",
+      "name": "Secrets Should Not Be Hard-Coded",
+      "severity": "error",
+      "language": "c",
+      "message": "hard-coded secret detected in {{VARNAME}} — move to environment variables or secure vault",
+      "query": "  [\n    (init_declarator\n      (identifier) @VARNAME\n      (string_literal) @SECRET)\n    (init_declarator\n      (pointer_declarator\n        (identifier) @VARNAME)\n      (string_literal) @SECRET)\n  ]",
+      "metavars": [
+        "VARNAME",
+        "SECRET"
+      ],
+      "post_filter": "check_secret_pattern",
+      "defect_class": "secrets",
+      "inline_tier": "blocking",
+      "filePath": "C:\\Users\\哈永亮\\.pi\\agent\\npm\\node_modules\\pi-lens\\rules\\tree-sitter-queries\\c\\hardcoded-secrets.yml"
+    },
+    {
+      "id": "memset-sensitive-data",
+      "name": "memset Should Not Be Used to Delete Sensitive Data",
+      "severity": "error",
+      "language": "c",
+      "message": "memset should not be used to erase sensitive data — use explicit_bzero, SecureZeroMemory, or memset_s",
+      "query": "  (call_expression\n    function: (identifier) @FN (#eq? @FN \"memset\")) @CALL",
+      "metavars": [
+        "FN",
+        "CALL"
+      ],
+      "post_filter": "c_memset_sensitive_arg",
+      "defect_class": "secrets",
+      "inline_tier": "blocking",
+      "filePath": "C:\\Users\\哈永亮\\.pi\\agent\\npm\\node_modules\\pi-lens\\rules\\tree-sitter-queries\\c\\memset-sensitive-data.yml"
+    },
+    {
+      "id": "no-bit-fields",
+      "name": "Bit Fields Should Not Be Used",
+      "severity": "error",
+      "language": "c",
+      "message": "bit fields should not be used — layout is implementation-defined and non-portable",
+      "query": "  (field_declaration\n    (bitfield_clause) @BITFIELD) @DECL",
+      "metavars": [
+        "BITFIELD",
+        "DECL"
+      ],
+      "defect_class": "correctness",
+      "inline_tier": "blocking",
+      "filePath": "C:\\Users\\哈永亮\\.pi\\agent\\npm\\node_modules\\pi-lens\\rules\\tree-sitter-queries\\c\\no-bit-fields.yml"
+    },
+    {
+      "id": "no-octal-literals",
+      "name": "Octal Values Should Not Be Used",
+      "severity": "error",
+      "language": "c",
+      "message": "octal literal detected — use decimal or hexadecimal instead",
+      "query": "  (number_literal) @NUM",
+      "metavars": [
+        "NUM"
+      ],
+      "post_filter": "c_octal_literal",
+      "defect_class": "correctness",
+      "inline_tier": "blocking",
+      "filePath": "C:\\Users\\哈永亮\\.pi\\agent\\npm\\node_modules\\pi-lens\\rules\\tree-sitter-queries\\c\\no-octal-literals.yml"
+    },
+    {
+      "id": "no-pointer-arithmetic-array-access",
+      "name": "Array Indices Should Use Bracket Notation",
+      "severity": "error",
+      "language": "c",
+      "message": "use array bracket notation instead of pointer arithmetic for indexing",
+      "query": "  (pointer_expression\n    \"*\"\n    (parenthesized_expression\n      (binary_expression\n        (_) @ARRAY\n        \"+\"\n        (_) @INDEX))) @EXPR",
+      "metavars": [
+        "ARRAY",
+        "INDEX",
+        "EXPR"
+      ],
+      "defect_class": "correctness",
+      "inline_tier": "blocking",
+      "filePath": "C:\\Users\\哈永亮\\.pi\\agent\\npm\\node_modules\\pi-lens\\rules\\tree-sitter-queries\\c\\no-pointer-arithmetic-array-access.yml"
+    },
+    {
+      "id": "no-redundant-pointer-ops",
+      "name": "Redundant Pointer Operator Sequences",
+      "severity": "error",
+      "language": "c",
+      "message": "redundant pointer operator sequence — simplify by removing canceling operators",
+      "query": "  [\n    (pointer_expression\n      \"*\"\n      (pointer_expression\n        \"&\"\n        (_) @VAR)) @EXPR\n    (pointer_expression\n      \"&\"\n      (pointer_expression\n        \"*\"\n        (_) @VAR)) @EXPR\n  ]",
+      "metavars": [
+        "VAR",
+        "EXPR"
+      ],
+      "defect_class": "correctness",
+      "inline_tier": "blocking",
+      "filePath": "C:\\Users\\哈永亮\\.pi\\agent\\npm\\node_modules\\pi-lens\\rules\\tree-sitter-queries\\c\\no-redundant-pointer-ops.yml"
+    },
+    {
+      "id": "no-reserved-identifiers",
+      "name": "Reserved Identifiers Should Not Be Defined",
+      "severity": "error",
+      "language": "c",
+      "message": "identifier {{NAME}} uses a reserved namespace — identifiers beginning with '_' + uppercase or '__' are reserved by the implementation",
+      "query": "  [\n    (identifier) @NAME (#match? @NAME \"^_[A-Z_]\")\n    (field_identifier) @NAME (#match? @NAME \"^_[A-Z_]\")\n    (type_identifier) @NAME (#match? @NAME \"^_[A-Z_]\")\n  ]",
+      "metavars": [
+        "NAME"
+      ],
+      "defect_class": "correctness",
+      "inline_tier": "blocking",
+      "filePath": "C:\\Users\\哈永亮\\.pi\\agent\\npm\\node_modules\\pi-lens\\rules\\tree-sitter-queries\\c\\no-reserved-identifiers.yml"
+    },
+    {
+      "id": "no-stdlib-name-as-id",
+      "name": "Standard Library Names Should Not Be Shadowed",
+      "severity": "error",
+      "language": "c",
+      "message": "{{NAME}} is a well-known C standard library name and should not be used as an identifier",
+      "query": "  [\n    (declaration\n      (init_declarator\n        (identifier) @NAME))\n    (parameter_declaration\n      (identifier) @NAME)\n    (function_declarator\n      (identifier) @NAME)\n  ]",
+      "metavars": [
+        "NAME"
+      ],
+      "post_filter": "c_stdlib_name",
+      "defect_class": "correctness",
+      "inline_tier": "blocking",
+      "filePath": "C:\\Users\\哈永亮\\.pi\\agent\\npm\\node_modules\\pi-lens\\rules\\tree-sitter-queries\\c\\no-stdlib-name-as-id.yml"
+    },
+    {
+      "id": "non-case-label-in-switch",
+      "name": "Switch Statements Should Not Contain Non-Case Labels",
+      "severity": "error",
+      "language": "c",
+      "message": "non-case label inside switch statement — move label outside or restructure",
+      "query": "  (labeled_statement\n    (statement_identifier) @LABEL) @STMT",
+      "metavars": [
+        "LABEL",
+        "STMT"
+      ],
+      "post_filter": "c_label_in_switch",
+      "defect_class": "correctness",
+      "inline_tier": "blocking",
+      "filePath": "C:\\Users\\哈永亮\\.pi\\agent\\npm\\node_modules\\pi-lens\\rules\\tree-sitter-queries\\c\\non-case-label-in-switch.yml"
+    },
+    {
+      "id": "noreturn-returns",
+      "name": "noreturn Functions Should Not Return",
+      "severity": "error",
+      "language": "c",
+      "message": "function declared with noreturn attribute contains a return statement",
+      "query": "  (function_definition\n    (attribute_specifier\n      (argument_list\n        (identifier) @ATTR))\n    (compound_statement\n      (return_statement) @RET)) @FUNC",
+      "metavars": [
+        "ATTR",
+        "RET",
+        "FUNC"
+      ],
+      "post_filter": "c_noreturn_attr",
+      "defect_class": "correctness",
+      "inline_tier": "blocking",
+      "filePath": "C:\\Users\\哈永亮\\.pi\\agent\\npm\\node_modules\\pi-lens\\rules\\tree-sitter-queries\\c\\noreturn-returns.yml"
+    }
+  ]
+}

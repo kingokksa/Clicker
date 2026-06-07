@@ -1,0 +1,104 @@
+{
+  "version": "v2",
+  "timestamp": 1779433217238,
+  "ruleHash": "aac824a8deb51268",
+  "queries": [
+    {
+      "id": "no-auto-ptr",
+      "name": "std::auto_ptr Should Not Be Used",
+      "severity": "error",
+      "language": "cpp",
+      "message": "std::auto_ptr should not be used — use std::unique_ptr instead",
+      "query": "  (template_type\n    name: (type_identifier) @NAME (#eq? @NAME \"auto_ptr\")\n    arguments: (template_argument_list) @ARGS)\n  ((type_identifier) @NAME\n    (#eq? @NAME \"auto_ptr\"))",
+      "metavars": [
+        "NAME",
+        "ARGS"
+      ],
+      "defect_class": "correctness",
+      "inline_tier": "blocking",
+      "filePath": "C:\\Users\\哈永亮\\.pi\\agent\\npm\\node_modules\\pi-lens\\rules\\tree-sitter-queries\\cpp\\no-auto-ptr.yml"
+    },
+    {
+      "id": "no-confused-move-forward",
+      "name": "std::move and std::forward Should Not Be Confused",
+      "severity": "error",
+      "language": "cpp",
+      "message": "std::move and std::forward should not be confused",
+      "query": "  (call_expression\n    function: (qualified_identifier\n      name: (identifier) @FUNC\n      (#match? @FUNC \"^(move|forward)$\"))\n    arguments: (argument_list) @ARGS)",
+      "metavars": [
+        "FUNC",
+        "ARGS"
+      ],
+      "post_filter": "confused_move_forward",
+      "defect_class": "correctness",
+      "inline_tier": "blocking",
+      "filePath": "C:\\Users\\哈永亮\\.pi\\agent\\npm\\node_modules\\pi-lens\\rules\\tree-sitter-queries\\cpp\\no-confused-move-forward.yml"
+    },
+    {
+      "id": "no-memset-sensitive-data",
+      "name": "memset Should Not Be Used to Delete Sensitive Data",
+      "severity": "error",
+      "language": "cpp",
+      "message": "memset should not be used to delete sensitive data — use SecureZeroMemory or explicit_bzero",
+      "query": "  (call_expression\n    function: (identifier) @FUNC (#eq? @FUNC \"memset\")\n    arguments: (argument_list) @ARGS)",
+      "metavars": [
+        "FUNC",
+        "ARGS"
+      ],
+      "post_filter": "memset_for_sensitive_data",
+      "defect_class": "security",
+      "inline_tier": "blocking",
+      "filePath": "C:\\Users\\哈永亮\\.pi\\agent\\npm\\node_modules\\pi-lens\\rules\\tree-sitter-queries\\cpp\\no-memset-sensitive-data.yml"
+    },
+    {
+      "id": "no-scoped-lock-without-args",
+      "name": "std::scoped_lock Should Be Created With Constructor Arguments",
+      "severity": "error",
+      "language": "cpp",
+      "message": "std::scoped_lock should be created with constructor arguments",
+      "query": "  (declaration\n    type: (template_type\n      name: (type_identifier) @TYPE (#eq? @TYPE \"scoped_lock\"))\n    declarator: (init_declarator\n      initializer: (argument_list) @ARGS))",
+      "metavars": [
+        "TYPE",
+        "ARGS"
+      ],
+      "post_filter": "scoped_lock_empty_args",
+      "defect_class": "correctness",
+      "inline_tier": "blocking",
+      "filePath": "C:\\Users\\哈永亮\\.pi\\agent\\npm\\node_modules\\pi-lens\\rules\\tree-sitter-queries\\cpp\\no-scoped-lock-without-args.yml"
+    },
+    {
+      "id": "noexcept-functions",
+      "name": "Exception-Unfriendly Functions Should Be noexcept",
+      "severity": "error",
+      "language": "cpp",
+      "message": "Function should be declared noexcept",
+      "query": "  (function_definition\n    type: (primitive_type) @RET\n    (function_declarator\n      name: (identifier) @NAME)\n    body: (compound_statement) @BODY)",
+      "metavars": [
+        "RET",
+        "NAME",
+        "BODY"
+      ],
+      "post_filter": "should_be_noexcept",
+      "defect_class": "correctness",
+      "inline_tier": "blocking",
+      "filePath": "C:\\Users\\哈永亮\\.pi\\agent\\npm\\node_modules\\pi-lens\\rules\\tree-sitter-queries\\cpp\\noexcept-functions.yml"
+    },
+    {
+      "id": "unnecessary-bit-ops",
+      "name": "Unnecessary Bit Operations Should Not Be Performed",
+      "severity": "error",
+      "language": "cpp",
+      "message": "Unnecessary bit operation - has no effect",
+      "query": "  (binary_expression\n    (identifier) @VAR\n    \"|\" @OP\n    (number_literal) @ZERO (#eq? @ZERO \"0\"))\n  (binary_expression\n    (identifier) @VAR\n    \"&\" @OP\n    (number_literal) @VAL (#match? @VAL \"^-?1+$\"))\n  (binary_expression\n    (identifier) @VAR\n    \"^\" @OP\n    (number_literal) @ZERO (#eq? @ZERO \"0\"))",
+      "metavars": [
+        "VAR",
+        "OP",
+        "ZERO",
+        "VAL"
+      ],
+      "defect_class": "correctness",
+      "inline_tier": "blocking",
+      "filePath": "C:\\Users\\哈永亮\\.pi\\agent\\npm\\node_modules\\pi-lens\\rules\\tree-sitter-queries\\cpp\\unnecessary-bit-ops.yml"
+    }
+  ]
+}

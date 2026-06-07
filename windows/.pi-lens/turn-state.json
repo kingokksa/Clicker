@@ -1,0 +1,98 @@
+{
+  "files": {
+    "runner/utils.h": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 14
+        }
+      ],
+      "importsChanged": false,
+      "lastEdit": "2026-05-22T06:23:59.618Z"
+    },
+    "runner/utils.cpp": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 53
+        }
+      ],
+      "importsChanged": false,
+      "lastEdit": "2026-05-22T06:22:07.265Z"
+    },
+    "runner/win32_window.cpp": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 164
+        }
+      ],
+      "importsChanged": false,
+      "lastEdit": "2026-05-22T06:22:07.347Z"
+    },
+    "runner/main.cpp": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 42
+        }
+      ],
+      "importsChanged": false,
+      "lastEdit": "2026-05-22T06:22:07.421Z"
+    },
+    "runner/resource.h": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 7
+        }
+      ],
+      "importsChanged": false,
+      "lastEdit": "2026-05-22T06:22:40.025Z"
+    },
+    "runner/flutter_window.cpp": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 66
+        }
+      ],
+      "importsChanged": false,
+      "lastEdit": "2026-05-22T06:33:07.255Z"
+    },
+    "runner/flutter_window.h": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 29
+        }
+      ],
+      "importsChanged": false,
+      "lastEdit": "2026-05-22T06:23:34.939Z"
+    },
+    "runner/run_loop.cpp": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 25
+        }
+      ],
+      "importsChanged": false,
+      "lastEdit": "2026-05-22T06:23:59.560Z"
+    },
+    "runner/run_loop.h": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 27
+        }
+      ],
+      "importsChanged": false,
+      "lastEdit": "2026-05-22T06:23:59.677Z"
+    }
+  },
+  "turnCycles": 0,
+  "maxCycles": 3,
+  "lastUpdated": "2026-05-22T06:33:07.255Z",
+  "sessionId": "lens-mpgjjnf3-f7bdcb85"
+}
