@@ -1,4 +1,4 @@
-# Clicker Pro
+# Clicker
 
 #### 作者的话
 明明是很简单的工具，但是很少见到功能够用的开源项目，所以自己写了一个简单的，欢迎PR。由于作者不是很熟悉flutter，很多地方用了AI开发，希望有专业的开发者帮忙一起完善。
@@ -68,7 +68,7 @@ flutter build apk --split-per-abi
 
 输出在 `build/app/outputs/flutter-apk/`
 
-> Android 使用须知：安装后需在 **设置 → 无障碍 → 已安装的服务** 中启用 "Clicker Pro"。
+> Android 使用须知：安装后需在 **设置 → 无障碍 → 已安装的服务** 中启用 "Clicker"。
 
 ### 目标检测依赖（可选）
 

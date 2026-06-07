@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Clicker Pro</string>
+    <string name="app_name">Clicker</string>
     <string name="accessibility_service_description">
-        允许 Clicker Pro 模拟点击和手势操作。
+        允许 Clicker 模拟点击和手势操作。
         需要启用此服务才能使用连点和宏录制功能。
     </string>
 </resources>

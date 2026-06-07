@@ -11,7 +11,7 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
 
     <application
-        android:label="Clicker Pro"
+        android:label="Clicker"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
 

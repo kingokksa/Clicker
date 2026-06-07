@@ -95,7 +95,7 @@ class ScreenCaptureService : Service() {
                 "Screen Capture",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Screen capture for Clicker Pro"
+                description = "Screen capture for Clicker"
                 setShowBadge(false)
             }
             val manager = getSystemService(NotificationManager::class.java)
@@ -106,7 +106,7 @@ class ScreenCaptureService : Service() {
     private fun buildNotification(): Notification {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
-                .setContentTitle("Clicker Pro")
+                .setContentTitle("Clicker")
                 .setContentText("Screen capture active")
                 .setSmallIcon(android.R.drawable.ic_media_play)
                 .setOngoing(true)
@@ -114,7 +114,7 @@ class ScreenCaptureService : Service() {
         } else {
             @Suppress("DEPRECATION")
             Notification.Builder(this)
-                .setContentTitle("Clicker Pro")
+                .setContentTitle("Clicker")
                 .setContentText("Screen capture active")
                 .setSmallIcon(android.R.drawable.ic_media_play)
                 .setOngoing(true)
