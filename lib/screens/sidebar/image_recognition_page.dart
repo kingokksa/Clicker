@@ -705,11 +705,13 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
   }
 
   Future<(int, int, int, int)?> _startAreaSelect() async {
-    return ScreenOverlayService.instance.startAreaSelect();
+    final result = await ScreenOverlayService.instance.startAreaSelect();
+    return result;
   }
 
   Future<(int, int)?> _startPick() async {
-    return ScreenOverlayService.instance.startPick();
+    final result = await ScreenOverlayService.instance.startPick();
+    return result;
   }
 
   Future<TemplateData?> _captureTemplate() async {

@@ -9,6 +9,7 @@ import 'dart:math';
 import 'package:flutter/services.dart';
 import '../models/clicker_config.dart';
 import 'platform/platform_input.dart';
+import 'platform/windows_input.dart';
 
 enum ClickerStatus { idle, running, paused }
 
@@ -78,7 +79,8 @@ class ClickService {
 
   Future<void> start() async {
     if (_status == ClickerStatus.running) return;
-    if (!_config.autoClickEnabled) {
+    final isBackgroundMode = _config.backgroundExecutionEnabled && _config.targetHwnd != 0;
+    if (!_config.autoClickEnabled && !isBackgroundMode) {
       onError?.call('自动连点功能未启用，请在功能管理中开启');
       return;
     }
@@ -101,6 +103,17 @@ class ClickService {
 
     _status = ClickerStatus.running;
     _startUiUpdateTimer();
+
+    // Set background mode on WindowsInput for Dart timer mode
+    if (_input is WindowsInput && isBackgroundMode) {
+      (_input as WindowsInput).setBackgroundMode(
+        true,
+        hwnd: _config.targetHwnd,
+        x: _config.targetClientX,
+        y: _config.targetClientY,
+      );
+    }
+
     onStatusChanged?.call(_status, _clickCount);
     _log('start: interval=${_config.intervalMs}ms, mode=${_config.clickMode.name}, repeat=${_config.repeatMode.name}');
 
@@ -419,6 +432,12 @@ class ClickService {
     }
 
     _status = ClickerStatus.idle;
+
+    // Restore foreground mode on WindowsInput
+    if (_input is WindowsInput) {
+      (_input as WindowsInput).setBackgroundMode(false);
+    }
+
     onStatusChanged?.call(_status, _clickCount);
   }
 

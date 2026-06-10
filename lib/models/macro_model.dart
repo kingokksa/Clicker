@@ -67,6 +67,11 @@ class MacroModel {
   double speed; // 0.1 ~ 10.0
   DateTime createdAt;
   String? hotkey; // Per-macro hotkey, e.g. "Alt+F3"
+  bool backgroundMode; // Use background click (requires background_execution plugin)
+  int backgroundTargetHwnd; // Target window handle for background mode
+  int backgroundTargetX; // Client area X for background mode
+  int backgroundTargetY; // Client area Y for background mode
+  String backgroundTargetWindowTitle; // Target window title (for display)
 
   MacroModel({
     required this.id,
@@ -76,6 +81,11 @@ class MacroModel {
     this.speed = 1.0,
     DateTime? createdAt,
     this.hotkey,
+    this.backgroundMode = false,
+    this.backgroundTargetHwnd = 0,
+    this.backgroundTargetX = 0,
+    this.backgroundTargetY = 0,
+    this.backgroundTargetWindowTitle = '',
   })  : events = events ?? [],
         createdAt = createdAt ?? DateTime.now();
 
@@ -98,6 +108,11 @@ class MacroModel {
           ? DateTime.parse(json['createdAt'] as String)
           : DateTime.now(),
       hotkey: json['hotkey'] as String?,
+      backgroundMode: json['backgroundMode'] ?? false,
+      backgroundTargetHwnd: json['backgroundTargetHwnd'] ?? 0,
+      backgroundTargetX: json['backgroundTargetX'] ?? 0,
+      backgroundTargetY: json['backgroundTargetY'] ?? 0,
+      backgroundTargetWindowTitle: json['backgroundTargetWindowTitle'] ?? '',
     );
   }
 
@@ -109,6 +124,11 @@ class MacroModel {
         'speed': speed,
         'createdAt': createdAt.toIso8601String(),
         if (hotkey != null) 'hotkey': hotkey,
+        'backgroundMode': backgroundMode,
+        'backgroundTargetHwnd': backgroundTargetHwnd,
+        'backgroundTargetX': backgroundTargetX,
+        'backgroundTargetY': backgroundTargetY,
+        'backgroundTargetWindowTitle': backgroundTargetWindowTitle,
       };
 
   String toJsonString() => jsonEncode(toJson());
@@ -122,8 +142,12 @@ class MacroModel {
     List<MacroEvent>? events,
     int? repeatCount,
     double? speed,
-    // Use Object? to distinguish "not provided" from "explicitly null"
     Object? hotkey = _notProvided,
+    bool? backgroundMode,
+    int? backgroundTargetHwnd,
+    int? backgroundTargetX,
+    int? backgroundTargetY,
+    String? backgroundTargetWindowTitle,
   }) {
     return MacroModel(
       id: id,
@@ -133,6 +157,11 @@ class MacroModel {
       speed: speed ?? this.speed,
       createdAt: createdAt,
       hotkey: hotkey == _notProvided ? this.hotkey : hotkey as String?,
+      backgroundMode: backgroundMode ?? this.backgroundMode,
+      backgroundTargetHwnd: backgroundTargetHwnd ?? this.backgroundTargetHwnd,
+      backgroundTargetX: backgroundTargetX ?? this.backgroundTargetX,
+      backgroundTargetY: backgroundTargetY ?? this.backgroundTargetY,
+      backgroundTargetWindowTitle: backgroundTargetWindowTitle ?? this.backgroundTargetWindowTitle,
     );
   }
 

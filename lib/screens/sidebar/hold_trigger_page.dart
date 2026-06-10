@@ -2,10 +2,14 @@
 /// Each trigger key has its own action, interval, and settings.
 library;
 
+import 'dart:io';
 import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../models/hold_trigger_key.dart';
+import '../../models/clicker_config.dart';
 import '../../services/app_state.dart';
+import '../../services/screen_overlay_service.dart';
 import '../../widgets/app_slider.dart';
 
 class HoldTriggerPage extends StatefulWidget {
@@ -16,6 +20,7 @@ class HoldTriggerPage extends StatefulWidget {
 }
 
 class _HoldTriggerPageState extends State<HoldTriggerPage> {
+  static const _platformChannel = MethodChannel('com.clicker.pro/platform');
 
   @override
   Widget build(BuildContext context) {
@@ -118,7 +123,7 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
             Text(actionDesc, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13,
               color: key.enabled ? null : (isDark ? const Color(0xFF606080) : const Color(0xFFB0B0C0)))),
             const SizedBox(height: 2),
-            Text('间隔 ${key.intervalMs.toInt()}ms${key.backgroundMode ? " · 后台" : ""}',
+            Text('间隔 ${key.intervalMs.toInt()}ms${key.backgroundMode ? " · 后台(${key.targetX},${key.targetY})" : ""}',
               style: TextStyle(fontSize: 11, color: isDark ? const Color(0xFF707090) : const Color(0xFF9A9AAA))),
           ])),
           // Enable toggle
@@ -182,6 +187,63 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
     state.removeHoldTriggerKey(key.id);
   }
 
+  Future<List<WindowInfo>> _refreshWindows() async {
+    if (!Platform.isWindows) return [];
+    try {
+      final result = await _platformChannel.invokeMethod('enumerateWindows');
+      final list = <WindowInfo>[];
+      if (result is List) {
+        for (final item in result) {
+          if (item is Map) {
+            list.add(WindowInfo(
+              hwnd: item['hwnd'] as int,
+              title: (item['title'] as String?) ?? '',
+              className: (item['className'] as String?) ?? '',
+            ));
+          }
+        }
+      }
+      return list;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  Future<(int, int)?> _pickCoordinates(int hwnd) async {
+    if (hwnd == 0) return null;
+    final wasOnTop = context.read<AppState>().alwaysOnTop;
+    // Must cancel alwaysOnTop first, otherwise the TOPMOST Flutter window
+    // still covers the overlay even when minimized.
+    if (Platform.isWindows) {
+      try {
+        if (wasOnTop) await _platformChannel.invokeMethod('setAlwaysOnTop', [false]);
+        await _platformChannel.invokeMethod('minimizeWindow');
+      } catch (_) {}
+    }
+    try { await _platformChannel.invokeMethod('setForegroundWindow', [hwnd]); } catch (_) {}
+
+    try {
+      final result = await ScreenOverlayService.instance.startWindowPick(hwnd);
+      // Restore clicker window
+      if (Platform.isWindows) {
+        try {
+          if (wasOnTop) await _platformChannel.invokeMethod('setAlwaysOnTop', [true]);
+          await _platformChannel.invokeMethod('bringToFront');
+        } catch (_) {}
+      }
+      return result;
+    } catch (_) {
+      // Restore clicker window on error too
+      if (Platform.isWindows) {
+        try {
+          if (wasOnTop) await _platformChannel.invokeMethod('setAlwaysOnTop', [true]);
+          await _platformChannel.invokeMethod('bringToFront');
+        } catch (_) {}
+      }
+      return null;
+    }
+  }
+
   void _showEditDialog(HoldTriggerKey key, {required bool isNew}) {
     final isDark = FluentTheme.of(context).brightness == Brightness.dark;
 
@@ -196,17 +258,25 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
     var intervalMs = key.intervalMs;
     var enabled = key.enabled;
     var backgroundMode = key.backgroundMode;
+    var targetHwnd = key.targetHwnd;
+    var targetX = key.targetX;
+    var targetY = key.targetY;
+    var targetWindowTitle = key.targetWindowTitle;
     var listeningTrigger = false;
     var listeningRepeat = false;
     var listeningCombo = false;
+    var windows = <WindowInfo>[];
+    var loadingWindows = false;
+    var pickingCoords = false;
 
     showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => ContentDialog(
           title: Text(isNew ? '添加按住触发按键' : '编辑按住触发按键'),
-          constraints: const BoxConstraints(maxWidth: 420),
-          content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          constraints: const BoxConstraints(maxWidth: 480),
+          content: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
             // Trigger type
             Text('触发方式', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80))),
             const SizedBox(height: 6),
@@ -396,6 +466,114 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
               const Text('后台模式', style: TextStyle(fontSize: 13)),
             ]),
 
+            // Background mode settings: window selection + coordinate picking
+            if (backgroundMode) ...[
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: isDark ? const Color(0xFF1E1E38).withValues(alpha: 0.6) : const Color(0xFFE8E8F4).withValues(alpha: 0.6),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)),
+                ),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  // Window selection
+                  Text('目标窗口', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80))),
+                  const SizedBox(height: 6),
+                  Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                    Expanded(
+                      child: ComboBox<int>(
+                        isExpanded: true,
+                        placeholder: Text(targetWindowTitle.isEmpty ? '选择目标窗口' : targetWindowTitle, style: const TextStyle(fontSize: 12)),
+                        items: windows.map((w) => ComboBoxItem<int>(
+                          value: w.hwnd,
+                          child: Text(w.title.length > 40 ? '${w.title.substring(0, 40)}...' : w.title,
+                            style: const TextStyle(fontSize: 12)),
+                        )).toList(),
+                        value: windows.any((w) => w.hwnd == targetHwnd) ? targetHwnd : null,
+                        onChanged: (hwnd) {
+                          if (hwnd != null) {
+                            final win = windows.firstWhere((w) => w.hwnd == hwnd);
+                            setDialogState(() {
+                              targetHwnd = hwnd;
+                              targetWindowTitle = win.title;
+                            });
+                          }
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Button(
+                      onPressed: loadingWindows ? null : () async {
+                        setDialogState(() => loadingWindows = true);
+                        final list = await _refreshWindows();
+                        setDialogState(() {
+                          windows = list;
+                          loadingWindows = false;
+                        });
+                      },
+                      child: loadingWindows
+                        ? const SizedBox(width: 14, height: 14, child: ProgressRing(strokeWidth: 2))
+                        : const Icon(FluentIcons.refresh, size: 14),
+                    ),
+                  ]),
+                  const SizedBox(height: 10),
+
+                  // Click coordinates
+                  Text('点击坐标（相对目标窗口客户区）', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80))),
+                  const SizedBox(height: 6),
+                  Row(children: [
+                    SizedBox(
+                      width: 80,
+                      child: TextBox(
+                        placeholder: 'X',
+                        controller: TextEditingController(text: targetX.toString()),
+                        onChanged: (v) {
+                          final val = int.tryParse(v);
+                          if (val != null) setDialogState(() => targetX = val);
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 80,
+                      child: TextBox(
+                        placeholder: 'Y',
+                        controller: TextEditingController(text: targetY.toString()),
+                        onChanged: (v) {
+                          final val = int.tryParse(v);
+                          if (val != null) setDialogState(() => targetY = val);
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Button(
+                      onPressed: (targetHwnd != 0 && !pickingCoords) ? () async {
+                        setDialogState(() => pickingCoords = true);
+                        final result = await _pickCoordinates(targetHwnd);
+                        if (result != null) {
+                          setDialogState(() {
+                            targetX = result.$1;
+                            targetY = result.$2;
+                            pickingCoords = false;
+                          });
+                        } else {
+                          setDialogState(() => pickingCoords = false);
+                        }
+                      } : null,
+                      child: pickingCoords
+                        ? const SizedBox(width: 14, height: 14, child: ProgressRing(strokeWidth: 2))
+                        : Row(mainAxisSize: MainAxisSize.min, children: [
+                            const Icon(FluentIcons.map_pin, size: 14),
+                            const SizedBox(width: 4),
+                            Text('选取', style: TextStyle(fontSize: 12, color: targetHwnd != 0 ? null : (isDark ? const Color(0xFF606080) : const Color(0xFFB0B0C0)))),
+                          ]),
+                    ),
+                  ]),
+                ]),
+              ),
+            ],
+
             const SizedBox(height: 4),
 
             // Enabled
@@ -408,6 +586,7 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
               const Text('启用', style: TextStyle(fontSize: 13)),
             ]),
           ]),
+          ),
           actions: [
             Button(
               onPressed: () => Navigator.pop(ctx),
@@ -427,6 +606,10 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
                   comboKeys: comboKeys,
                   intervalMs: intervalMs,
                   backgroundMode: backgroundMode,
+                  targetHwnd: targetHwnd,
+                  targetX: targetX,
+                  targetY: targetY,
+                  targetWindowTitle: targetWindowTitle,
                 );
                 final state = context.read<AppState>();
                 if (isNew) {

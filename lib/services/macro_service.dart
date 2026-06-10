@@ -3,9 +3,11 @@
 library;
 
 import 'dart:async';
+import '../models/clicker_config.dart';
 import '../models/macro_model.dart';
 import 'platform/platform_input.dart';
 import 'platform/windows_input.dart';
+import 'plugin_registry.dart';
 
 enum MacroStatus { idle, recording, paused, playing }
 
@@ -26,6 +28,9 @@ class MacroService {
   void Function(int eventCount)? onRecordingUpdate;
   void Function(int eventIndex, int totalEvents)? onPlaybackProgress;
   void Function(String message)? onError;
+
+  /// Callback to get current clicker config (for background mode fallback target)
+  ClickerConfig? Function()? getConfig;
 
   MacroService(this._input);
 
@@ -164,6 +169,7 @@ class MacroService {
   String? _vkToKeyName(int vk) {
     const vkMap = <int, String>{
       0x08: 'Backspace', 0x09: 'Tab', 0x0D: 'Enter', 0x1B: 'Escape',
+      0x10: 'Shift', 0x11: 'Ctrl', 0x12: 'Alt',
       0x20: 'Space', 0x21: 'PageUp', 0x22: 'PageDown', 0x23: 'End',
       0x24: 'Home', 0x25: 'Left', 0x26: 'Up', 0x27: 'Right', 0x28: 'Down',
       0x2D: 'Insert', 0x2E: 'Delete',
@@ -323,6 +329,7 @@ class MacroService {
 
   // Track keys held during playback for cleanup
   final Set<String> _heldPlaybackKeys = {};
+  final Set<String> _heldPlaybackMouseButtons = {};
 
   Future<void> playMacro(MacroModel macro) async {
     if (_status != MacroStatus.idle) return;
@@ -330,6 +337,26 @@ class MacroService {
     _currentMacro = macro;
     _status = MacroStatus.playing;
     _heldPlaybackKeys.clear();
+    _heldPlaybackMouseButtons.clear();
+
+    // Set background mode on WindowsInput if macro has background mode enabled and plugin is available
+    final bgPlugin = PluginRegistry.instance.getPlugin('background_execution');
+    final bgPluginAvailable = bgPlugin != null && bgPlugin.installed && bgPlugin.enabled;
+    if (_input is WindowsInput && macro.backgroundMode && bgPluginAvailable) {
+      int hwnd = macro.backgroundTargetHwnd;
+      // Fallback to plugin config if macro has no target set
+      if (hwnd == 0) {
+        final config = getConfig?.call();
+        if (config != null) {
+          hwnd = config.targetHwnd;
+        }
+      }
+      if (hwnd != 0) {
+        // For macros, only set hwnd — coordinates come from each event
+        (_input as WindowsInput).setBackgroundMode(true, hwnd: hwnd);
+      }
+    }
+
     onStatusChanged?.call(_status);
     _currentRepeat = 0;
 
@@ -378,18 +405,22 @@ class MacroService {
   Future<void> _executeEvent(MacroEvent event) async {
     switch (event.type) {
       case MacroEventType.mouseDown:
+        final btn = event.button ?? 'left';
+        _heldPlaybackMouseButtons.add(btn);
         await _input.mouseDown(
           x: event.x ?? -1,
           y: event.y ?? -1,
-          button: event.button ?? 'left',
+          button: btn,
         );
         break;
 
       case MacroEventType.mouseUp:
+        final btn = event.button ?? 'left';
+        _heldPlaybackMouseButtons.remove(btn);
         await _input.mouseUp(
           x: event.x ?? -1,
           y: event.y ?? -1,
-          button: event.button ?? 'left',
+          button: btn,
         );
         break;
 
@@ -435,6 +466,10 @@ class MacroService {
     _currentRepeat = 0;
     final wasPlaying = _status == MacroStatus.playing;
     _status = MacroStatus.idle;
+    // Restore foreground mode on WindowsInput
+    if (_input is WindowsInput) {
+      (_input as WindowsInput).setBackgroundMode(false);
+    }
     if (wasPlaying) {
       // Release all keys that may be stuck after playback
       _releaseAllKeys();
@@ -457,10 +492,11 @@ class MacroService {
     for (final key in safetyKeys) {
       _input.keyRelease(key);
     }
-    // Release mouse buttons
-    _input.mouseUp(x: -1, y: -1, button: 'left');
-    _input.mouseUp(x: -1, y: -1, button: 'right');
-    _input.mouseUp(x: -1, y: -1, button: 'middle');
+    // Only release mouse buttons that were actually pressed during playback
+    for (final btn in _heldPlaybackMouseButtons.toList()) {
+      _input.mouseUp(x: -1, y: -1, button: btn);
+    }
+    _heldPlaybackMouseButtons.clear();
   }
 
   void dispose() {

@@ -26,7 +26,6 @@ class ScreenOverlayService {
             final args = call.arguments as Map;
             final x = args['x'] as int;
             final y = args['y'] as int;
-            await _channel.invokeMethod('stopOverlay');
             _overlayActive = false;
             if (_pickCompleter != null && !_pickCompleter!.isCompleted) {
               _pickCompleter!.complete((x, y));
@@ -36,7 +35,6 @@ class ScreenOverlayService {
             final args = call.arguments as Map;
             final x = args['x'] as int;
             final y = args['y'] as int;
-            await _channel.invokeMethod('stopOverlay');
             _overlayActive = false;
             if (_pickCompleter != null && !_pickCompleter!.isCompleted) {
               _pickCompleter!.complete((x, y));
@@ -48,14 +46,12 @@ class ScreenOverlayService {
             final y1 = args['y1'] as int;
             final x2 = args['x2'] as int;
             final y2 = args['y2'] as int;
-            await _channel.invokeMethod('stopOverlay');
             _overlayActive = false;
             if (_areaSelectCompleter != null && !_areaSelectCompleter!.isCompleted) {
               _areaSelectCompleter!.complete((x1, y1, x2, y2));
             }
             return true;
           case 'onOverlayCancelled':
-            await _channel.invokeMethod('stopOverlay');
             _overlayActive = false;
             if (_areaSelectCompleter != null && !_areaSelectCompleter!.isCompleted) {
               _areaSelectCompleter!.completeError('cancelled');

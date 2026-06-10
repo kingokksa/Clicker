@@ -148,6 +148,7 @@ class AppState extends ChangeNotifier {
       _clickService.updateConfig(_clickerConfig);
 
       _macroService = MacroService(_platformInput);
+      _macroService.getConfig = () => _clickerConfig;
 
       _hotkeyService = HotkeyService(_platformInput);
       _hotkeyService.updateConfig(_hotkeyConfig);
@@ -271,6 +272,11 @@ class AppState extends ChangeNotifier {
       _hotkeyService.onHoldTriggerStop = () {
         if (_clickerConfig.holdTriggerEnabled && _clickService.isRunning) {
           _clickService.stop();
+        }
+      };
+      _hotkeyService.onBackgroundClick = () {
+        if (_clickerConfig.backgroundExecutionEnabled && _clickerConfig.targetHwnd != 0) {
+          _clickService.toggle();
         }
       };
 

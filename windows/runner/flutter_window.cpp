@@ -448,27 +448,13 @@ static DWORD WINAPI HoldTriggerThreadFunc(LPVOID param);
 static void SendHoldTriggerAction(HoldTriggerEntry* entry) {
   if (entry->is_keyboard) {
     if (entry->key_action_mode == 0) {
-      if (g_clicker.self_hwnd && g_perform_click_msg) {
-        WPARAM wp = (WPARAM)((1 << 16) | entry->key_vk);
-        PostMessage(g_clicker.self_hwnd, g_perform_click_msg, wp, 0);
-      } else {
-        keybd_event(static_cast<BYTE>(entry->key_vk), 0, 0, 0);
-        keybd_event(static_cast<BYTE>(entry->key_vk), 0, KEYEVENTF_KEYUP, 0);
-      }
+      keybd_event(static_cast<BYTE>(entry->key_vk), 0, 0, 0);
+      keybd_event(static_cast<BYTE>(entry->key_vk), 0, KEYEVENTF_KEYUP, 0);
     } else if (entry->key_action_mode == 2) {
       int n = entry->combo_key_count;
       if (n > 8) n = 8;
-      if (g_clicker.self_hwnd && g_perform_click_msg) {
-        WPARAM wp = (WPARAM)((2 << 16) | n);
-        LPARAM lp = 0;
-        for (int i = 0; i < n && i < 8; i++) {
-          lp |= ((LPARAM)(entry->combo_keys[i] & 0xFF) << (i * 8));
-        }
-        PostMessage(g_clicker.self_hwnd, g_perform_click_msg, wp, lp);
-      } else {
-        for (int i = 0; i < n; i++) keybd_event(static_cast<BYTE>(entry->combo_keys[i]), 0, 0, 0);
-        for (int i = 0; i < n; i++) keybd_event(static_cast<BYTE>(entry->combo_keys[i]), 0, KEYEVENTF_KEYUP, 0);
-      }
+      for (int i = 0; i < n; i++) keybd_event(static_cast<BYTE>(entry->combo_keys[i]), 0, 0, 0);
+      for (int i = 0; i < n; i++) keybd_event(static_cast<BYTE>(entry->combo_keys[i]), 0, KEYEVENTF_KEYUP, 0);
     }
   } else {
     if (entry->background_mode && entry->target_hwnd) {
@@ -479,19 +465,15 @@ static void SendHoldTriggerAction(HoldTriggerEntry* entry) {
       else if (entry->mouse_button == 2) { msg_down = WM_MBUTTONDOWN; msg_up = WM_MBUTTONUP; }
       PostMessage(entry->target_hwnd, msg_down, MK_LBUTTON, lp);
       PostMessage(entry->target_hwnd, msg_up, 0, lp);
+      return;
     }
 
     DWORD flags_down = MOUSEEVENTF_LEFTDOWN, flags_up = MOUSEEVENTF_LEFTUP;
     if (entry->mouse_button == 1) { flags_down = MOUSEEVENTF_RIGHTDOWN; flags_up = MOUSEEVENTF_RIGHTUP; }
     else if (entry->mouse_button == 2) { flags_down = MOUSEEVENTF_MIDDLEDOWN; flags_up = MOUSEEVENTF_MIDDLEUP; }
 
-    if (g_clicker.self_hwnd && g_perform_click_msg) {
-      WPARAM wp = (WPARAM)((0 << 16) | (flags_down & 0xFFFF));
-      PostMessage(g_clicker.self_hwnd, g_perform_click_msg, wp, (LPARAM)flags_up);
-    } else {
-      mouse_event(flags_down, 0, 0, 0, 0);
-      mouse_event(flags_up, 0, 0, 0, 0);
-    }
+    mouse_event(flags_down, 0, 0, 0, 0);
+    mouse_event(flags_up, 0, 0, 0, 0);
   }
 }
 
@@ -536,10 +518,20 @@ static DWORD WINAPI HoldTriggerThreadFunc(LPVOID param) {
 static bool g_capturing_key = false;
 static flutter::MethodChannel<flutter::EncodableValue>* g_capture_channel = nullptr;
 
+// Hook-based hotkeys (fallback when RegisterHotKey fails, e.g. F-keys without modifiers)
+struct HookHotkey {
+  int id;
+  int modifiers;  // MOD_ALT=0x1, MOD_CONTROL=0x2, MOD_SHIFT=0x4, MOD_WIN=0x8
+  int vk;
+};
+static HookHotkey g_hook_hotkeys[64];
+static int g_hook_hotkey_count = 0;
+static int g_hook_modifiers = 0;  // Current modifier key state (tracked in hook)
+static flutter::MethodChannel<flutter::EncodableValue>* g_hotkey_channel = nullptr;
+
 // -- Overlay Window Implementation -------------------------------------------
 
 OverlayState g_overlay;
-static const COLORREF OVERLAY_BG_COLOR = RGB(255, 0, 255); // Magenta = transparent via color key
 static const COLORREF CROSSHAIR_COLOR = RGB(255, 60, 60);
 static const COLORREF RECT_COLOR = RGB(0, 180, 255);
 static const wchar_t kOverlayClassName[] = L"ClickerOverlayWnd";
@@ -583,8 +575,8 @@ static void CleanupOverlayBuffer() {
 }
 
 static void DrawOverlayContent(HDC hdc, int w, int h) {
-  // Fill background with magenta (transparent via color key)
-  HBRUSH bgBrush = CreateSolidBrush(OVERLAY_BG_COLOR);
+  // Fill background with dark semi-transparent color (whole window captures clicks)
+  HBRUSH bgBrush = CreateSolidBrush(RGB(1, 1, 1));
   RECT rcFull = {0, 0, w, h};
   FillRect(hdc, &rcFull, bgBrush);
   DeleteObject(bgBrush);
@@ -600,9 +592,9 @@ static void DrawOverlayContent(HDC hdc, int w, int h) {
     pt.y -= origin.y;
   }
 
-  if (g_overlay.mode == OverlayMode::Crosshair) {
-    // Draw crosshair lines
-    HPEN hPen = CreatePen(PS_SOLID, 1, CROSSHAIR_COLOR);
+  if (g_overlay.mode == OverlayMode::Crosshair || g_overlay.mode == OverlayMode::WindowPick) {
+    // Draw crosshair lines (thick for easy clicking)
+    HPEN hPen = CreatePen(PS_SOLID, 3, CROSSHAIR_COLOR);
     HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);
     MoveToEx(hdc, 0, pt.y, nullptr);
     LineTo(hdc, w, pt.y);
@@ -611,56 +603,32 @@ static void DrawOverlayContent(HDC hdc, int w, int h) {
     SelectObject(hdc, hOldPen);
     DeleteObject(hPen);
 
-    // Draw small center circle
+    // Draw center circle (large for easy clicking)
     HBRUSH circleBrush = CreateSolidBrush(CROSSHAIR_COLOR);
     HBRUSH oldBrush = (HBRUSH)SelectObject(hdc, circleBrush);
     HPEN oldPen2 = (HPEN)SelectObject(hdc, GetStockObject(NULL_PEN));
-    Ellipse(hdc, pt.x - 6, pt.y - 6, pt.x + 6, pt.y + 6);
+    Ellipse(hdc, pt.x - 12, pt.y - 12, pt.x + 12, pt.y + 12);
     SelectObject(hdc, oldPen2);
     SelectObject(hdc, oldBrush);
     DeleteObject(circleBrush);
 
-    // Draw coordinate text near cursor
-    SetBkColor(hdc, OVERLAY_BG_COLOR);
+    // Draw coordinate text near cursor with background
+    SetBkColor(hdc, RGB(1, 1, 1));
     SetTextColor(hdc, CROSSHAIR_COLOR);
     wchar_t coordText[64];
     swprintf_s(coordText, L"(%d, %d)", pt.x, pt.y);
-    TextOutW(hdc, pt.x + 12, pt.y + 12, coordText, (int)wcslen(coordText));
+    TextOutW(hdc, pt.x + 16, pt.y + 16, coordText, (int)wcslen(coordText));
 
-  } else if (g_overlay.mode == OverlayMode::WindowPick) {
-    // Draw crosshair relative to the overlay (which covers the target window)
-    HPEN hPen = CreatePen(PS_SOLID, 1, CROSSHAIR_COLOR);
-    HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);
-    MoveToEx(hdc, 0, pt.y, nullptr);
-    LineTo(hdc, w, pt.y);
-    MoveToEx(hdc, pt.x, 0, nullptr);
-    LineTo(hdc, pt.x, h);
-    SelectObject(hdc, hOldPen);
-    DeleteObject(hPen);
-
-    // Draw center circle
-    HBRUSH circleBrush = CreateSolidBrush(CROSSHAIR_COLOR);
-    HBRUSH oldBrush = (HBRUSH)SelectObject(hdc, circleBrush);
-    HPEN oldPen2 = (HPEN)SelectObject(hdc, GetStockObject(NULL_PEN));
-    Ellipse(hdc, pt.x - 6, pt.y - 6, pt.x + 6, pt.y + 6);
-    SelectObject(hdc, oldPen2);
-    SelectObject(hdc, oldBrush);
-    DeleteObject(circleBrush);
-
-    // Draw client-area coordinates
-    SetBkColor(hdc, OVERLAY_BG_COLOR);
-    SetTextColor(hdc, CROSSHAIR_COLOR);
-    wchar_t coordText[64];
-    swprintf_s(coordText, L"(%d, %d)", pt.x, pt.y);
-    TextOutW(hdc, pt.x + 12, pt.y + 12, coordText, (int)wcslen(coordText));
-
-    // Draw hint text
-    SetTextColor(hdc, RGB(255, 255, 255));
-    TextOutW(hdc, 8, 8, L"Click to pick coordinates (ESC to cancel)", 41);
+    if (g_overlay.mode == OverlayMode::WindowPick) {
+      // Draw hint text
+      SetTextColor(hdc, RGB(255, 255, 255));
+      TextOutW(hdc, 8, 8, L"Click to pick coordinates (ESC to cancel)", 41);
+    }
 
   } else if (g_overlay.mode == OverlayMode::AreaSelect) {
     if (g_overlay.dragging) {
-      HPEN hPen = CreatePen(PS_SOLID, 2, RECT_COLOR);
+      // Draw selection rectangle with thick border
+      HPEN hPen = CreatePen(PS_SOLID, 3, RECT_COLOR);
       HBRUSH hOldBrush = (HBRUSH)SelectObject(hdc, GetStockObject(NULL_BRUSH));
       HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);
 
@@ -670,7 +638,8 @@ static void DrawOverlayContent(HDC hdc, int w, int h) {
       int y2 = g_overlay.dragStart.y < g_overlay.dragCurrent.y ? g_overlay.dragCurrent.y : g_overlay.dragStart.y;
       Rectangle(hdc, x1, y1, x2, y2);
 
-      SetBkColor(hdc, OVERLAY_BG_COLOR);
+      // Draw size text with background
+      SetBkColor(hdc, RGB(1, 1, 1));
       SetTextColor(hdc, RECT_COLOR);
       wchar_t sizeText[64];
       swprintf_s(sizeText, L"%dx%d", x2 - x1, y2 - y1);
@@ -680,6 +649,7 @@ static void DrawOverlayContent(HDC hdc, int w, int h) {
       SelectObject(hdc, hOldBrush);
       DeleteObject(hPen);
     } else {
+      // Draw crosshair and hint text when not dragging
       HPEN hPen = CreatePen(PS_SOLID, 1, RECT_COLOR);
       HPEN hOldPen = (HPEN)SelectObject(hdc, hPen);
       MoveToEx(hdc, 0, pt.y, nullptr);
@@ -688,7 +658,13 @@ static void DrawOverlayContent(HDC hdc, int w, int h) {
       LineTo(hdc, pt.x, h);
       SelectObject(hdc, hOldPen);
       DeleteObject(hPen);
+
+      // Draw hint text
+      SetBkColor(hdc, RGB(1, 1, 1));
+      SetTextColor(hdc, RGB(255, 255, 255));
+      TextOutW(hdc, 8, 8, L"Drag to select area (ESC to cancel)", 36);
     }
+
   } else if (g_overlay.mode == OverlayMode::DetectionBox) {
     COLORREF boxColors[] = {
       RGB(0, 255, 128), RGB(255, 128, 0), RGB(0, 180, 255),
@@ -763,7 +739,8 @@ static LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
       if (g_overlay.mode == OverlayMode::DetectionBox) {
         return HTTRANSPARENT;
       }
-      break;
+      // For other modes, capture all clicks (including transparent areas)
+      return HTCLIENT;
     }
 
     case WM_LBUTTONDOWN: {
@@ -778,6 +755,7 @@ static LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
               {flutter::EncodableValue("y"), flutter::EncodableValue(static_cast<int>(pt.y))},
             }));
         }
+        DestroyOverlayWindow();
       } else if (g_overlay.mode == OverlayMode::WindowPick) {
         // Convert screen coordinates to client-area coordinates of the target window
         POINT clientPt = pt;
@@ -830,6 +808,7 @@ static LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
               {flutter::EncodableValue("y2"), flutter::EncodableValue(y2)},
             }));
         }
+        DestroyOverlayWindow();
       }
       return 0;
     }
@@ -848,7 +827,6 @@ static LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
     default:
       return DefWindowProc(hwnd, msg, wp, lp);
   }
-  return DefWindowProc(hwnd, msg, wp, lp);
 }
 
 void CreateOverlayWindow(flutter::MethodChannel<flutter::EncodableValue>* channel) {
@@ -862,7 +840,7 @@ void CreateOverlayWindow(flutter::MethodChannel<flutter::EncodableValue>* channe
     wc.lpfnWndProc = OverlayWndProc;
     wc.hInstance = GetModuleHandle(nullptr);
     wc.hCursor = LoadCursor(nullptr, IDC_CROSS);
-    wc.hbrBackground = CreateSolidBrush(OVERLAY_BG_COLOR);
+    wc.hbrBackground = CreateSolidBrush(RGB(1, 1, 1));
     wc.lpszClassName = kOverlayClassName;
     RegisterClassW(&wc);
     registered = true;
@@ -905,16 +883,37 @@ void CreateOverlayWindow(flutter::MethodChannel<flutter::EncodableValue>* channe
     x, y, w, h,
     nullptr, nullptr, GetModuleHandle(nullptr), nullptr);
 
-  // Make magenta background transparent
-  SetLayeredWindowAttributes(g_overlay.hwnd, OVERLAY_BG_COLOR, 0, LWA_COLORKEY);
+  // Make the whole window semi-transparent so it captures all clicks
+  // LWA_ALPHA: entire window is semi-transparent, clicks are NOT passed through
+  // Different alpha per mode:
+  //   Crosshair/WindowPick: alpha=30 (slight tint, crosshair visible)
+  //   AreaSelect: alpha=50 (moderate tint, selection rectangle visible)
+  BYTE alpha = 30;
+  if (g_overlay.mode == OverlayMode::AreaSelect) {
+    alpha = 50;
+  }
+  SetLayeredWindowAttributes(g_overlay.hwnd, 0, alpha, LWA_ALPHA);
 
   // Start repaint timer at 30fps
   SetTimer(g_overlay.hwnd, OVERLAY_TIMER_ID, 1000 / OVERLAY_FPS, nullptr);
 
-  // Show and focus
-  ShowWindow(g_overlay.hwnd, SW_SHOW);
+  // Show and focus - ensure overlay gets focus even when main window is minimized
+  ShowWindow(g_overlay.hwnd, SW_SHOWNORMAL);
+
+  // Force overlay to the foreground using multiple techniques
+  DWORD overlayTid = GetWindowThreadProcessId(g_overlay.hwnd, nullptr);
+  HWND fgWnd = GetForegroundWindow();
+  DWORD foregroundTid = GetWindowThreadProcessId(fgWnd, nullptr);
+  if (overlayTid != foregroundTid) {
+    AttachThreadInput(foregroundTid, overlayTid, TRUE);
+  }
   SetForegroundWindow(g_overlay.hwnd);
+  SetWindowPos(g_overlay.hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+    SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
   SetFocus(g_overlay.hwnd);
+  if (overlayTid != foregroundTid) {
+    AttachThreadInput(foregroundTid, overlayTid, FALSE);
+  }
 }
 
 void DestroyOverlayWindow() {
@@ -979,6 +978,7 @@ bool FlutterWindow::OnCreate() {
       std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
           flutter_controller_->engine()->messenger(), "clicker/hotkeys",
           &flutter::StandardMethodCodec::GetInstance());
+  g_hotkey_channel = hotkey_channel_.get();
 
   hotkey_channel_->SetMethodCallHandler(
       [this](const flutter::MethodCall<flutter::EncodableValue>& call,
@@ -994,11 +994,41 @@ bool FlutterWindow::OnCreate() {
           int id = GetInt(args->at(0));
           int modifiers = GetInt(args->at(1));
           int vk = GetInt(args->at(2));
-          BOOL success = RegisterHotKey(GetHandle(), id, modifiers, vk);
-          if (success) {
-            registered_hotkey_ids_.push_back(id);
+
+          // Always use hook-based detection for reliable hotkey handling.
+          // RegisterHotKey can fail for F-keys without modifiers and may
+          // conflict with the low-level keyboard hook.
+          // Unregister any previous RegisterHotKey for this id
+          UnregisterHotKey(GetHandle(), id);
+          registered_hotkey_ids_.erase(
+              std::remove(registered_hotkey_ids_.begin(),
+                          registered_hotkey_ids_.end(), id),
+              registered_hotkey_ids_.end());
+
+          // Remove any previous hook-based entry for this id
+          for (int i = 0; i < g_hook_hotkey_count; i++) {
+            if (g_hook_hotkeys[i].id == id) {
+              g_hook_hotkeys[i] = g_hook_hotkeys[g_hook_hotkey_count - 1];
+              g_hook_hotkey_count--;
+              break;
+            }
           }
-          result->Success(flutter::EncodableValue(success != 0));
+
+          if (g_hook_hotkey_count < 64) {
+            // Ensure keyboard hook is installed
+            if (!keyboard_hook_) {
+              g_flutter_window_for_hooks = this;
+              keyboard_hook_ = SetWindowsHookExW(WH_KEYBOARD_LL, KeyboardHookProc, nullptr, 0);
+              mouse_hook_ = SetWindowsHookExW(WH_MOUSE_LL, MouseHookProc, nullptr, 0);
+            }
+            g_hook_hotkeys[g_hook_hotkey_count].id = id;
+            g_hook_hotkeys[g_hook_hotkey_count].modifiers = modifiers;
+            g_hook_hotkeys[g_hook_hotkey_count].vk = vk;
+            g_hook_hotkey_count++;
+            result->Success(flutter::EncodableValue(true));
+          } else {
+            result->Success(flutter::EncodableValue(false));
+          }
         } else if (call.method_name() == "unregisterHotkey") {
           if (!args || args->size() < 1) {
             result->Error("INVALID_ARGS", "Expected [id]");
@@ -1010,12 +1040,21 @@ bool FlutterWindow::OnCreate() {
               std::remove(registered_hotkey_ids_.begin(),
                           registered_hotkey_ids_.end(), id),
               registered_hotkey_ids_.end());
+          // Also remove from hook-based hotkeys
+          for (int i = 0; i < g_hook_hotkey_count; i++) {
+            if (g_hook_hotkeys[i].id == id) {
+              g_hook_hotkeys[i] = g_hook_hotkeys[g_hook_hotkey_count - 1];
+              g_hook_hotkey_count--;
+              break;
+            }
+          }
           result->Success(flutter::EncodableValue(success != 0));
         } else if (call.method_name() == "unregisterAll") {
           for (int id : registered_hotkey_ids_) {
             UnregisterHotKey(GetHandle(), id);
           }
           registered_hotkey_ids_.clear();
+          g_hook_hotkey_count = 0;
           result->Success();
         } else {
           result->NotImplemented();
@@ -2533,7 +2572,10 @@ bool FlutterWindow::OnCreate() {
             entry.generation++;
             entry.active = false;
             const auto* triggerNamePtr = std::get_if<std::string>(&cfg[0]);
-            if (triggerNamePtr) entry.trigger_vk = KeyNameToVk(*triggerNamePtr);
+            if (triggerNamePtr) {
+              entry.trigger_vk = KeyNameToVk(*triggerNamePtr);
+              OutputDebugStringA(("[HoldTrigger] trigger=" + *triggerNamePtr + " vk=" + std::to_string(entry.trigger_vk) + "\n").c_str());
+            }
             int actionType = GetInt(cfg[1]);
             entry.interval_ms = GetInt(cfg[2]);
             if (entry.interval_ms < 10) entry.interval_ms = 10;
@@ -2606,11 +2648,11 @@ bool FlutterWindow::OnCreate() {
           g_hold_trigger_count = 0;
           LeaveCriticalSection(&g_hold_trigger_cs);
 
-          // Uninstall hooks if not recording
-          if (!is_recording_) {
+          // Uninstall hooks if not recording and no hotkeys registered
+          if (!is_recording_ && g_hook_hotkey_count == 0) {
             if (keyboard_hook_) { UnhookWindowsHookEx(keyboard_hook_); keyboard_hook_ = nullptr; }
             if (mouse_hook_) { UnhookWindowsHookEx(mouse_hook_); mouse_hook_ = nullptr; }
-            if (!is_recording_) g_flutter_window_for_hooks = nullptr;
+            if (!is_recording_ && g_hook_hotkey_count == 0) g_flutter_window_for_hooks = nullptr;
           }
 
           result->Success(flutter::EncodableValue(true));
@@ -2641,6 +2683,20 @@ bool FlutterWindow::OnCreate() {
             return TRUE;
           }, reinterpret_cast<LPARAM>(&windowList));
           result->Success(flutter::EncodableValue(windowList));
+        } else if (call.method_name() == "getForegroundWindow") {
+          HWND fg = GetForegroundWindow();
+          result->Success(flutter::EncodableValue(static_cast<int64_t>(reinterpret_cast<intptr_t>(fg))));
+        } else if (call.method_name() == "setForegroundWindow") {
+          const auto* args = std::get_if<flutter::EncodableList>(call.arguments());
+          if (!args || args->size() < 1) {
+            result->Error("INVALID_ARGS", "Expected [hwnd]");
+            return;
+          }
+          HWND hwnd = reinterpret_cast<HWND>(static_cast<intptr_t>(GetInt64(args->at(0))));
+          // AllowSetForegroundWindow to bypass foreground lock
+          AllowSetForegroundWindow(ASFW_ANY);
+          SetForegroundWindow(hwnd);
+          result->Success(flutter::EncodableValue(true));
         } else if (call.method_name() == "switchToFloatingWindow") {
           // Batch window operations for floating mode switch — single platform call
           const auto* args = std::get_if<flutter::EncodableList>(call.arguments());
@@ -2697,6 +2753,97 @@ bool FlutterWindow::OnCreate() {
           SetForegroundWindow(hw);
 
           result->Success(flutter::EncodableValue(true));
+        } else if (call.method_name() == "setAlwaysOnTop") {
+          const auto* args = std::get_if<flutter::EncodableList>(call.arguments());
+          if (!args || args->size() < 1) {
+            result->Error("INVALID_ARGS", "Expected [alwaysOnTop]");
+            return;
+          }
+          const auto* aotPtr = std::get_if<bool>(&args->at(0));
+          bool alwaysOnTop = aotPtr ? *aotPtr : false;
+          HWND hw = GetHandle();
+          if (alwaysOnTop) {
+            SetWindowPos(hw, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+          } else {
+            SetWindowPos(hw, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+          }
+          result->Success(flutter::EncodableValue(true));
+        } else if (call.method_name() == "bringToFront") {
+          HWND hw = GetHandle();
+          AllowSetForegroundWindow(ASFW_ANY);
+          if (IsIconic(hw)) {
+            ShowWindow(hw, SW_RESTORE);
+          }
+          SetForegroundWindow(hw);
+          result->Success(flutter::EncodableValue(true));
+        } else if (call.method_name() == "backgroundClick") {
+          // Send a single background click via PostMessage
+          // args = [hwnd, clientX, clientY, button]
+          const auto* args = std::get_if<flutter::EncodableList>(call.arguments());
+          if (!args || args->size() < 4) {
+            result->Error("INVALID_ARGS", "Expected [hwnd, clientX, clientY, button]");
+            return;
+          }
+          HWND targetHwnd = reinterpret_cast<HWND>(static_cast<intptr_t>(GetInt64(args->at(0))));
+          int clientX = GetInt(args->at(1));
+          int clientY = GetInt(args->at(2));
+          int button = GetInt(args->at(3));  // 0=left, 1=right, 2=middle
+          if (targetHwnd && IsWindow(targetHwnd)) {
+            LPARAM lp = MAKELPARAM(static_cast<WORD>(clientX), static_cast<WORD>(clientY));
+            UINT msg_down = WM_LBUTTONDOWN, msg_up = WM_LBUTTONUP;
+            WPARAM wp_down = MK_LBUTTON;
+            if (button == 1) { msg_down = WM_RBUTTONDOWN; msg_up = WM_RBUTTONUP; wp_down = MK_RBUTTON; }
+            else if (button == 2) { msg_down = WM_MBUTTONDOWN; msg_up = WM_MBUTTONUP; wp_down = MK_MBUTTON; }
+            PostMessage(targetHwnd, msg_down, wp_down, lp);
+            PostMessage(targetHwnd, msg_up, 0, lp);
+            result->Success(flutter::EncodableValue(true));
+          } else {
+            result->Success(flutter::EncodableValue(false));
+          }
+        } else if (call.method_name() == "backgroundMouseDown") {
+          // Send background mouse down via PostMessage
+          // args = [hwnd, clientX, clientY, button]
+          const auto* args = std::get_if<flutter::EncodableList>(call.arguments());
+          if (!args || args->size() < 4) {
+            result->Error("INVALID_ARGS", "Expected [hwnd, clientX, clientY, button]");
+            return;
+          }
+          HWND targetHwnd = reinterpret_cast<HWND>(static_cast<intptr_t>(GetInt64(args->at(0))));
+          int clientX = GetInt(args->at(1));
+          int clientY = GetInt(args->at(2));
+          int button = GetInt(args->at(3));
+          if (targetHwnd && IsWindow(targetHwnd)) {
+            LPARAM lp = MAKELPARAM(static_cast<WORD>(clientX), static_cast<WORD>(clientY));
+            UINT msg_down = WM_LBUTTONDOWN; WPARAM wp_down = MK_LBUTTON;
+            if (button == 1) { msg_down = WM_RBUTTONDOWN; wp_down = MK_RBUTTON; }
+            else if (button == 2) { msg_down = WM_MBUTTONDOWN; wp_down = MK_MBUTTON; }
+            PostMessage(targetHwnd, msg_down, wp_down, lp);
+            result->Success(flutter::EncodableValue(true));
+          } else {
+            result->Success(flutter::EncodableValue(false));
+          }
+        } else if (call.method_name() == "backgroundMouseUp") {
+          // Send background mouse up via PostMessage
+          // args = [hwnd, clientX, clientY, button]
+          const auto* args = std::get_if<flutter::EncodableList>(call.arguments());
+          if (!args || args->size() < 4) {
+            result->Error("INVALID_ARGS", "Expected [hwnd, clientX, clientY, button]");
+            return;
+          }
+          HWND targetHwnd = reinterpret_cast<HWND>(static_cast<intptr_t>(GetInt64(args->at(0))));
+          int clientX = GetInt(args->at(1));
+          int clientY = GetInt(args->at(2));
+          int button = GetInt(args->at(3));
+          if (targetHwnd && IsWindow(targetHwnd)) {
+            LPARAM lp = MAKELPARAM(static_cast<WORD>(clientX), static_cast<WORD>(clientY));
+            UINT msg_up = WM_LBUTTONUP;
+            if (button == 1) msg_up = WM_RBUTTONUP;
+            else if (button == 2) msg_up = WM_MBUTTONUP;
+            PostMessage(targetHwnd, msg_up, 0, lp);
+            result->Success(flutter::EncodableValue(true));
+          } else {
+            result->Success(flutter::EncodableValue(false));
+          }
         } else if (call.method_name() == "resizeFloatingWindow") {
           // Resize floating window: args = [width, height] in logical pixels
           const auto* args = std::get_if<flutter::EncodableList>(call.arguments());
@@ -2763,14 +2910,17 @@ bool FlutterWindow::OnCreate() {
           record_start_tick_ = GetTickCount();
           g_flutter_window_for_hooks = this;
 
-          // Install low-level keyboard hook
-          keyboard_hook_ = SetWindowsHookExW(
-              WH_KEYBOARD_LL, KeyboardHookProc,
-              nullptr, 0);
-          // Install low-level mouse hook
-          mouse_hook_ = SetWindowsHookExW(
-              WH_MOUSE_LL, MouseHookProc,
-              nullptr, 0);
+          // Install low-level hooks only if not already installed (e.g. by hold trigger)
+          if (!keyboard_hook_) {
+            keyboard_hook_ = SetWindowsHookExW(
+                WH_KEYBOARD_LL, KeyboardHookProc,
+                nullptr, 0);
+          }
+          if (!mouse_hook_) {
+            mouse_hook_ = SetWindowsHookExW(
+                WH_MOUSE_LL, MouseHookProc,
+                nullptr, 0);
+          }
 
           if (!keyboard_hook_ || !mouse_hook_) {
             // Clean up on failure
@@ -2784,8 +2934,8 @@ bool FlutterWindow::OnCreate() {
           result->Success(flutter::EncodableValue(true));
         } else if (call.method_name() == "stopRecording") {
           is_recording_ = false;
-          // Only uninstall hooks if hold trigger is not active
-          if (g_hold_trigger_count == 0) {
+          // Only uninstall hooks if hold trigger is not active and no hotkeys registered
+          if (g_hold_trigger_count == 0 && g_hook_hotkey_count == 0) {
             if (keyboard_hook_) {
               UnhookWindowsHookEx(keyboard_hook_);
               keyboard_hook_ = nullptr;
@@ -2855,6 +3005,8 @@ void FlutterWindow::OnDestroy() {
     UnregisterHotKey(GetHandle(), id);
   }
   registered_hotkey_ids_.clear();
+  g_hook_hotkey_count = 0;
+  g_hotkey_channel = nullptr;
 
   // Stop all hold trigger threads.
   if (g_hold_trigger_cs_initialized) {
@@ -2907,13 +3059,40 @@ LRESULT CALLBACK FlutterWindow::KeyboardHookProc(int code, WPARAM wparam, LPARAM
     bool key_up = (wparam == WM_KEYUP || wparam == WM_SYSKEYUP);
     bool is_injected = (kb->flags & LLKHF_INJECTED) != 0;
 
+    // Track modifier key state for hook-based hotkeys
+    if (!is_injected) {
+      if (vk == VK_MENU || vk == VK_LMENU || vk == VK_RMENU) {
+        if (key_down) g_hook_modifiers |= 0x0001; else g_hook_modifiers &= ~0x0001;
+      } else if (vk == VK_CONTROL || vk == VK_LCONTROL || vk == VK_RCONTROL) {
+        if (key_down) g_hook_modifiers |= 0x0002; else g_hook_modifiers &= ~0x0002;
+      } else if (vk == VK_SHIFT || vk == VK_LSHIFT || vk == VK_RSHIFT) {
+        if (key_down) g_hook_modifiers |= 0x0004; else g_hook_modifiers &= ~0x0004;
+      } else if (vk == VK_LWIN || vk == VK_RWIN) {
+        if (key_down) g_hook_modifiers |= 0x0008; else g_hook_modifiers &= ~0x0008;
+      }
+    }
+
+    // Hook-based hotkey detection (fallback for keys RegisterHotKey couldn't grab)
+    if (key_down && !is_injected && g_hook_hotkey_count > 0 && g_hotkey_channel) {
+      for (int i = 0; i < g_hook_hotkey_count; i++) {
+        if (g_hook_hotkeys[i].vk == vk && g_hook_hotkeys[i].modifiers == g_hook_modifiers) {
+          g_hotkey_channel->InvokeMethod(
+              "onHotkey",
+              std::make_unique<flutter::EncodableValue>(g_hook_hotkeys[i].id));
+          return 1; // Suppress the key
+        }
+      }
+    }
+
     if ((key_down || key_up) && !is_injected && g_hold_trigger_count > 0) {
       EnterCriticalSection(&g_hold_trigger_cs);
       for (int i = 0; i < g_hold_trigger_count; i++) {
         if (g_hold_triggers[i].trigger_vk == vk) {
           if (key_down && !g_hold_triggers[i].active) {
+            OutputDebugStringA("[HoldTrigger] KEY DOWN matched trigger, starting\n");
             StartHoldTrigger(&g_hold_triggers[i]);
           } else if (key_up && g_hold_triggers[i].active) {
+            OutputDebugStringA("[HoldTrigger] KEY UP matched trigger, stopping\n");
             StopHoldTrigger(&g_hold_triggers[i]);
           }
           break;
@@ -3358,6 +3537,8 @@ static void SendOneClick() {
     }
     PostMessage(g_clicker.target_hwnd, msg_down, wp, lp);
     PostMessage(g_clicker.target_hwnd, msg_up, 0, lp);
+    g_clicker.click_count++;
+    return;
   }
 
   {
