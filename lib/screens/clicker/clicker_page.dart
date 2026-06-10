@@ -1,10 +1,11 @@
 /// Auto-clicker page — Fluent UI design.
 library;
 
+import 'dart:io';
 import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../services/app_state.dart';
-import '../../services/plugin_registry.dart';
 import '../../services/screen_overlay_service.dart';
 import '../../models/clicker_config.dart';
 import '../../models/hotkey_config.dart';
@@ -86,18 +87,6 @@ class _ClickerPageState extends State<ClickerPage> {
       ],
       _section(title: '重复模式', icon: FluentIcons.refresh, child: _buildRepeatModeSelector(config, state, theme)),
     ];
-
-    // Plugin sections — when plugin is installed, settings move to sidebar page
-    final enabledPluginIds = PluginRegistry.instance.enabledPlugins.map((p) => p.manifest.id).toSet();
-    final hasHoldTriggerPlugin = enabledPluginIds.contains('hold_trigger');
-
-    // Only show on home page if plugin is NOT installed (no sidebar page)
-    if (!hasHoldTriggerPlugin) {
-      settingsSections.addAll([
-        _spacing,
-        _inlineSection(title: '按住触发', child: _buildHoldTrigger(context, config, state, theme)),
-      ]);
-    }
 
     final pageContent = ScaffoldPage.scrollable(
       padding: const EdgeInsets.all(20),
@@ -676,27 +665,6 @@ class _ClickerPageState extends State<ClickerPage> {
   }
 
   // ─── Hold Trigger ─────────────────────────────────────────
-
-  Widget _buildHoldTrigger(BuildContext context, ClickerConfig config, AppState state, FluentThemeData theme) {
-    final hotkeyConfig = state.hotkeyConfig;
-    return Column(children: [
-      Row(children: [
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('启用按住触发', style: TextStyle(fontSize: 13)),
-          Text('按住 ${hotkeyConfig.holdTrigger} 时自动连点', style: TextStyle(fontSize: 11, color: theme.brightness == Brightness.dark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
-        ])),
-        ToggleSwitch(checked: config.holdTriggerEnabled, onChanged: (v) => state.setClickerConfig(config.copyWith(holdTriggerEnabled: v))),
-      ]),
-      if (config.holdTriggerEnabled) ...[
-        const SizedBox(height: 10),
-        Row(children: [
-          const Text('触发键:', style: TextStyle(fontSize: 13)),
-          const SizedBox(width: 8),
-          Expanded(child: _buildHotkeySelector(context, currentKey: hotkeyConfig.holdTrigger, onChanged: (k) => state.setHotkeyConfig(hotkeyConfig.copyWith(holdTrigger: k)))),
-        ]),
-      ],
-    ]);
-  }
 
   // ─── Background Click (from plugin) ────────────────────────
 

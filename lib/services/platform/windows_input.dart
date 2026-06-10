@@ -23,6 +23,22 @@ class WindowsInput extends PlatformInput {
   // Track registered hotkey field -> ID mapping
   final Map<String, int> _registeredHotkeys = {};
 
+  // Background mode state — when enabled, mouse operations use PostMessage
+  bool _backgroundMode = false;
+  int _backgroundHwnd = 0;
+  int _backgroundX = 0;
+  int _backgroundY = 0;
+
+  /// Enable background mode: all mouse clicks go to target window via PostMessage
+  void setBackgroundMode(bool enabled, {int hwnd = 0, int x = 0, int y = 0}) {
+    _backgroundMode = enabled;
+    _backgroundHwnd = hwnd;
+    _backgroundX = x;
+    _backgroundY = y;
+  }
+
+  bool get isBackgroundMode => _backgroundMode;
+
   // Recording callback
   void Function(Map<String, dynamic> event)? onRecordEvent;
   void Function()? onRecordingCancelled;
@@ -90,6 +106,22 @@ class WindowsInput extends PlatformInput {
     String button = 'left',
     bool doubleClick = false,
   }) async {
+    if (_backgroundMode && _backgroundHwnd != 0) {
+      final btn = button == 'right' ? 1 : (button == 'middle' ? 2 : 0);
+      // Use event coordinates if provided, otherwise fall back to fixed background position
+      final cx = (x > 0 || y > 0) ? x : _backgroundX;
+      final cy = (x > 0 || y > 0) ? y : _backgroundY;
+      await _platformChannel.invokeMethod('backgroundClick', [
+        _backgroundHwnd, cx, cy, btn,
+      ]);
+      if (doubleClick) {
+        await Future.delayed(const Duration(milliseconds: 50));
+        await _platformChannel.invokeMethod('backgroundClick', [
+          _backgroundHwnd, cx, cy, btn,
+        ]);
+      }
+      return;
+    }
     if (x >= 0 && y >= 0) {
       SetCursorPos(x, y);
     }
@@ -106,6 +138,15 @@ class WindowsInput extends PlatformInput {
 
   @override
   void syncClick({required int x, required int y, String button = 'left'}) {
+    if (_backgroundMode && _backgroundHwnd != 0) {
+      final btn = button == 'right' ? 1 : (button == 'middle' ? 2 : 0);
+      final cx = (x > 0 || y > 0) ? x : _backgroundX;
+      final cy = (x > 0 || y > 0) ? y : _backgroundY;
+      _platformChannel.invokeMethod('backgroundClick', [
+        _backgroundHwnd, cx, cy, btn,
+      ]);
+      return;
+    }
     if (x >= 0 && y >= 0) {
       SetCursorPos(x, y);
     }
@@ -119,6 +160,15 @@ class WindowsInput extends PlatformInput {
     required int y,
     String button = 'left',
   }) async {
+    if (_backgroundMode && _backgroundHwnd != 0) {
+      final btn = button == 'right' ? 1 : (button == 'middle' ? 2 : 0);
+      final cx = (x > 0 || y > 0) ? x : _backgroundX;
+      final cy = (x > 0 || y > 0) ? y : _backgroundY;
+      await _platformChannel.invokeMethod('backgroundMouseDown', [
+        _backgroundHwnd, cx, cy, btn,
+      ]);
+      return;
+    }
     if (x >= 0 && y >= 0) {
       SetCursorPos(x, y);
     }
@@ -131,6 +181,15 @@ class WindowsInput extends PlatformInput {
     required int y,
     String button = 'left',
   }) async {
+    if (_backgroundMode && _backgroundHwnd != 0) {
+      final btn = button == 'right' ? 1 : (button == 'middle' ? 2 : 0);
+      final cx = (x > 0 || y > 0) ? x : _backgroundX;
+      final cy = (x > 0 || y > 0) ? y : _backgroundY;
+      await _platformChannel.invokeMethod('backgroundMouseUp', [
+        _backgroundHwnd, cx, cy, btn,
+      ]);
+      return;
+    }
     if (x >= 0 && y >= 0) {
       SetCursorPos(x, y);
     }

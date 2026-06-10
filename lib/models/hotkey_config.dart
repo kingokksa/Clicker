@@ -10,6 +10,7 @@ class HotkeyConfig {
   String emergencyStop;
   String playMacro;
   String holdTrigger;
+  String backgroundClick;
 
   HotkeyConfig({
     this.startStopClicker = 'Alt+F6',
@@ -17,6 +18,7 @@ class HotkeyConfig {
     this.emergencyStop = 'Alt+F12',
     this.playMacro = 'Alt+F9',
     this.holdTrigger = 'F5',
+    this.backgroundClick = 'Alt+F7',
   });
 
   factory HotkeyConfig.fromJson(Map<String, dynamic> json) {
@@ -26,6 +28,7 @@ class HotkeyConfig {
       emergencyStop: json['emergencyStop'] ?? 'Alt+F12',
       playMacro: json['playMacro'] ?? 'Alt+F9',
       holdTrigger: json['holdTrigger'] ?? 'F5',
+      backgroundClick: json['backgroundClick'] ?? 'Alt+F7',
     );
   }
 
@@ -35,6 +38,7 @@ class HotkeyConfig {
         'emergencyStop': emergencyStop,
         'playMacro': playMacro,
         'holdTrigger': holdTrigger,
+        'backgroundClick': backgroundClick,
       };
 
   HotkeyConfig copyWith({
@@ -43,6 +47,7 @@ class HotkeyConfig {
     String? emergencyStop,
     String? playMacro,
     String? holdTrigger,
+    String? backgroundClick,
   }) {
     return HotkeyConfig(
       startStopClicker: startStopClicker ?? this.startStopClicker,
@@ -50,6 +55,7 @@ class HotkeyConfig {
       emergencyStop: emergencyStop ?? this.emergencyStop,
       playMacro: playMacro ?? this.playMacro,
       holdTrigger: holdTrigger ?? this.holdTrigger,
+      backgroundClick: backgroundClick ?? this.backgroundClick,
     );
   }
 
@@ -155,6 +161,8 @@ class HotkeyConfig {
         return 4;
       case 'holdTrigger':
         return 5;
+      case 'backgroundClick':
+        return 6;
       default:
         return 0;
     }
@@ -173,6 +181,8 @@ class HotkeyConfig {
         return 'playMacro';
       case 5:
         return 'holdTrigger';
+      case 6:
+        return 'backgroundClick';
       default:
         return '';
     }

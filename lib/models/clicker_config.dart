@@ -4,6 +4,15 @@ library;
 
 import 'package:collection/collection.dart';
 
+/// Info about a visible window, used for background execution target selection.
+class WindowInfo {
+  final int hwnd;
+  final String title;
+  final String className;
+
+  const WindowInfo({required this.hwnd, required this.title, required this.className});
+}
+
 enum ClickType { single, double }
 
 enum ClickMode { mouse, keyboard }

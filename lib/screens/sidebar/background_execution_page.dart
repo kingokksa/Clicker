@@ -6,16 +6,10 @@ import 'dart:io';
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import '../../models/hotkey_config.dart';
+import '../../models/clicker_config.dart';
 import '../../services/app_state.dart';
 import '../../services/screen_overlay_service.dart';
-
-class WindowInfo {
-  final int hwnd;
-  final String title;
-  final String className;
-
-  const WindowInfo({required this.hwnd, required this.title, required this.className});
-}
 
 class BackgroundExecutionPage extends StatefulWidget {
   const BackgroundExecutionPage({super.key});
@@ -29,6 +23,23 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
   List<WindowInfo> _windows = [];
   bool _loading = false;
   bool _pickingCoords = false;
+
+  // Hotkey config state
+  List<String> _bgClickMods = [];
+  String _bgClickKey = 'F7';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadHotkeyConfig();
+  }
+
+  void _loadHotkeyConfig() {
+    final state = context.read<AppState>();
+    final parsed = HotkeyConfig.splitHotkey(state.hotkeyConfig.backgroundClick);
+    _bgClickMods = parsed.mods;
+    _bgClickKey = parsed.key;
+  }
 
   @override
   void dispose() {
@@ -63,6 +74,18 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
     final config = state.clickerConfig;
     if (config.targetHwnd == 0) return;
     setState(() => _pickingCoords = true);
+
+    final wasOnTop = state.alwaysOnTop;
+    // Must cancel alwaysOnTop first, otherwise the TOPMOST Flutter window
+    // still covers the overlay even when minimized.
+    if (Platform.isWindows) {
+      try {
+        if (wasOnTop) await _platformChannel.invokeMethod('setAlwaysOnTop', [false]);
+        await _platformChannel.invokeMethod('minimizeWindow');
+      } catch (_) {}
+    }
+    try { await _platformChannel.invokeMethod('setForegroundWindow', [config.targetHwnd]); } catch (_) {}
+
     try {
       final result = await ScreenOverlayService.instance.startWindowPick(config.targetHwnd);
       if (result != null && mounted) {
@@ -70,7 +93,21 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
         state.setClickerConfig(config.copyWith(targetClientX: x, targetClientY: y));
       }
     } catch (_) {}
+
+    // Restore clicker window
+    if (Platform.isWindows) {
+      try {
+        if (wasOnTop) await _platformChannel.invokeMethod('setAlwaysOnTop', [true]);
+        await _platformChannel.invokeMethod('bringToFront');
+      } catch (_) {}
+    }
+
     if (mounted) setState(() => _pickingCoords = false);
+  }
+
+  void _updateBgClickHotkey(AppState state) {
+    final hotkey = HotkeyConfig.buildHotkey(_bgClickMods, _bgClickKey);
+    state.setHotkeyConfig(state.hotkeyConfig.copyWith(backgroundClick: hotkey));
   }
 
   @override
@@ -79,6 +116,7 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
     final config = state.clickerConfig;
     final isDark = FluentTheme.of(context).brightness == Brightness.dark;
     final accent = FluentTheme.of(context).accentColor;
+    final canStart = config.backgroundExecutionEnabled && config.targetHwnd != 0;
 
     return ScaffoldPage.scrollable(
       padding: const EdgeInsets.all(20),
@@ -179,6 +217,72 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
                     const SizedBox(width: 4),
                     Text('选取', style: TextStyle(fontSize: 12, color: config.targetHwnd != 0 ? null : (isDark ? const Color(0xFF606080) : const Color(0xFFB0B0C0)))),
                   ]),
+            ),
+          ]),
+
+          const Divider(style: DividerThemeData(horizontalMargin: EdgeInsets.zero)),
+
+          // Hotkey for background click
+          _labelRow('触发/停止快捷键', isDark),
+          const SizedBox(height: 6),
+          Row(children: [
+            ...HotkeyConfig.modifiers.map((mod) => Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: Checkbox(
+                checked: _bgClickMods.contains(mod),
+                onChanged: (v) {
+                  setState(() {
+                    if (v == true) {
+                      _bgClickMods.add(mod);
+                    } else {
+                      _bgClickMods.remove(mod);
+                    }
+                  });
+                  _updateBgClickHotkey(state);
+                },
+                content: Text(mod, style: const TextStyle(fontSize: 12)),
+              ),
+            )),
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 100,
+              child: ComboBox<String>(
+                isExpanded: true,
+                value: HotkeyConfig.keys.contains(_bgClickKey) ? _bgClickKey : null,
+                items: HotkeyConfig.keys.map((k) => ComboBoxItem<String>(
+                  value: k,
+                  child: Text(k, style: const TextStyle(fontSize: 12)),
+                )).toList(),
+                onChanged: (v) {
+                  if (v != null) {
+                    setState(() => _bgClickKey = v);
+                    _updateBgClickHotkey(state);
+                  }
+                },
+              ),
+            ),
+          ]),
+
+          const Divider(style: DividerThemeData(horizontalMargin: EdgeInsets.zero)),
+
+          // Start/Stop button
+          Row(children: [
+            Expanded(
+              child: FilledButton(
+                onPressed: canStart ? () => state.clickService.toggle() : null,
+                style: ButtonStyle(
+                  backgroundColor: WidgetStateProperty.resolveWith((states) {
+                    if (states.contains(WidgetState.disabled)) return null;
+                    return state.clickService.isRunning
+                      ? Colors.red
+                      : accent;
+                  }),
+                ),
+                child: Text(
+                  state.clickService.isRunning ? '停止后台点击' : '开始后台点击',
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+              ),
             ),
           ]),
         ]),

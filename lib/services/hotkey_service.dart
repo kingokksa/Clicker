@@ -36,6 +36,7 @@ class HotkeyService {
   void Function()? onHoldTriggerStart;
   void Function()? onHoldTriggerStop;
   void Function(String macroId)? onPlayMacroById;
+  void Function()? onBackgroundClick;
 
   HotkeyService(this._input);
 
@@ -61,6 +62,7 @@ class HotkeyService {
       await winInput.registerHotkey('emergencyStop', _config.emergencyStop);
       await winInput.registerHotkey('playMacro', _config.playMacro);
       await winInput.registerHotkey('holdTrigger', _config.holdTrigger);
+      await winInput.registerHotkey('backgroundClick', _config.backgroundClick);
     }
   }
 
@@ -91,6 +93,9 @@ class HotkeyService {
         break;
       case 'holdTrigger':
         _handleHoldTrigger();
+        break;
+      case 'backgroundClick':
+        onBackgroundClick?.call();
         break;
     }
   }

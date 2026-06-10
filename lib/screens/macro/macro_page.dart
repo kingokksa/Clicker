@@ -4,6 +4,7 @@ library;
 
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:provider/provider.dart';
+import 'package:flutter/services.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -12,6 +13,8 @@ import 'package:path/path.dart' as p;
 import '../../services/app_state.dart';
 import '../../models/macro_model.dart';
 import '../../models/hotkey_config.dart';
+import '../../models/clicker_config.dart';
+import '../../services/plugin_registry.dart';
 import '../../widgets/app_slider.dart';
 
 class MacroPage extends StatelessWidget {
@@ -230,6 +233,7 @@ class MacroPage extends StatelessWidget {
             _infoTag(durationStr, bg: tagBg),
             if (macro.repeatCount > 1) ...[const SizedBox(width: 4), _infoTag('x${macro.repeatCount}', bg: tagBg)],
             if (macro.hotkey != null) ...[const SizedBox(width: 4), _infoTag(macro.hotkey!, bg: tagBg)],
+            if (macro.backgroundMode) ...[const SizedBox(width: 4), _infoTag('后台', bg: tagBg)],
           ]),
         ])),
 
@@ -686,6 +690,20 @@ class _MacroEditorDialogState extends State<_MacroEditorDialog> {
   late List<MacroEvent> _events;
   int? _editingIndex;
   String? _hotkey;
+  bool _backgroundMode = false;
+
+  // Background mode target settings
+  List<WindowInfo> _windows = [];
+  int _targetHwnd = 0;
+  String _targetWindowTitle = '';
+  bool _loadingWindows = false;
+
+  bool get _bgPluginAvailable {
+    final plugin = PluginRegistry.instance.getPlugin('background_execution');
+    return plugin != null && plugin.installed && plugin.enabled;
+  }
+
+  static const _platformChannel = MethodChannel('com.clicker.pro/platform');
 
   @override
   void initState() {
@@ -695,6 +713,44 @@ class _MacroEditorDialogState extends State<_MacroEditorDialog> {
     _speed = widget.macro.speed;
     _events = List.from(widget.macro.events);
     _hotkey = widget.macro.hotkey;
+    _backgroundMode = widget.macro.backgroundMode;
+    _targetHwnd = widget.macro.backgroundTargetHwnd;
+    _targetWindowTitle = widget.macro.backgroundTargetWindowTitle;
+    // Load from plugin config if macro has no target set (deferred to after build)
+    if (_targetHwnd == 0) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final config = context.read<AppState>().clickerConfig;
+        setState(() {
+          _targetHwnd = config.targetHwnd;
+          _targetWindowTitle = config.targetWindowTitle;
+        });
+      });
+    }
+    if (_bgPluginAvailable) _refreshWindows();
+  }
+
+  Future<List<WindowInfo>> _refreshWindows() async {
+    setState(() => _loadingWindows = true);
+    try {
+      final list = await _platformChannel.invokeMethod<List>('enumerateWindows');
+      final windows = <WindowInfo>[];
+      if (list != null) {
+        for (final w in list) {
+          final map = w as Map;
+          windows.add(WindowInfo(
+            hwnd: map['hwnd'] as int,
+            title: map['title'] as String? ?? '',
+            className: map['className'] as String? ?? '',
+          ));
+        }
+      }
+      setState(() { _windows = windows; _loadingWindows = false; });
+      return windows;
+    } catch (_) {
+      setState(() => _loadingWindows = false);
+      return [];
+    }
   }
 
   String _eventLabel(MacroEvent e) {
@@ -907,6 +963,67 @@ class _MacroEditorDialogState extends State<_MacroEditorDialog> {
           Text('${_speed.toStringAsFixed(1)}x', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
           SizedBox(width: 120, child: Slider(value: _speed, min: 0.1, max: 5.0, divisions: 49, onChanged: (v) => setState(() => _speed = v))),
         ]),
+        // Background execution option (only shown when plugin is installed & enabled)
+        if (_bgPluginAvailable) ...[
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF1E1E38).withValues(alpha: 0.6) : const Color(0xFFE8E8F4).withValues(alpha: 0.6),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)),
+            ),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Checkbox(
+                  checked: _backgroundMode,
+                  onChanged: (v) => setState(() => _backgroundMode = v ?? false),
+                ),
+                const SizedBox(width: 8),
+                const Text('后台执行', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                const Spacer(),
+                Icon(FluentIcons.remote, size: 14, color: accent.withValues(alpha: 0.6)),
+              ]),
+              if (_backgroundMode) ...[
+                const SizedBox(height: 8),
+                // Target window
+                Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                  Expanded(
+                    child: ComboBox<int>(
+                      isExpanded: true,
+                      placeholder: Text(_targetWindowTitle.isEmpty ? '选择目标窗口' : _targetWindowTitle, style: const TextStyle(fontSize: 12)),
+                      items: _windows.map((w) => ComboBoxItem<int>(
+                        value: w.hwnd,
+                        child: Text(w.title.length > 40 ? '${w.title.substring(0, 40)}...' : w.title,
+                          style: const TextStyle(fontSize: 12)),
+                      )).toList(),
+                      value: _windows.any((w) => w.hwnd == _targetHwnd) ? _targetHwnd : null,
+                      onChanged: (hwnd) {
+                        if (hwnd != null) {
+                          final win = _windows.firstWhere((w) => w.hwnd == hwnd);
+                          setState(() {
+                            _targetHwnd = hwnd;
+                            _targetWindowTitle = win.title;
+                          });
+                        }
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Button(
+                    onPressed: _loadingWindows ? null : () async {
+                      final list = await _refreshWindows();
+                      setState(() => _windows = list);
+                    },
+                    child: _loadingWindows
+                      ? const SizedBox(width: 14, height: 14, child: ProgressRing(strokeWidth: 2))
+                      : const Icon(FluentIcons.refresh, size: 14),
+                  ),
+                ]),
+              ],
+            ]),
+          ),
+        ],
         const SizedBox(height: 10),
         // Event list header
         Row(children: [
@@ -947,6 +1064,9 @@ class _MacroEditorDialogState extends State<_MacroEditorDialog> {
             repeatCount: _repeatCount,
             speed: _speed,
             hotkey: _hotkey,
+            backgroundMode: _backgroundMode,
+            backgroundTargetHwnd: _targetHwnd,
+            backgroundTargetWindowTitle: _targetWindowTitle,
           );
           widget.onSave(updated);
         }, child: const Text('保存')),

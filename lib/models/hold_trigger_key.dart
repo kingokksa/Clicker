@@ -42,6 +42,7 @@ class HoldTriggerKey {
   int targetHwnd;         // target window handle
   int targetX;            // client area x
   int targetY;            // client area y
+  String targetWindowTitle; // target window title (for display)
 
   HoldTriggerKey({
     String? id,
@@ -58,6 +59,7 @@ class HoldTriggerKey {
     this.targetHwnd = 0,
     this.targetX = 0,
     this.targetY = 0,
+    this.targetWindowTitle = '',
   }) : id = id ?? _generateId();
 
   static String _generateId() {
@@ -93,6 +95,7 @@ class HoldTriggerKey {
       targetHwnd: json['targetHwnd'] ?? 0,
       targetX: json['targetX'] ?? 0,
       targetY: json['targetY'] ?? 0,
+      targetWindowTitle: json['targetWindowTitle'] ?? '',
     );
   }
 
@@ -111,6 +114,7 @@ class HoldTriggerKey {
         'targetHwnd': targetHwnd,
         'targetX': targetX,
         'targetY': targetY,
+        'targetWindowTitle': targetWindowTitle,
       };
 
   HoldTriggerKey copyWith({
@@ -127,6 +131,7 @@ class HoldTriggerKey {
     int? targetHwnd,
     int? targetX,
     int? targetY,
+    String? targetWindowTitle,
   }) {
     return HoldTriggerKey(
       id: id,
@@ -143,6 +148,7 @@ class HoldTriggerKey {
       targetHwnd: targetHwnd ?? this.targetHwnd,
       targetX: targetX ?? this.targetX,
       targetY: targetY ?? this.targetY,
+      targetWindowTitle: targetWindowTitle ?? this.targetWindowTitle,
     );
   }
 }
