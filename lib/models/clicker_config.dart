@@ -13,6 +13,50 @@ class WindowInfo {
   const WindowInfo({required this.hwnd, required this.title, required this.className});
 }
 
+/// Sound configuration for a single module (click / key / macro).
+/// Each module has independent start and end sound settings.
+class SoundConfig {
+  final bool startEnabled;
+  final bool endEnabled;
+  final String startPath; // '' = default system sound, otherwise absolute file path
+  final String endPath;
+
+  const SoundConfig({
+    this.startEnabled = true,
+    this.endEnabled = false,
+    this.startPath = '',
+    this.endPath = '',
+  });
+
+  bool get enabled => startEnabled || endEnabled;
+
+  SoundConfig copyWith({
+    bool? startEnabled,
+    bool? endEnabled,
+    String? startPath,
+    String? endPath,
+  }) => SoundConfig(
+    startEnabled: startEnabled ?? this.startEnabled,
+    endEnabled: endEnabled ?? this.endEnabled,
+    startPath: startPath ?? this.startPath,
+    endPath: endPath ?? this.endPath,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'startEnabled': startEnabled,
+    'endEnabled': endEnabled,
+    if (startPath.isNotEmpty) 'startPath': startPath,
+    if (endPath.isNotEmpty) 'endPath': endPath,
+  };
+
+  factory SoundConfig.fromJson(Map<String, dynamic> json) => SoundConfig(
+    startEnabled: json['startEnabled'] ?? true,
+    endEnabled: json['endEnabled'] ?? false,
+    startPath: json['startPath'] ?? '',
+    endPath: json['endPath'] ?? '',
+  );
+}
+
 enum ClickType { single, double }
 
 enum ClickMode { mouse, keyboard }
@@ -103,6 +147,18 @@ class ClickerConfig {
   bool scriptEngineEnabled;
   bool remoteControlEnabled;
 
+  // Human-like mode advanced settings
+  bool humanLikeBezierCurve; // bezier curve mouse movement
+  bool humanLikeRandomPause; // occasional random pauses
+  int humanLikePauseChance; // chance of random pause per action (0-100, default 5)
+  int humanLikePauseMinMs; // min pause duration (ms, default 200)
+  int humanLikePauseMaxMs; // max pause duration (ms, default 800)
+
+  // Sound feedback settings
+  SoundConfig soundFeedbackClick;
+  SoundConfig soundFeedbackKey;
+  SoundConfig soundFeedbackMacro;
+
   // Background execution
   bool backgroundExecutionEnabled;
   bool silentStartEnabled;
@@ -150,7 +206,15 @@ class ClickerConfig {
     this.autoClickEnabled = true,
     this.smartDelayEnabled = false,
     this.humanLikeEnabled = false,
+    this.humanLikeBezierCurve = false,
+    this.humanLikeRandomPause = true,
+    this.humanLikePauseChance = 5,
+    this.humanLikePauseMinMs = 200,
+    this.humanLikePauseMaxMs = 800,
     this.soundFeedbackEnabled = false,
+    this.soundFeedbackClick = const SoundConfig(),
+    this.soundFeedbackKey = const SoundConfig(),
+    this.soundFeedbackMacro = const SoundConfig(),
     this.statsEnabled = true,
     this.imageRecognitionEnabled = false,
     this.windowAutoDetectEnabled = false,
@@ -226,7 +290,27 @@ class ClickerConfig {
       autoClickEnabled: json['autoClickEnabled'] ?? true,
       smartDelayEnabled: json['smartDelayEnabled'] ?? false,
       humanLikeEnabled: json['humanLikeEnabled'] ?? false,
+      humanLikeBezierCurve: json['humanLikeBezierCurve'] ?? false,
+      humanLikeRandomPause: json['humanLikeRandomPause'] ?? true,
+      humanLikePauseChance: json['humanLikePauseChance'] ?? 5,
+      humanLikePauseMinMs: json['humanLikePauseMinMs'] ?? 200,
+      humanLikePauseMaxMs: json['humanLikePauseMaxMs'] ?? 800,
       soundFeedbackEnabled: json['soundFeedbackEnabled'] ?? false,
+      soundFeedbackClick: json['soundFeedbackClick'] != null
+        ? SoundConfig.fromJson(json['soundFeedbackClick'])
+        : (json['soundFeedbackClickEnabled'] != null
+          ? SoundConfig(startEnabled: json['soundFeedbackClickEnabled'] ?? true)
+          : const SoundConfig()),
+      soundFeedbackKey: json['soundFeedbackKey'] != null
+        ? SoundConfig.fromJson(json['soundFeedbackKey'])
+        : (json['soundFeedbackKeyEnabled'] != null
+          ? SoundConfig(startEnabled: json['soundFeedbackKeyEnabled'] ?? true)
+          : const SoundConfig()),
+      soundFeedbackMacro: json['soundFeedbackMacro'] != null
+        ? SoundConfig.fromJson(json['soundFeedbackMacro'])
+        : (json['soundFeedbackMacroEnabled'] != null
+          ? SoundConfig(startEnabled: json['soundFeedbackMacroEnabled'] ?? true)
+          : const SoundConfig()),
       statsEnabled: json['statsEnabled'] ?? true,
       imageRecognitionEnabled: json['imageRecognitionEnabled'] ?? false,
       windowAutoDetectEnabled: json['windowAutoDetectEnabled'] ?? false,
@@ -278,7 +362,15 @@ class ClickerConfig {
         'autoClickEnabled': autoClickEnabled,
         'smartDelayEnabled': smartDelayEnabled,
         'humanLikeEnabled': humanLikeEnabled,
+        'humanLikeBezierCurve': humanLikeBezierCurve,
+        'humanLikeRandomPause': humanLikeRandomPause,
+        'humanLikePauseChance': humanLikePauseChance,
+        'humanLikePauseMinMs': humanLikePauseMinMs,
+        'humanLikePauseMaxMs': humanLikePauseMaxMs,
         'soundFeedbackEnabled': soundFeedbackEnabled,
+        'soundFeedbackClick': soundFeedbackClick.toJson(),
+        'soundFeedbackKey': soundFeedbackKey.toJson(),
+        'soundFeedbackMacro': soundFeedbackMacro.toJson(),
         'statsEnabled': statsEnabled,
         'imageRecognitionEnabled': imageRecognitionEnabled,
         'windowAutoDetectEnabled': windowAutoDetectEnabled,
@@ -329,7 +421,15 @@ class ClickerConfig {
     bool? autoClickEnabled,
     bool? smartDelayEnabled,
     bool? humanLikeEnabled,
+    bool? humanLikeBezierCurve,
+    bool? humanLikeRandomPause,
+    int? humanLikePauseChance,
+    int? humanLikePauseMinMs,
+    int? humanLikePauseMaxMs,
     bool? soundFeedbackEnabled,
+    SoundConfig? soundFeedbackClick,
+    SoundConfig? soundFeedbackKey,
+    SoundConfig? soundFeedbackMacro,
     bool? statsEnabled,
     bool? imageRecognitionEnabled,
     bool? windowAutoDetectEnabled,
@@ -379,7 +479,15 @@ class ClickerConfig {
       autoClickEnabled: autoClickEnabled ?? this.autoClickEnabled,
       smartDelayEnabled: smartDelayEnabled ?? this.smartDelayEnabled,
       humanLikeEnabled: humanLikeEnabled ?? this.humanLikeEnabled,
+      humanLikeBezierCurve: humanLikeBezierCurve ?? this.humanLikeBezierCurve,
+      humanLikeRandomPause: humanLikeRandomPause ?? this.humanLikeRandomPause,
+      humanLikePauseChance: humanLikePauseChance ?? this.humanLikePauseChance,
+      humanLikePauseMinMs: humanLikePauseMinMs ?? this.humanLikePauseMinMs,
+      humanLikePauseMaxMs: humanLikePauseMaxMs ?? this.humanLikePauseMaxMs,
       soundFeedbackEnabled: soundFeedbackEnabled ?? this.soundFeedbackEnabled,
+      soundFeedbackClick: soundFeedbackClick ?? this.soundFeedbackClick,
+      soundFeedbackKey: soundFeedbackKey ?? this.soundFeedbackKey,
+      soundFeedbackMacro: soundFeedbackMacro ?? this.soundFeedbackMacro,
       statsEnabled: statsEnabled ?? this.statsEnabled,
       imageRecognitionEnabled: imageRecognitionEnabled ?? this.imageRecognitionEnabled,
       windowAutoDetectEnabled: windowAutoDetectEnabled ?? this.windowAutoDetectEnabled,

@@ -5,11 +5,50 @@
 library;
 
 import 'dart:async';
+import 'dart:ffi';
+import 'dart:io';
 import 'dart:math';
+import 'package:ffi/ffi.dart';
 import 'package:flutter/services.dart';
+import 'package:audioplayers/audioplayers.dart';
 import '../models/clicker_config.dart';
 import 'platform/platform_input.dart';
 import 'platform/windows_input.dart';
+
+/// Play a system sound via Win32 MessageBeep
+void _playSystemSound() {
+  if (!Platform.isWindows) return;
+  final user32 = DynamicLibrary.open('user32.dll');
+  final messageBeep = user32.lookupFunction<Int32 Function(Int32), int Function(int)>('MessageBeep');
+  messageBeep(0); // 0 = default beep
+}
+
+/// Audio player instance for custom sound files
+final AudioPlayer _audioPlayer = AudioPlayer();
+
+/// Play a sound based on SoundConfig.
+/// If path is empty, plays system default beep.
+/// If path is set, plays the custom audio file.
+Future<void> _playSound(SoundConfig config, {required bool isStart}) async {
+  final enabled = isStart ? config.startEnabled : config.endEnabled;
+  if (!enabled) return;
+
+  final path = isStart ? config.startPath : config.endPath;
+  if (path.isEmpty) {
+    _playSystemSound();
+  } else {
+    try {
+      final file = File(path);
+      if (await file.exists()) {
+        await _audioPlayer.play(DeviceFileSource(path));
+      } else {
+        _playSystemSound();
+      }
+    } catch (_) {
+      _playSystemSound();
+    }
+  }
+}
 
 enum ClickerStatus { idle, running, paused }
 
@@ -116,6 +155,14 @@ class ClickService {
 
     onStatusChanged?.call(_status, _clickCount);
     _log('start: interval=${_config.intervalMs}ms, mode=${_config.clickMode.name}, repeat=${_config.repeatMode.name}');
+
+    // Play start sound based on current mode
+    if (_config.soundFeedbackEnabled) {
+      final soundConfig = _config.clickMode == ClickMode.keyboard
+          ? _config.soundFeedbackKey
+          : _config.soundFeedbackClick;
+      _playSound(soundConfig, isStart: true);
+    }
 
     _scheduleClick();
   }
@@ -264,13 +311,21 @@ class ClickService {
       return baseUs + _random.nextInt(variation * 2 + 1) - variation;
     }
 
-    // Human-like mode: more pronounced variation with occasional pauses
+    // Human-like mode: more pronounced variation with optional random pauses
     if (_config.humanLikeEnabled) {
       final variation = (baseUs * 0.4).round();
-      final delay = baseUs + _random.nextInt(variation * 2 + 1) - variation;
-      if (_random.nextInt(100) < 5) {
-        return delay + baseUs + _random.nextInt(baseUs * 2);
+      var delay = baseUs + _random.nextInt(variation * 2 + 1) - variation;
+
+      // Random pause (advanced feature)
+      if (_config.humanLikeRandomPause && _random.nextInt(100) < _config.humanLikePauseChance) {
+        final pauseRange = _config.humanLikePauseMaxMs - _config.humanLikePauseMinMs;
+        final pauseMs = _config.humanLikePauseMinMs + (pauseRange > 0 ? _random.nextInt(pauseRange + 1) : 0);
+        delay += pauseMs * 1000;
+      } else if (!_config.humanLikeRandomPause && _random.nextInt(100) < 5) {
+        // Legacy: occasional pause without config
+        delay += baseUs + _random.nextInt(baseUs * 2);
       }
+
       return delay;
     }
 
@@ -427,8 +482,12 @@ class ClickService {
       }
     }
 
-    if (_config.soundFeedbackEnabled && _clickCount > 0) {
-      SystemSound.play(SystemSoundType.click);
+    // Play end sound based on current mode
+    if (_config.soundFeedbackEnabled) {
+      final soundConfig = _config.clickMode == ClickMode.keyboard
+          ? _config.soundFeedbackKey
+          : _config.soundFeedbackClick;
+      _playSound(soundConfig, isStart: false);
     }
 
     _status = ClickerStatus.idle;

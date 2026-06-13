@@ -15,6 +15,7 @@ import '../../models/macro_model.dart';
 import '../../models/hotkey_config.dart';
 import '../../models/clicker_config.dart';
 import '../../services/plugin_registry.dart';
+import '../../services/screen_overlay_service.dart';
 import '../../widgets/app_slider.dart';
 
 class MacroPage extends StatelessWidget {
@@ -28,6 +29,14 @@ class MacroPage extends StatelessWidget {
     return ScaffoldPage.scrollable(
       padding: const EdgeInsets.all(20),
       children: [
+        // Macro error message
+        if (state.macroError.isNotEmpty)
+          Padding(padding: const EdgeInsets.only(bottom: 12), child: InfoBar(
+            title: Text(state.macroError),
+            severity: InfoBarSeverity.error,
+            onClose: () => state.clearMacroError(),
+          )),
+
         // Recording / Playing status
         if (state.isRecording) _buildRecordingStatus(state),
         if (state.isPlaying) _buildPlayingStatus(state),
@@ -52,6 +61,10 @@ class MacroPage extends StatelessWidget {
             const SizedBox(width: 8),
             Expanded(child: Button(onPressed: () => _showDelayBuilder(context, state), child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(FluentIcons.stopwatch, size: 14), SizedBox(width: 4), Text('延时宏')]))),
           ]),
+          const SizedBox(height: 8),
+          Row(children: [
+            Expanded(child: Button(onPressed: () => _showNewMacroEditor(context, state), child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(FluentIcons.add, size: 14), SizedBox(width: 4), Text('新建宏')]))),
+          ]),
         ],
 
         const SizedBox(height: 16),
@@ -69,7 +82,7 @@ class MacroPage extends StatelessWidget {
             Icon(FluentIcons.video_off, size: 48),
             SizedBox(height: 12),
             Text('暂无宏', style: TextStyle(fontSize: 14)),
-            Text('点击"开始录制"或"按键序列"创建宏', style: TextStyle(fontSize: 12)),
+            Text('点击"开始录制"、"按键序列"或"新建宏"创建宏', style: TextStyle(fontSize: 12)),
           ])))
         else
           ...macros.map((macro) => _buildMacroCard(context, macro, state)),
@@ -197,7 +210,7 @@ class MacroPage extends StatelessWidget {
     final disabledIcon = isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A);
     final duration = macro.totalDurationMs;
     final durationStr = duration >= 1000 ? '${(duration / 1000).toStringAsFixed(1)}s' : '${duration}ms';
-    final canPlay = !state.isRecording && !state.isPlaying;
+    final canPlay = !state.isRecording && !state.isPlaying && macro.enabled;
 
     final keyCount = macro.events.where((e) => e.type == MacroEventType.keyPress || e.type == MacroEventType.keyRelease).length;
     final clickCount = macro.events.where((e) => e.type == MacroEventType.click || e.type == MacroEventType.mouseDown || e.type == MacroEventType.mouseUp).length;
@@ -234,8 +247,18 @@ class MacroPage extends StatelessWidget {
             if (macro.repeatCount > 1) ...[const SizedBox(width: 4), _infoTag('x${macro.repeatCount}', bg: tagBg)],
             if (macro.hotkey != null) ...[const SizedBox(width: 4), _infoTag(macro.hotkey!, bg: tagBg)],
             if (macro.backgroundMode) ...[const SizedBox(width: 4), _infoTag('后台', bg: tagBg)],
+            if (!macro.enabled) ...[const SizedBox(width: 4), _infoTag('已禁用', bg: tagBg)],
           ]),
         ])),
+
+        // Enable/disable toggle
+        ToggleSwitch(
+          checked: macro.enabled,
+          onChanged: (v) async {
+            final updated = macro.copyWith(enabled: v);
+            await state.updateMacro(updated);
+          },
+        ),
 
         // Menu
         IconButton(
@@ -347,7 +370,22 @@ class MacroPage extends StatelessWidget {
   // ─── Macro Editor ──────────────────────────────────────────
 
   void _showMacroEditor(BuildContext context, AppState state, MacroModel macro) {
-    showDialog(context: context, builder: (ctx) => _MacroEditorDialog(macro: macro, onSave: (updatedMacro) async {
+    showDialog(context: context, builder: (ctx) => MacroEditorDialog(macro: macro, onSave: (updatedMacro) async {
+      await state.updateMacro(updatedMacro);
+      if (ctx.mounted) Navigator.pop(ctx);
+    }));
+  }
+
+  // ─── New Macro Editor ──────────────────────────────────────
+
+  void _showNewMacroEditor(BuildContext context, AppState state) {
+    final newMacro = MacroModel(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      name: '新建宏',
+      events: [],
+      repeatCount: 1,
+    );
+    showDialog(context: context, builder: (ctx) => MacroEditorDialog(macro: newMacro, onSave: (updatedMacro) async {
       await state.updateMacro(updatedMacro);
       if (ctx.mounted) Navigator.pop(ctx);
     }));
@@ -675,15 +713,15 @@ Widget _chip(String label, bool selected, VoidCallback onTap, {IconData? icon}) 
 
 // ─── Macro Editor Dialog ─────────────────────────────────────
 
-class _MacroEditorDialog extends StatefulWidget {
+class MacroEditorDialog extends StatefulWidget {
   final MacroModel macro;
   final Future<void> Function(MacroModel macro) onSave;
-  const _MacroEditorDialog({required this.macro, required this.onSave});
+  const MacroEditorDialog({super.key, required this.macro, required this.onSave});
   @override
-  State<_MacroEditorDialog> createState() => _MacroEditorDialogState();
+  State<MacroEditorDialog> createState() => _MacroEditorDialogState();
 }
 
-class _MacroEditorDialogState extends State<_MacroEditorDialog> {
+class _MacroEditorDialogState extends State<MacroEditorDialog> {
   late TextEditingController _nameCtrl;
   late int _repeatCount;
   late double _speed;
@@ -772,7 +810,7 @@ class _MacroEditorDialogState extends State<_MacroEditorDialog> {
         final dir = (e.scrollDy ?? 0) > 0 ? '上' : '下';
         return '滚轮$dir';
       case MacroEventType.wait:
-        return '等待 ${e.timestampMs}ms';
+        return '等待';
     }
   }
 
@@ -802,7 +840,226 @@ class _MacroEditorDialogState extends State<_MacroEditorDialog> {
   // Track pending modifiers even when no key is selected yet
   List<String> _pendingMods = [];
 
-  void _insertMacroEvents(BuildContext context) {
+  void _insertAction(BuildContext context, {int? insertAt}) {
+    final insertIndex = insertAt ?? _events.length;
+    String actionType = 'click'; // click, keyPress, keyRelease, mouseDown, mouseUp, scroll, wait
+    // Click fields
+    int clickX = 0, clickY = 0;
+    String clickButton = 'left';
+    // Key fields
+    String keyName = 'Space';
+    // Scroll fields
+    double scrollDy = 3.0;
+    // Wait fields
+    int waitMs = 500;
+
+    showDialog(context: context, builder: (_) {
+      return StatefulBuilder(builder: (context, setDialogState) {
+        final accent = FluentTheme.of(context).accentColor;
+        final isDark = FluentTheme.of(context).brightness == Brightness.dark;
+        final fieldBg = isDark ? const Color(0xFF252540) : const Color(0xFFF8F8FF);
+
+        return ContentDialog(
+          title: const Text('插入操作'),
+          constraints: const BoxConstraints(maxWidth: 420, maxHeight: 520),
+          content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            // Action type
+            const Text('操作类型:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 6),
+            Wrap(spacing: 4, runSpacing: 4, children: [
+              ('鼠标点击', 'click'), ('鼠标按下', 'mouseDown'), ('鼠标释放', 'mouseUp'),
+              ('按键按下', 'keyPress'), ('按键释放', 'keyRelease'),
+              ('滚轮', 'scroll'), ('等待', 'wait'),
+            ].map((item) {
+              final selected = actionType == item.$2;
+              return GestureDetector(
+                onTap: () => setDialogState(() => actionType = item.$2),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: selected ? accent.withValues(alpha: 0.15) : Colors.transparent,
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: selected ? accent : accent.withValues(alpha: 0.3)),
+                  ),
+                  child: Text(item.$1, style: TextStyle(fontSize: 12, color: selected ? accent : null, fontWeight: selected ? FontWeight.w600 : FontWeight.normal)),
+                ),
+              );
+            }).toList()),
+            const SizedBox(height: 12),
+            const Divider(),
+            const SizedBox(height: 8),
+
+            // Type-specific fields
+            if (actionType == 'click' || actionType == 'mouseDown' || actionType == 'mouseUp') ...[
+              Row(children: [
+                const SizedBox(width: 50, child: Text('X:', style: TextStyle(fontSize: 12))),
+                SizedBox(width: 80, child: TextBox(
+                  controller: TextEditingController(text: clickX.toString()),
+                  onChanged: (v) { final p = int.tryParse(v); if (p != null) setDialogState(() => clickX = p); },
+                )),
+                const SizedBox(width: 12),
+                const Text('Y:', style: TextStyle(fontSize: 12)),
+                SizedBox(width: 80, child: TextBox(
+                  controller: TextEditingController(text: clickY.toString()),
+                  onChanged: (v) { final p = int.tryParse(v); if (p != null) setDialogState(() => clickY = p); },
+                )),
+              ]),
+              const SizedBox(height: 8),
+              Row(children: [
+                const SizedBox(width: 50, child: Text('按钮:', style: TextStyle(fontSize: 12))),
+                ...['left', 'right', 'middle'].map((btn) {
+                  final label = btn == 'left' ? '左键' : (btn == 'right' ? '右键' : '中键');
+                  final selected = clickButton == btn;
+                  return Padding(padding: const EdgeInsets.only(right: 6), child: GestureDetector(
+                    onTap: () => setDialogState(() => clickButton = btn),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: selected ? accent.withValues(alpha: 0.15) : Colors.transparent,
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: selected ? accent : accent.withValues(alpha: 0.3)),
+                      ),
+                      child: Text(label, style: TextStyle(fontSize: 11, color: selected ? accent : null, fontWeight: selected ? FontWeight.w600 : FontWeight.normal)),
+                    ),
+                  ));
+                }),
+              ]),
+            ],
+
+            if (actionType == 'keyPress' || actionType == 'keyRelease') ...[
+              const Text('按键:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 6),
+              Wrap(spacing: 3, runSpacing: 3, children: [
+                // Modifier keys
+                'Shift', 'Ctrl', 'Alt',
+                // Function keys
+                'F1','F2','F3','F4','F5','F6','F7','F8','F9','F10','F11','F12',
+                // Edit keys
+                'Space','Enter','Tab','Escape','Backspace','Delete','Insert',
+                // Arrow keys
+                'Up','Down','Left','Right','Home','End','PageUp','PageDown',
+                // Letters
+                'A','B','C','D','E','F','G','H','I','J','K','L','M',
+                'N','O','P','Q','R','S','T','U','V','W','X','Y','Z',
+                // Numbers
+                '0','1','2','3','4','5','6','7','8','9',
+              ].map((key) {
+                final selected = keyName == key.toLowerCase() || keyName == key;
+                return GestureDetector(
+                  onTap: () => setDialogState(() => keyName = key.toLowerCase()),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: selected ? accent.withValues(alpha: 0.15) : fieldBg,
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: selected ? accent : accent.withValues(alpha: 0.2)),
+                    ),
+                    child: Text(key, style: TextStyle(fontSize: 11, color: selected ? accent : null, fontWeight: selected ? FontWeight.w600 : FontWeight.normal, fontFamily: 'monospace')),
+                  ),
+                );
+              }).toList()),
+            ],
+
+            if (actionType == 'scroll') ...[
+              Row(children: [
+                const Text('方向:', style: TextStyle(fontSize: 12)),
+                const SizedBox(width: 8),
+                Expanded(child: GestureDetector(
+                  onTap: () => setDialogState(() => scrollDy = scrollDy.abs()),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    decoration: BoxDecoration(
+                      color: scrollDy >= 0 ? accent.withValues(alpha: 0.15) : Colors.transparent,
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: scrollDy >= 0 ? accent : accent.withValues(alpha: 0.3)),
+                    ),
+                    child: Center(child: Text('向下', style: TextStyle(fontSize: 12, color: scrollDy >= 0 ? accent : null))),
+                  ),
+                )),
+                const SizedBox(width: 8),
+                Expanded(child: GestureDetector(
+                  onTap: () => setDialogState(() => scrollDy = -scrollDy.abs()),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    decoration: BoxDecoration(
+                      color: scrollDy < 0 ? accent.withValues(alpha: 0.15) : Colors.transparent,
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: scrollDy < 0 ? accent : accent.withValues(alpha: 0.3)),
+                    ),
+                    child: Center(child: Text('向上', style: TextStyle(fontSize: 12, color: scrollDy < 0 ? accent : null))),
+                  ),
+                )),
+              ]),
+              const SizedBox(height: 8),
+              Row(children: [
+                const Text('滚动量:', style: TextStyle(fontSize: 12)),
+                const SizedBox(width: 6),
+                Text(scrollDy.abs().toStringAsFixed(1), style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+                Expanded(child: Slider(value: scrollDy.abs(), min: 0.5, max: 20.0, divisions: 39, onChanged: (v) => setDialogState(() => scrollDy = scrollDy < 0 ? -v : v))),
+              ]),
+            ],
+
+            if (actionType == 'wait') ...[
+              Row(children: [
+                const Text('等待时长:', style: TextStyle(fontSize: 13)),
+                const SizedBox(width: 8),
+                Text(waitMs >= 1000 ? '${(waitMs / 1000).toStringAsFixed(1)} 秒' : '$waitMs 毫秒', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+              ]),
+              Slider(value: waitMs.toDouble(), min: 50, max: 10000, divisions: 199, onChanged: (v) => setDialogState(() => waitMs = v.round())),
+              const SizedBox(height: 4),
+              Wrap(spacing: 4, runSpacing: 4, children: [
+                ('100ms', 100), ('500ms', 500), ('1秒', 1000), ('2秒', 2000), ('3秒', 3000), ('5秒', 5000),
+              ].map((p) => GestureDetector(
+                onTap: () => setDialogState(() => waitMs = p.$2),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: waitMs == p.$2 ? accent.withValues(alpha: 0.15) : Colors.transparent,
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: waitMs == p.$2 ? accent : accent.withValues(alpha: 0.3)),
+                  ),
+                  child: Text(p.$1, style: TextStyle(fontSize: 11, color: waitMs == p.$2 ? accent : null)),
+                ),
+              )).toList()),
+            ],
+          ])),
+          actions: [
+            Button(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+            FilledButton(onPressed: () {
+              // Build the event
+              final baseTime = insertIndex == 0 ? 0 : _events[insertIndex - 1].timestampMs;
+              MacroEvent newEvent;
+              switch (actionType) {
+                case 'click':
+                  newEvent = MacroEvent(type: MacroEventType.click, timestampMs: baseTime, x: clickX, y: clickY, button: clickButton);
+                case 'mouseDown':
+                  newEvent = MacroEvent(type: MacroEventType.mouseDown, timestampMs: baseTime, x: clickX, y: clickY, button: clickButton);
+                case 'mouseUp':
+                  newEvent = MacroEvent(type: MacroEventType.mouseUp, timestampMs: baseTime, x: clickX, y: clickY, button: clickButton);
+                case 'keyPress':
+                  newEvent = MacroEvent(type: MacroEventType.keyPress, timestampMs: baseTime, key: keyName);
+                case 'keyRelease':
+                  newEvent = MacroEvent(type: MacroEventType.keyRelease, timestampMs: baseTime, key: keyName);
+                case 'scroll':
+                  newEvent = MacroEvent(type: MacroEventType.scroll, timestampMs: baseTime, scrollDx: 0, scrollDy: scrollDy);
+                case 'wait':
+                  newEvent = MacroEvent(type: MacroEventType.wait, timestampMs: baseTime + waitMs);
+                default:
+                  newEvent = MacroEvent(type: MacroEventType.wait, timestampMs: baseTime + waitMs);
+              }
+              setState(() {
+                _events.insert(insertIndex, newEvent);
+                _editingIndex = null;
+              });
+              Navigator.pop(context);
+            }, child: const Text('插入')),
+          ],
+        );
+      });
+    });
+  }
+
+  void _insertMacroEvents(BuildContext context, {int? insertAt}) {
     final state = context.read<AppState>();
     final otherMacros = state.macros.where((m) => m.id != widget.macro.id && m.events.isNotEmpty).toList();
     if (otherMacros.isEmpty) {
@@ -814,29 +1071,12 @@ class _MacroEditorDialogState extends State<_MacroEditorDialog> {
       return;
     }
 
-    int insertIndex = _events.length; // default: append at end
+    final insertIndex = insertAt ?? _events.length;
     showDialog(context: context, builder: (_) {
-      return StatefulBuilder(builder: (context, setDialogState) {
-        return ContentDialog(
+      return ContentDialog(
           title: const Text('插入宏'),
           constraints: const BoxConstraints(maxWidth: 400, maxHeight: 500),
           content: Column(mainAxisSize: MainAxisSize.min, children: [
-            // Insert position selector
-            Row(children: [
-              const Text('插入位置:', style: TextStyle(fontSize: 13)),
-              const SizedBox(width: 8),
-              ComboBox<int>(
-                value: insertIndex,
-                items: List.generate(_events.length + 1, (i) {
-                  final label = i == 0 ? '最前面' : (i == _events.length ? '最后面' : '第 $i 步之后');
-                  return ComboBoxItem<int>(value: i, child: Text(label, style: const TextStyle(fontSize: 12)));
-                }),
-                onChanged: (v) { if (v != null) setDialogState(() => insertIndex = v); },
-              ),
-            ]),
-            const SizedBox(height: 10),
-            const Divider(),
-            const SizedBox(height: 6),
             Flexible(child: ListView.builder(
               shrinkWrap: true,
               itemCount: otherMacros.length,
@@ -848,15 +1088,8 @@ class _MacroEditorDialogState extends State<_MacroEditorDialog> {
                   onPressed: () {
                     // Insert at chosen position
                     final baseTime = insertIndex == 0 ? 0 : _events[insertIndex - 1].timestampMs;
-                    final newEvents = m.events.map((e) => MacroEvent(
-                      type: e.type,
+                    final newEvents = m.events.map((e) => e.copyWith(
                       timestampMs: e.timestampMs + baseTime,
-                      button: e.button,
-                      x: e.x,
-                      y: e.y,
-                      key: e.key,
-                      scrollDx: e.scrollDx,
-                      scrollDy: e.scrollDy,
                     )).toList();
                     setState(() {
                       _events.insertAll(insertIndex, newEvents);
@@ -869,8 +1102,7 @@ class _MacroEditorDialogState extends State<_MacroEditorDialog> {
             )),
           ]),
           actions: [Button(onPressed: () => Navigator.pop(context), child: const Text('取消'))],
-        );
-      });
+      );
     });
   }
 
@@ -1029,10 +1261,18 @@ class _MacroEditorDialogState extends State<_MacroEditorDialog> {
         Row(children: [
           Text('事件列表 (${_events.length})', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
           const Spacer(),
-          Button(onPressed: () => _insertMacroEvents(context), child: const Text('插入宏')),
-          const SizedBox(width: 6),
           if (_events.isNotEmpty)
-            Button(onPressed: () => setState(() { _events.clear(); _editingIndex = null; }), child: const Text('清空')),
+            Button(onPressed: () async {
+              final confirmed = await showDialog<bool>(context: context, builder: (_) => ContentDialog(
+                title: const Text('确认清空'),
+                content: const Text('确定要清空所有事件吗？此操作不可撤销。'),
+                actions: [
+                  Button(onPressed: () => Navigator.pop(context, false), child: const Text('取消')),
+                  FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('清空')),
+                ],
+              ));
+              if (confirmed == true) setState(() { _events.clear(); _editingIndex = null; });
+            }, child: const Text('清空')),
         ]),
         const SizedBox(height: 6),
         // Event list
@@ -1040,19 +1280,38 @@ class _MacroEditorDialogState extends State<_MacroEditorDialog> {
           constraints: const BoxConstraints(maxHeight: 320),
           decoration: BoxDecoration(color: containerBg, borderRadius: BorderRadius.circular(8)),
           child: _events.isEmpty
-              ? const Padding(padding: EdgeInsets.all(20), child: Center(child: Text('暂无事件', style: TextStyle(fontSize: 13))))
-              : ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: _events.length,
-                  itemBuilder: (ctx, i) {
-                    final event = _events[i];
-                    final isEditing = _editingIndex == i;
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      child: isEditing ? _buildEventEditor(i, event, accent, editBg) : _buildEventRow(i, event, accent, rowBg),
-                    );
-                  },
-                ),
+              ? _buildEmptyEventList(context, accent)
+              : Column(mainAxisSize: MainAxisSize.min, children: [
+                  Flexible(child: ReorderableListView.builder(
+                    shrinkWrap: true,
+                    buildDefaultDragHandles: false,
+                    itemCount: _events.length,
+                    onReorder: (oldIndex, newIndex) {
+                      if (newIndex > oldIndex) newIndex--;
+                      setState(() {
+                        final event = _events.removeAt(oldIndex);
+                        _events.insert(newIndex, event);
+                        // Update editing index
+                        if (_editingIndex != null) {
+                          if (_editingIndex == oldIndex) _editingIndex = newIndex;
+                          else if (oldIndex < _editingIndex! && newIndex >= _editingIndex!) _editingIndex = _editingIndex! - 1;
+                          else if (oldIndex > _editingIndex! && newIndex <= _editingIndex!) _editingIndex = _editingIndex! + 1;
+                        }
+                      });
+                    },
+                    itemBuilder: (ctx, i) {
+                      final event = _events[i];
+                      final isEditing = _editingIndex == i;
+                      return Padding(
+                        key: ValueKey('event_$i'),
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        child: isEditing ? _buildEventEditor(i, event, accent, editBg) : _buildEventRow(i, event, accent, rowBg),
+                      );
+                    },
+                  )),
+                  // Trailing insert button
+                  _buildTrailingInsert(accent),
+                ]),
         )),
       ]),
       actions: [
@@ -1074,26 +1333,147 @@ class _MacroEditorDialogState extends State<_MacroEditorDialog> {
     );
   }
 
+  Widget _buildEmptyEventList(BuildContext context, Color accent) {
+    return Padding(padding: const EdgeInsets.all(20), child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Text('暂无事件', style: TextStyle(fontSize: 13)),
+        const SizedBox(height: 10),
+        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          HyperlinkButton(onPressed: () => _insertAction(context, insertAt: 0), child: const Text('插入操作')),
+          const SizedBox(width: 8),
+          HyperlinkButton(onPressed: () => _insertMacroEvents(context, insertAt: 0), child: const Text('插入宏')),
+        ]),
+      ],
+    ));
+  }
+
+  void _showInsertChoice(int insertIndex) {
+    showDialog(context: context, builder: (_) => ContentDialog(
+      title: const Text('插入'),
+      content: SizedBox(width: 300, child: Column(mainAxisSize: MainAxisSize.min, children: [
+        ListTile(
+          leading: const Icon(FluentIcons.add),
+          title: const Text('插入操作', style: TextStyle(fontSize: 13)),
+          subtitle: const Text('鼠标、键盘、等待等', style: TextStyle(fontSize: 11)),
+          onPressed: () { Navigator.pop(context); _insertAction(context, insertAt: insertIndex); },
+        ),
+        ListTile(
+          leading: const Icon(FluentIcons.paste),
+          title: const Text('插入宏', style: TextStyle(fontSize: 13)),
+          subtitle: const Text('插入已有宏的事件', style: TextStyle(fontSize: 11)),
+          onPressed: () { Navigator.pop(context); _insertMacroEvents(context, insertAt: insertIndex); },
+        ),
+      ])),
+      actions: [Button(onPressed: () => Navigator.pop(context), child: const Text('取消'))],
+    ));
+  }
+
+  void _showEventContextMenu(int index) {
+    showDialog(context: context, builder: (_) => ContentDialog(
+      title: Text('第 ${index + 1} 步操作'),
+      constraints: const BoxConstraints(maxWidth: 320),
+      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        _contextMenuItem(FluentIcons.edit, '编辑', () { Navigator.pop(context); setState(() => _editingIndex = index); }),
+        const SizedBox(height: 4),
+        _contextMenuItem(FluentIcons.add, '在此前插入操作', () { Navigator.pop(context); _insertAction(context, insertAt: index); }),
+        _contextMenuItem(FluentIcons.add, '在此后插入操作', () { Navigator.pop(context); _insertAction(context, insertAt: index + 1); }),
+        const SizedBox(height: 4),
+        _contextMenuItem(FluentIcons.paste, '在此前插入宏', () { Navigator.pop(context); _insertMacroEvents(context, insertAt: index); }),
+        _contextMenuItem(FluentIcons.paste, '在此后插入宏', () { Navigator.pop(context); _insertMacroEvents(context, insertAt: index + 1); }),
+        const SizedBox(height: 4),
+        _contextMenuItem(FluentIcons.save, '复制', () {
+          Navigator.pop(context);
+          final e = _events[index];
+          setState(() {
+            _events.insert(index + 1, e.copyWith());
+          });
+        }),
+        _contextMenuItem(FluentIcons.delete, '删除', () {
+          Navigator.pop(context);
+          setState(() {
+            _events.removeAt(index);
+            if (_editingIndex == index) _editingIndex = null;
+            else if (_editingIndex != null && _editingIndex! > index) _editingIndex = _editingIndex! - 1;
+          });
+        }, isDestructive: true),
+      ]),
+      actions: [Button(onPressed: () => Navigator.pop(context), child: const Text('取消'))],
+    ));
+  }
+
+  Widget _contextMenuItem(IconData icon, String label, VoidCallback onTap, {bool isDestructive = false}) {
+    final accent = FluentTheme.of(context).accentColor;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Row(children: [
+            Icon(icon, size: 14, color: isDestructive ? Colors.red : accent),
+            const SizedBox(width: 10),
+            Text(label, style: TextStyle(fontSize: 13, color: isDestructive ? Colors.red : null)),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTrailingInsert(Color accent) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: () => _showInsertChoice(_events.length),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Row(children: [
+            Expanded(child: Container(height: 1, color: accent.withValues(alpha: 0.1))),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              child: Icon(FluentIcons.add, size: 12, color: accent.withValues(alpha: 0.4)),
+            ),
+            Expanded(child: Container(height: 1, color: accent.withValues(alpha: 0.1))),
+          ]),
+        ),
+      ),
+    );
+  }
+
   Widget _buildEventRow(int index, MacroEvent event, Color accent, Color bg) {
     return GestureDetector(
       onTap: () => setState(() => _editingIndex = index),
+      onSecondaryTap: () => _showEventContextMenu(index),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
         decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(6)),
         child: Row(children: [
+          // Drag handle
+          ReorderableDragStartListener(
+            index: index,
+            child: MouseRegion(
+              cursor: SystemMouseCursors.grab,
+              child: Icon(FluentIcons.bulleted_list, size: 12, color: accent.withValues(alpha: 0.4)),
+            ),
+          ),
+          const SizedBox(width: 6),
           Icon(_eventIcon(event.type), size: 14, color: accent),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           Expanded(child: Text(_eventLabel(event), style: const TextStyle(fontSize: 12))),
-          Text('${event.timestampMs}ms', style: TextStyle(fontSize: 11, color: accent.withValues(alpha: 0.7))),
-          const SizedBox(width: 8),
-          // Delete button
+          if (event.holdMs > 0)
+            Text('按住${event.holdMs}ms', style: TextStyle(fontSize: 11, color: accent.withValues(alpha: 0.7))),
+          if (event.waitMs > 0) ...[
+            if (event.holdMs > 0) const SizedBox(width: 4),
+            Text('等${event.waitMs}ms', style: TextStyle(fontSize: 11, color: accent.withValues(alpha: 0.7))),
+          ],
+          const SizedBox(width: 6),
+          // More button
           GestureDetector(
-            onTap: () => setState(() {
-              _events.removeAt(index);
-              if (_editingIndex == index) _editingIndex = null;
-              else if (_editingIndex != null && _editingIndex! > index) _editingIndex = _editingIndex! - 1;
-            }),
-            child: Icon(FluentIcons.delete, size: 12, color: Colors.red.withValues(alpha: 0.7)),
+            onTap: () => _showEventContextMenu(index),
+            child: Icon(FluentIcons.more, size: 12, color: accent.withValues(alpha: 0.5)),
           ),
         ]),
       ),
@@ -1101,7 +1481,8 @@ class _MacroEditorDialogState extends State<_MacroEditorDialog> {
   }
 
   Widget _buildEventEditor(int index, MacroEvent event, Color accent, Color bg) {
-    final timeCtrl = TextEditingController(text: event.timestampMs.toString());
+    final holdCtrl = TextEditingController(text: event.holdMs.toString());
+    final waitCtrl = TextEditingController(text: event.waitMs.toString());
     final xCtrl = TextEditingController(text: (event.x ?? 0).toString());
     final yCtrl = TextEditingController(text: (event.y ?? 0).toString());
     final keyCtrl = TextEditingController(text: event.key ?? '');
@@ -1123,10 +1504,13 @@ class _MacroEditorDialogState extends State<_MacroEditorDialog> {
           ),
         ]),
         const SizedBox(height: 8),
-        // Time
+        // Hold duration
         Row(children: [
-          const SizedBox(width: 60, child: Text('时间(ms):', style: TextStyle(fontSize: 12))),
-          SizedBox(width: 80, child: TextBox(controller: timeCtrl, placeholder: '0')),
+          const SizedBox(width: 80, child: Text('按住(ms):', style: TextStyle(fontSize: 12))),
+          SizedBox(width: 80, child: TextBox(controller: holdCtrl, placeholder: '0')),
+          const SizedBox(width: 12),
+          const Text('等待(ms):', style: TextStyle(fontSize: 12)),
+          SizedBox(width: 80, child: TextBox(controller: waitCtrl, placeholder: '0')),
         ]),
         const SizedBox(height: 4),
         // Type-specific fields
@@ -1137,6 +1521,15 @@ class _MacroEditorDialogState extends State<_MacroEditorDialog> {
             const SizedBox(width: 12),
             const Text('Y:', style: TextStyle(fontSize: 12)),
             SizedBox(width: 70, child: TextBox(controller: yCtrl, placeholder: '0')),
+            const SizedBox(width: 8),
+            Button(onPressed: () async {
+              final result = await ScreenOverlayService.instance.startPick();
+              if (result != null) {
+                final (x, y) = result;
+                xCtrl.text = x.toString();
+                yCtrl.text = y.toString();
+              }
+            }, child: const Text('选取')),
           ]),
           const SizedBox(height: 4),
           Row(children: [
@@ -1146,10 +1539,7 @@ class _MacroEditorDialogState extends State<_MacroEditorDialog> {
               final selected = event.button == btn;
               return Padding(padding: const EdgeInsets.only(right: 6), child: MouseRegion(cursor: SystemMouseCursors.click, child: GestureDetector(
                 onTap: () => setState(() {
-                  _events[index] = MacroEvent(
-                    type: event.type, timestampMs: event.timestampMs,
-                    button: btn, x: event.x, y: event.y,
-                  );
+                  _events[index] = event.copyWith(button: btn);
                 }),
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -1180,14 +1570,16 @@ class _MacroEditorDialogState extends State<_MacroEditorDialog> {
         // Apply button
         Row(mainAxisAlignment: MainAxisAlignment.end, children: [
           FilledButton(onPressed: () {
-            final newTime = int.tryParse(timeCtrl.text) ?? event.timestampMs;
+            final newHoldMs = int.tryParse(holdCtrl.text) ?? event.holdMs;
+            final newWaitMs = int.tryParse(waitCtrl.text) ?? event.waitMs;
             MacroEvent newEvent;
             switch (event.type) {
               case MacroEventType.click:
               case MacroEventType.mouseDown:
               case MacroEventType.mouseUp:
                 newEvent = MacroEvent(
-                  type: event.type, timestampMs: newTime,
+                  type: event.type, timestampMs: event.timestampMs,
+                  holdMs: newHoldMs, waitMs: newWaitMs,
                   button: event.button,
                   x: int.tryParse(xCtrl.text) ?? event.x,
                   y: int.tryParse(yCtrl.text) ?? event.y,
@@ -1196,19 +1588,24 @@ class _MacroEditorDialogState extends State<_MacroEditorDialog> {
               case MacroEventType.keyPress:
               case MacroEventType.keyRelease:
                 newEvent = MacroEvent(
-                  type: event.type, timestampMs: newTime,
+                  type: event.type, timestampMs: event.timestampMs,
+                  holdMs: newHoldMs, waitMs: newWaitMs,
                   key: keyCtrl.text.isNotEmpty ? keyCtrl.text : event.key,
                 );
                 break;
               case MacroEventType.scroll:
                 newEvent = MacroEvent(
-                  type: event.type, timestampMs: newTime,
+                  type: event.type, timestampMs: event.timestampMs,
+                  holdMs: newHoldMs, waitMs: newWaitMs,
                   scrollDx: event.scrollDx,
                   scrollDy: double.tryParse(scrollCtrl.text) ?? event.scrollDy,
                 );
                 break;
               case MacroEventType.wait:
-                newEvent = MacroEvent(type: event.type, timestampMs: newTime);
+                newEvent = MacroEvent(
+                  type: event.type, timestampMs: event.timestampMs,
+                  holdMs: newHoldMs, waitMs: newWaitMs,
+                );
                 break;
             }
             setState(() {

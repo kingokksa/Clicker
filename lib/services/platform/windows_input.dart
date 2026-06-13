@@ -39,6 +39,12 @@ class WindowsInput extends PlatformInput {
 
   bool get isBackgroundMode => _backgroundMode;
 
+  /// Check if the background target window still exists
+  bool isBackgroundWindowValid() {
+    if (_backgroundHwnd == 0) return false;
+    return IsWindow(_backgroundHwnd) != 0;
+  }
+
   // Recording callback
   void Function(Map<String, dynamic> event)? onRecordEvent;
   void Function()? onRecordingCancelled;

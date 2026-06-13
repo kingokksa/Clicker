@@ -20,6 +20,8 @@ import '../../services/platform/windows_input.dart';
 import '../../services/app_paths.dart';
 import '../../widgets/app_slider.dart';
 import '../../services/screen_overlay_service.dart';
+import '../../models/macro_model.dart';
+import '../macro/macro_page.dart';
 
 /// COCO 80 classes: Chinese name → English name
 const _cocoClasses = <MapEntry<String, String>>[
@@ -2545,20 +2547,41 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
           const SizedBox(height: 4),
           Builder(builder: (context) {
             final macros = context.read<AppState>().macros;
-            if (macros.isEmpty) {
-              return const Text('暂无已保存的宏，请先录制宏', style: TextStyle(fontSize: 12, color: Colors.grey));
-            }
             return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Text('选择宏:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
               const SizedBox(height: 4),
-              ComboBox<String>(
-                value: _macroId.isNotEmpty && macros.any((m) => m.id == _macroId) ? _macroId : macros.first.id,
-                items: macros.map((m) => ComboBoxItem<String>(
-                  value: m.id,
-                  child: Text('${m.name} (${m.events.length}步)'),
-                )).toList(),
-                onChanged: (v) { if (v != null) setState(() => _macroId = v); },
-              ),
+              if (macros.isEmpty)
+                const Text('暂无已保存的宏', style: TextStyle(fontSize: 12, color: Colors.grey))
+              else
+                ComboBox<String>(
+                  value: _macroId.isNotEmpty && macros.any((m) => m.id == _macroId) ? _macroId : macros.first.id,
+                  items: macros.map((m) => ComboBoxItem<String>(
+                    value: m.id,
+                    child: Text('${m.name} (${m.events.length}步)'),
+                  )).toList(),
+                  onChanged: (v) { if (v != null) setState(() => _macroId = v); },
+                ),
+              const SizedBox(height: 6),
+              HyperlinkButton(onPressed: () async {
+                final newMacro = MacroModel(
+                  id: DateTime.now().millisecondsSinceEpoch.toString(),
+                  name: '新建宏',
+                  events: [],
+                  repeatCount: 1,
+                );
+                final state = context.read<AppState>();
+                final saved = await showDialog<bool>(context: context, builder: (ctx) => MacroEditorDialog(macro: newMacro, onSave: (updatedMacro) async {
+                  await state.updateMacro(updatedMacro);
+                  if (ctx.mounted) Navigator.pop(ctx, true);
+                }));
+                if (saved == true) {
+                  setState(() => _macroId = newMacro.id);
+                }
+              }, child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(FluentIcons.add, size: 12),
+                SizedBox(width: 4),
+                Text('新建宏', style: TextStyle(fontSize: 12)),
+              ])),
             ]);
           }),
         ],

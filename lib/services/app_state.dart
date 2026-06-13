@@ -57,6 +57,7 @@ class AppState extends ChangeNotifier {
   int _recordingEventCount = 0;
   int _playbackEventIndex = 0;
   int _playbackTotalEvents = 0;
+  String _macroError = '';
   bool _isInitialized = false;
 
   // Macro list
@@ -92,7 +93,13 @@ class AppState extends ChangeNotifier {
   int get recordingEventCount => _recordingEventCount;
   int get playbackEventIndex => _playbackEventIndex;
   int get playbackTotalEvents => _playbackTotalEvents;
+  String get macroError => _macroError;
   bool get isInitialized => _isInitialized;
+
+  void clearMacroError() {
+    _macroError = '';
+    notifyListeners();
+  }
   List<MacroModel> get macros => List.unmodifiable(_macros);
   List<String> get profiles => List.unmodifiable(_profiles);
   bool get isClickerRunning => _clickerStatus == ClickerStatus.running;
@@ -227,8 +234,15 @@ class AppState extends ChangeNotifier {
       };
 
       _macroService.onError = (message) {
-        // Propagate error — UI can listen to this
+        _macroError = message;
         notifyListeners();
+        // Auto-clear after 5 seconds
+        Future.delayed(const Duration(seconds: 5), () {
+          if (_macroError == message) {
+            _macroError = '';
+            notifyListeners();
+          }
+        });
       };
 
       // Hotkey actions
