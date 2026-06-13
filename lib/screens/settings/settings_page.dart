@@ -4,13 +4,36 @@ library;
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:file_picker/file_picker.dart';
 import 'dart:io';
 import 'package:window_manager/window_manager.dart';
 import '../../services/app_state.dart';
+import '../../services/update_service.dart';
 import '../../models/hotkey_config.dart';
+import '../../models/clicker_config.dart' show SoundConfig;
 
-class SettingsPage extends StatelessWidget {
+class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
+
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  String _appVersion = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadVersion();
+  }
+
+  Future<void> _loadVersion() async {
+    // Keep in sync with pubspec.yaml version
+    const version = '1.1.0';
+    if (mounted) setState(() => _appVersion = version);
+    UpdateService.instance.setCurrentVersion(version);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -29,6 +52,10 @@ class SettingsPage extends StatelessWidget {
         const Divider(style: DividerThemeData(horizontalMargin: EdgeInsets.zero)),
         _buildHotkeyRow(context, state, theme, label: '播放宏', value: hotkeys.playMacro, field: 'playMacro', icon: FluentIcons.play),
       ])),
+      const SizedBox(height: 12),
+      _sectionCard(title: '拟人模式', icon: FluentIcons.accounts, child: _buildHumanLikeSection(context, state)),
+      const SizedBox(height: 12),
+      _sectionCard(title: '声音反馈', icon: FluentIcons.volume2, child: _buildSoundFeedbackSection(context, state)),
     ];
 
     final rightSections = <Widget>[
@@ -37,6 +64,8 @@ class SettingsPage extends StatelessWidget {
       _sectionCard(title: '开机自启', icon: FluentIcons.brightness, child: _buildAutoStartSection(state)),
       const SizedBox(height: 12),
       _sectionCard(title: '配置管理', icon: FluentIcons.save, child: _buildProfileSection(context, state)),
+      const SizedBox(height: 12),
+      _sectionCard(title: '关于', icon: FluentIcons.info, child: _buildAboutSection()),
     ];
 
     return ScaffoldPage.scrollable(
@@ -254,6 +283,407 @@ class SettingsPage extends StatelessWidget {
         content: Text(result.success ? '配置已导入，部分设置重启后生效' : '导入失败：${result.error}'),
         actions: [FilledButton(onPressed: () => Navigator.pop(_), child: const Text('确定'))],
       ));
+    }
+  }
+
+  // ─── About Section ────────────────────────────────────────
+
+  Widget _buildAboutSection() {
+    final update = UpdateService.instance;
+    final isDark = FluentTheme.of(context).brightness == Brightness.dark;
+    final subtitleColor = isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A);
+
+    return ListenableBuilder(
+      listenable: update,
+      builder: (context, _) {
+        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          // Version & Author
+          Row(children: [
+            const Text('版本:', style: TextStyle(fontSize: 13)),
+            const SizedBox(width: 8),
+            Text('v$_appVersion', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          ]),
+          const SizedBox(height: 6),
+          Row(children: [
+            const Text('作者:', style: TextStyle(fontSize: 13)),
+            const SizedBox(width: 8),
+            const Text('kingokksa', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          ]),
+          const SizedBox(height: 6),
+          HyperlinkButton(
+            onPressed: () => _launchUrl('https://github.com/kingokksa/Clicker'),
+            child: const Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(FluentIcons.open_in_new_tab, size: 12),
+              SizedBox(width: 4),
+              Text('GitHub'),
+            ]),
+          ),
+          const SizedBox(height: 12),
+          const Divider(),
+          const SizedBox(height: 12),
+
+          // Check for updates
+          if (update.checking) ...[
+            const Row(children: [
+              SizedBox(width: 16, height: 16, child: ProgressRing(strokeWidth: 2)),
+              SizedBox(width: 8),
+              Text('正在检查更新...', style: TextStyle(fontSize: 13)),
+            ]),
+          ] else if (update.updateError.isNotEmpty) ...[
+            Text(update.updateError, style: TextStyle(fontSize: 12, color: Colors.red)),
+            const SizedBox(height: 8),
+            Button(onPressed: () => update.checkForUpdates(), child: const Text('重试')),
+          ] else if (update.updateAvailable) ...[
+            Row(children: [
+              Icon(FluentIcons.download, size: 16, color: FluentTheme.of(context).accentColor),
+              const SizedBox(width: 8),
+              Text('发现新版本: v${update.latestVersion}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+            ]),
+            if (update.releaseNotes.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: isDark ? const Color(0xFF1A1A30) : const Color(0xFFF5F5FA),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                constraints: const BoxConstraints(maxHeight: 120),
+                child: SingleChildScrollView(child: Text(update.releaseNotes, style: TextStyle(fontSize: 11, color: subtitleColor))),
+              ),
+            ],
+            const SizedBox(height: 12),
+            if (update.downloading) ...[
+              Row(children: [
+                Expanded(child: ProgressBar(value: update.downloadProgress * 100)),
+                const SizedBox(width: 8),
+                Text('${(update.downloadProgress * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 12)),
+              ]),
+              const SizedBox(height: 4),
+              const Text('下载中，完成后将自动重启...', style: TextStyle(fontSize: 12)),
+            ] else ...[
+              FilledButton(onPressed: () => update.downloadAndInstall(), child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(FluentIcons.download, size: 14),
+                SizedBox(width: 6),
+                Text('下载并更新'),
+              ])),
+            ],
+          ] else if (update.latestVersion.isNotEmpty) ...[
+            Row(children: [
+              Icon(FluentIcons.completed, size: 16, color: const Color(0xFF00E676)),
+              const SizedBox(width: 8),
+              const Text('已是最新版本', style: TextStyle(fontSize: 13)),
+            ]),
+          ] else ...[
+            Button(onPressed: () => update.checkForUpdates(), child: const Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(FluentIcons.refresh, size: 14),
+              SizedBox(width: 6),
+              Text('检查更新'),
+            ])),
+          ],
+        ]);
+      },
+    );
+  }
+
+  // ──── Human-like Mode Section ────
+
+  Widget _buildHumanLikeSection(BuildContext context, AppState state) {
+    final config = state.clickerConfig;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        const Text('启用拟人模式', style: TextStyle(fontSize: 13)),
+        const Spacer(),
+        ToggleSwitch(
+          checked: config.humanLikeEnabled,
+          onChanged: (v) => state.setClickerConfig(config.copyWith(
+            humanLikeEnabled: v,
+            smartDelayEnabled: v || config.smartDelayEnabled,
+            randomOffsetEnabled: v || config.randomOffsetEnabled,
+          )),
+        ),
+      ]),
+      if (config.humanLikeEnabled) ...[
+        const SizedBox(height: 12),
+        const Divider(),
+        const SizedBox(height: 8),
+        // Random offset — shared with main page
+        Row(children: [
+          const Text('随机偏移', style: TextStyle(fontSize: 12)),
+          const Spacer(),
+          ToggleSwitch(
+            checked: config.randomOffsetEnabled,
+            onChanged: (v) => state.setClickerConfig(config.copyWith(randomOffsetEnabled: v)),
+          ),
+        ]),
+        if (config.randomOffsetEnabled) Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Row(children: [
+            const SizedBox(width: 80, child: Text('偏移范围:', style: TextStyle(fontSize: 11))),
+            SizedBox(width: 60, child: TextBox(
+              controller: TextEditingController(text: config.randomOffsetMinPx.toString()),
+              placeholder: '1',
+              onChanged: (v) { final p = int.tryParse(v); if (p != null && p > 0) state.setClickerConfig(config.copyWith(randomOffsetMinPx: p)); },
+            )),
+            const SizedBox(width: 4),
+            const Text('-', style: TextStyle(fontSize: 12)),
+            const SizedBox(width: 4),
+            SizedBox(width: 60, child: TextBox(
+              controller: TextEditingController(text: config.randomOffsetMaxPx.toString()),
+              placeholder: '5',
+              onChanged: (v) { final p = int.tryParse(v); if (p != null && p > 0) state.setClickerConfig(config.copyWith(randomOffsetMaxPx: p)); },
+            )),
+            const SizedBox(width: 4),
+            const Text('px', style: TextStyle(fontSize: 11)),
+          ]),
+        ),
+        const SizedBox(height: 6),
+        // Random delay — shared with main page
+        Row(children: [
+          const Text('随机延迟', style: TextStyle(fontSize: 12)),
+          const Spacer(),
+          ToggleSwitch(
+            checked: config.smartDelayEnabled,
+            onChanged: (v) => state.setClickerConfig(config.copyWith(smartDelayEnabled: v)),
+          ),
+        ]),
+        if (config.smartDelayEnabled) Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Row(children: [
+            const SizedBox(width: 80, child: Text('延迟范围:', style: TextStyle(fontSize: 11))),
+            SizedBox(width: 60, child: TextBox(
+              controller: TextEditingController(text: config.randomDelayMinMs.toString()),
+              placeholder: '10',
+              onChanged: (v) { final p = int.tryParse(v); if (p != null && p > 0) state.setClickerConfig(config.copyWith(randomDelayMinMs: p)); },
+            )),
+            const SizedBox(width: 4),
+            const Text('-', style: TextStyle(fontSize: 12)),
+            const SizedBox(width: 4),
+            SizedBox(width: 60, child: TextBox(
+              controller: TextEditingController(text: config.randomDelayMaxMs.toString()),
+              placeholder: '50',
+              onChanged: (v) { final p = int.tryParse(v); if (p != null && p > 0) state.setClickerConfig(config.copyWith(randomDelayMaxMs: p)); },
+            )),
+            const SizedBox(width: 4),
+            const Text('ms', style: TextStyle(fontSize: 11)),
+          ]),
+        ),
+        const SizedBox(height: 6),
+        // Bezier curve
+        Row(children: [
+          const Text('贝塞尔轨迹', style: TextStyle(fontSize: 12)),
+          const Spacer(),
+          ToggleSwitch(
+            checked: config.humanLikeBezierCurve,
+            onChanged: (v) => state.setClickerConfig(config.copyWith(humanLikeBezierCurve: v)),
+          ),
+        ]),
+        const SizedBox(height: 6),
+        // Random pause
+        Row(children: [
+          const Text('随机暂停', style: TextStyle(fontSize: 12)),
+          const Spacer(),
+          ToggleSwitch(
+            checked: config.humanLikeRandomPause,
+            onChanged: (v) => state.setClickerConfig(config.copyWith(humanLikeRandomPause: v)),
+          ),
+        ]),
+        if (config.humanLikeRandomPause) ...[
+          const SizedBox(height: 6),
+          Row(children: [
+            const SizedBox(width: 80, child: Text('暂停概率:', style: TextStyle(fontSize: 11))),
+            Expanded(child: Slider(
+              value: config.humanLikePauseChance.toDouble(),
+              min: 1, max: 20, divisions: 19,
+              label: '${config.humanLikePauseChance}%',
+              onChanged: (v) => state.setClickerConfig(config.copyWith(humanLikePauseChance: v.round())),
+            )),
+            const SizedBox(width: 8),
+            Text('${config.humanLikePauseChance}%', style: const TextStyle(fontSize: 11)),
+          ]),
+          Row(children: [
+            const SizedBox(width: 80, child: Text('暂停时长:', style: TextStyle(fontSize: 11))),
+            SizedBox(width: 60, child: TextBox(
+              controller: TextEditingController(text: config.humanLikePauseMinMs.toString()),
+              placeholder: '200',
+              onChanged: (v) { final p = int.tryParse(v); if (p != null && p > 0) state.setClickerConfig(config.copyWith(humanLikePauseMinMs: p)); },
+            )),
+            const SizedBox(width: 4),
+            const Text('-', style: TextStyle(fontSize: 12)),
+            const SizedBox(width: 4),
+            SizedBox(width: 60, child: TextBox(
+              controller: TextEditingController(text: config.humanLikePauseMaxMs.toString()),
+              placeholder: '800',
+              onChanged: (v) { final p = int.tryParse(v); if (p != null && p > 0) state.setClickerConfig(config.copyWith(humanLikePauseMaxMs: p)); },
+            )),
+            const SizedBox(width: 4),
+            const Text('ms', style: TextStyle(fontSize: 11)),
+          ]),
+        ],
+      ],
+    ]);
+  }
+
+  // ──── Sound Feedback Section ────
+
+  Widget _buildSoundFeedbackSection(BuildContext context, AppState state) {
+    final config = state.clickerConfig;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        const Text('启用声音反馈', style: TextStyle(fontSize: 13)),
+        const Spacer(),
+        ToggleSwitch(
+          checked: config.soundFeedbackEnabled,
+          onChanged: (v) => state.setClickerConfig(config.copyWith(soundFeedbackEnabled: v)),
+        ),
+      ]),
+      if (config.soundFeedbackEnabled) ...[
+        const SizedBox(height: 12),
+        const Divider(),
+        const SizedBox(height: 8),
+        _buildSoundModuleTile(
+          context: context,
+          state: state,
+          label: '点击音效',
+          icon: FluentIcons.touch,
+          config: config.soundFeedbackClick,
+          onChanged: (sc) => state.setClickerConfig(config.copyWith(soundFeedbackClick: sc)),
+        ),
+        const SizedBox(height: 6),
+        _buildSoundModuleTile(
+          context: context,
+          state: state,
+          label: '按键音效',
+          icon: FluentIcons.keyboard_classic,
+          config: config.soundFeedbackKey,
+          onChanged: (sc) => state.setClickerConfig(config.copyWith(soundFeedbackKey: sc)),
+        ),
+        const SizedBox(height: 6),
+        _buildSoundModuleTile(
+          context: context,
+          state: state,
+          label: '宏音效',
+          icon: FluentIcons.play,
+          config: config.soundFeedbackMacro,
+          onChanged: (sc) => state.setClickerConfig(config.copyWith(soundFeedbackMacro: sc)),
+        ),
+      ],
+    ]);
+  }
+
+  Widget _buildSoundModuleTile({
+    required BuildContext context,
+    required AppState state,
+    required String label,
+    required IconData icon,
+    required SoundConfig config,
+    required ValueChanged<SoundConfig> onChanged,
+  }) {
+    final theme = FluentTheme.of(context);
+    final accent = theme.accentColor;
+    final isDark = theme.brightness == Brightness.dark;
+    final bgColor = isDark ? const Color(0xFF1A1A2E) : const Color(0xFFF5F5FA);
+    return Expander(
+      initiallyExpanded: false,
+      header: Row(children: [
+        Icon(icon, size: 14, color: accent.withValues(alpha: 0.7)),
+        const SizedBox(width: 8),
+        Text(label, style: const TextStyle(fontSize: 13)),
+        const Spacer(),
+        // Quick toggle: enable/disable this module
+        ToggleSwitch(
+          checked: config.enabled,
+          onChanged: (v) => onChanged(SoundConfig(
+            startEnabled: v,
+            endEnabled: v ? config.endEnabled : false,
+            startPath: config.startPath,
+            endPath: config.endPath,
+          )),
+        ),
+      ]),
+      content: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // Start sound
+        _buildSoundItemRow(
+          context: context,
+          label: '开始音效',
+          enabled: config.startEnabled,
+          path: config.startPath,
+          onEnabledChanged: (v) => onChanged(config.copyWith(startEnabled: v)),
+          onPathChanged: (p) => onChanged(config.copyWith(startPath: p)),
+        ),
+        const SizedBox(height: 8),
+        const Divider(style: DividerThemeData(horizontalMargin: EdgeInsets.zero)),
+        const SizedBox(height: 8),
+        // End sound
+        _buildSoundItemRow(
+          context: context,
+          label: '结束音效',
+          enabled: config.endEnabled,
+          path: config.endPath,
+          onEnabledChanged: (v) => onChanged(config.copyWith(endEnabled: v)),
+          onPathChanged: (p) => onChanged(config.copyWith(endPath: p)),
+        ),
+      ]),
+    );
+  }
+
+  Widget _buildSoundItemRow({
+    required BuildContext context,
+    required String label,
+    required bool enabled,
+    required String path,
+    required ValueChanged<bool> onEnabledChanged,
+    required ValueChanged<String> onPathChanged,
+  }) {
+    final theme = FluentTheme.of(context);
+    final accent = theme.accentColor;
+    final isDark = theme.brightness == Brightness.dark;
+    final subtitleColor = isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A);
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Checkbox(checked: enabled, onChanged: (v) => onEnabledChanged(v ?? false)),
+        const SizedBox(width: 8),
+        Text(label, style: const TextStyle(fontSize: 12)),
+        const Spacer(),
+        if (enabled) ...[
+          // File picker button
+          HyperlinkButton(
+            onPressed: () => _pickSoundFile(onPathChanged),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(FluentIcons.open_file, size: 12, color: accent),
+              const SizedBox(width: 4),
+              Text(path.isEmpty ? '默认系统音效' : '自定义', style: TextStyle(fontSize: 11, color: path.isEmpty ? subtitleColor : accent)),
+            ]),
+          ),
+          if (path.isNotEmpty) ...[
+            HyperlinkButton(
+              onPressed: () => onPathChanged(''),
+              child: Text('重置', style: TextStyle(fontSize: 11, color: Colors.red)),
+            ),
+          ],
+        ],
+      ]),
+      if (enabled && path.isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(left: 36, top: 2),
+          child: Text(path, style: TextStyle(fontSize: 10, color: subtitleColor), overflow: TextOverflow.ellipsis),
+        ),
+    ]);
+  }
+
+  Future<void> _pickSoundFile(ValueChanged<String> onPicked) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.audio,
+      allowMultiple: false,
+      dialogTitle: '选择音效文件',
+    );
+    if (result != null && result.files.single.path != null) {
+      onPicked(result.files.single.path!);
+    }
+  }
+
+  void _launchUrl(String url) {
+    if (Platform.isWindows) {
+      Process.run('cmd', ['/c', 'start', url]);
     }
   }
 

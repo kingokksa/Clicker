@@ -259,8 +259,18 @@ class HomeScreenState extends State<HomeScreen> with WindowListener {
 
     _getOrCreatePage(_currentPageId);
 
-    final currentPage = _lazyPages[_currentPageId]?.widget ?? const SizedBox.shrink();
     final currentIndex = _pageIdToIndex(_currentPageId);
+
+    // Build all pages in order for IndexedStack
+    final allPageIds = <String>['clicker'];
+    for (final p in plugins) allPageIds.add(p.manifest.id);
+    allPageIds.add('plugin_center');
+    allPageIds.add('settings');
+
+    final pages = allPageIds.map((id) {
+      _getOrCreatePage(id);
+      return _lazyPages[id]?.widget ?? const SizedBox.shrink();
+    }).toList();
 
     return DragToResizeArea(
       resizeEdgeSize: 6,
@@ -268,18 +278,12 @@ class HomeScreenState extends State<HomeScreen> with WindowListener {
         _GlassTitleBar(isDark: isDark, isMaximized: _isMaximized, onFloatingMode: _switchToFloating, animations: appState.uiAnimations),
         Expanded(child: Row(children: [
           _buildSidebar(isDark, plugins, currentIndex),
-          // Page content — rendered directly without AnimatedSwitcher
+          // Page content — IndexedStack keeps all pages alive (no dispose on switch)
           Expanded(child: ColoredBox(
             color: FluentTheme.of(context).scaffoldBackgroundColor,
-            child: AnimatedSwitcher(
-              duration: appState.uiAnimations ? const Duration(milliseconds: 200) : Duration.zero,
-              switchInCurve: Curves.easeOutCubic,
-              switchOutCurve: Curves.easeInCubic,
-              transitionBuilder: (child, animation) => FadeTransition(
-                opacity: animation,
-                child: child,
-              ),
-              child: KeyedSubtree(key: ValueKey(_currentPageId), child: currentPage),
+            child: IndexedStack(
+              index: currentIndex,
+              children: pages,
             ),
           )),
         ])),

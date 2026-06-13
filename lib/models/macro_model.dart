@@ -15,7 +15,9 @@ enum MacroEventType {
 
 class MacroEvent {
   final MacroEventType type;
-  final int timestampMs; // ms since recording started
+  final int timestampMs; // ms since recording started (absolute)
+  final int holdMs; // how long to hold this action (ms), e.g. mouse click duration
+  final int waitMs; // wait time after this action before next step (ms)
   final String? button; // left | right | middle (for click)
   final int? x;
   final int? y;
@@ -26,6 +28,8 @@ class MacroEvent {
   const MacroEvent({
     required this.type,
     required this.timestampMs,
+    this.holdMs = 0,
+    this.waitMs = 0,
     this.button,
     this.x,
     this.y,
@@ -38,6 +42,8 @@ class MacroEvent {
     return MacroEvent(
       type: MacroEventType.values.firstWhere((e) => e.name == json['type']),
       timestampMs: json['timestampMs'] ?? 0,
+      holdMs: json['holdMs'] ?? 0,
+      waitMs: json['waitMs'] ?? 0,
       button: json['button'],
       x: json['x'],
       y: json['y'],
@@ -50,6 +56,8 @@ class MacroEvent {
   Map<String, dynamic> toJson() => {
         'type': type.name,
         'timestampMs': timestampMs,
+        if (holdMs > 0) 'holdMs': holdMs,
+        if (waitMs > 0) 'waitMs': waitMs,
         if (button != null) 'button': button,
         if (x != null) 'x': x,
         if (y != null) 'y': y,
@@ -57,6 +65,34 @@ class MacroEvent {
         if (scrollDx != null) 'scrollDx': scrollDx,
         if (scrollDy != null) 'scrollDy': scrollDy,
       };
+
+  MacroEvent copyWith({
+    MacroEventType? type,
+    int? timestampMs,
+    int? holdMs,
+    int? waitMs,
+    Object? button = _notProvided,
+    int? x,
+    int? y,
+    Object? key = _notProvided,
+    double? scrollDx,
+    double? scrollDy,
+  }) {
+    return MacroEvent(
+      type: type ?? this.type,
+      timestampMs: timestampMs ?? this.timestampMs,
+      holdMs: holdMs ?? this.holdMs,
+      waitMs: waitMs ?? this.waitMs,
+      button: button == _notProvided ? this.button : button as String?,
+      x: x ?? this.x,
+      y: y ?? this.y,
+      key: key == _notProvided ? this.key : key as String?,
+      scrollDx: scrollDx ?? this.scrollDx,
+      scrollDy: scrollDy ?? this.scrollDy,
+    );
+  }
+
+  static const _notProvided = Object();
 }
 
 class MacroModel {
@@ -72,6 +108,8 @@ class MacroModel {
   int backgroundTargetX; // Client area X for background mode
   int backgroundTargetY; // Client area Y for background mode
   String backgroundTargetWindowTitle; // Target window title (for display)
+  bool soundEnabled; // Whether to play sound feedback for this macro
+  bool enabled; // Whether this macro is active (hotkey triggerable)
 
   MacroModel({
     required this.id,
@@ -86,6 +124,8 @@ class MacroModel {
     this.backgroundTargetX = 0,
     this.backgroundTargetY = 0,
     this.backgroundTargetWindowTitle = '',
+    this.soundEnabled = true,
+    this.enabled = true,
   })  : events = events ?? [],
         createdAt = createdAt ?? DateTime.now();
 
@@ -113,6 +153,8 @@ class MacroModel {
       backgroundTargetX: json['backgroundTargetX'] ?? 0,
       backgroundTargetY: json['backgroundTargetY'] ?? 0,
       backgroundTargetWindowTitle: json['backgroundTargetWindowTitle'] ?? '',
+      soundEnabled: json['soundEnabled'] ?? true,
+      enabled: json['enabled'] ?? true,
     );
   }
 
@@ -129,6 +171,8 @@ class MacroModel {
         'backgroundTargetX': backgroundTargetX,
         'backgroundTargetY': backgroundTargetY,
         'backgroundTargetWindowTitle': backgroundTargetWindowTitle,
+        if (!soundEnabled) 'soundEnabled': soundEnabled,
+        if (!enabled) 'enabled': enabled,
       };
 
   String toJsonString() => jsonEncode(toJson());
@@ -148,6 +192,8 @@ class MacroModel {
     int? backgroundTargetX,
     int? backgroundTargetY,
     String? backgroundTargetWindowTitle,
+    bool? soundEnabled,
+    bool? enabled,
   }) {
     return MacroModel(
       id: id,
@@ -162,6 +208,8 @@ class MacroModel {
       backgroundTargetX: backgroundTargetX ?? this.backgroundTargetX,
       backgroundTargetY: backgroundTargetY ?? this.backgroundTargetY,
       backgroundTargetWindowTitle: backgroundTargetWindowTitle ?? this.backgroundTargetWindowTitle,
+      soundEnabled: soundEnabled ?? this.soundEnabled,
+      enabled: enabled ?? this.enabled,
     );
   }
 

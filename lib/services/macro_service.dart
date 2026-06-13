@@ -3,11 +3,46 @@
 library;
 
 import 'dart:async';
+import 'dart:ffi';
+import 'dart:io';
 import '../models/clicker_config.dart';
 import '../models/macro_model.dart';
 import 'platform/platform_input.dart';
 import 'platform/windows_input.dart';
 import 'plugin_registry.dart';
+import 'package:audioplayers/audioplayers.dart';
+
+/// Play a system sound via Win32 MessageBeep
+void _playSystemSound() {
+  if (!Platform.isWindows) return;
+  final user32 = DynamicLibrary.open('user32.dll');
+  final messageBeep = user32.lookupFunction<Int32 Function(Int32), int Function(int)>('MessageBeep');
+  messageBeep(0);
+}
+
+/// Shared audio player for macro sounds
+final AudioPlayer _macroAudioPlayer = AudioPlayer();
+
+/// Play a sound based on SoundConfig
+Future<void> _playMacroSound(SoundConfig config, {required bool isStart}) async {
+  final enabled = isStart ? config.startEnabled : config.endEnabled;
+  if (!enabled) return;
+  final path = isStart ? config.startPath : config.endPath;
+  if (path.isEmpty) {
+    _playSystemSound();
+  } else {
+    try {
+      final file = File(path);
+      if (await file.exists()) {
+        await _macroAudioPlayer.play(DeviceFileSource(path));
+      } else {
+        _playSystemSound();
+      }
+    } catch (_) {
+      _playSystemSound();
+    }
+  }
+}
 
 enum MacroStatus { idle, recording, paused, playing }
 
@@ -360,6 +395,14 @@ class MacroService {
     onStatusChanged?.call(_status);
     _currentRepeat = 0;
 
+    // Play macro start sound
+    if (macro.soundEnabled) {
+      final config = getConfig?.call();
+      if (config != null && config.soundFeedbackEnabled) {
+        _playMacroSound(config.soundFeedbackMacro, isStart: true);
+      }
+    }
+
     await _executePlayback();
   }
 
@@ -384,9 +427,16 @@ class MacroService {
 
         // Calculate delay from previous event
         if (i > 0) {
-          final delay = ((event.timestampMs - events[i - 1].timestampMs) *
-                  speedMultiplier)
-              .round();
+          final prevEvent = events[i - 1];
+          // Use waitMs from previous event if set, otherwise fall back to timestampMs difference
+          int delay;
+          if (prevEvent.waitMs > 0) {
+            delay = (prevEvent.waitMs * speedMultiplier).round();
+          } else {
+            delay = ((event.timestampMs - events[i - 1].timestampMs) *
+                    speedMultiplier)
+                .round();
+          }
           if (delay > 0) {
             await Future.delayed(Duration(milliseconds: delay));
           }
@@ -394,8 +444,25 @@ class MacroService {
 
         if (_status != MacroStatus.playing) break;
 
-        // Execute event
+        // Check if background target window still exists
+        if (_input is WindowsInput && (_input as WindowsInput).isBackgroundMode) {
+          if (!(_input as WindowsInput).isBackgroundWindowValid()) {
+            onError?.call('目标窗口已关闭，宏已停止');
+            stopPlayback();
+            break;
+          }
+        }
+
+        // Execute event with hold duration
         await _executeEvent(event);
+
+        // Hold duration: wait after executing, before the next step's delay
+        if (event.holdMs > 0) {
+          final holdDelay = (event.holdMs * speedMultiplier).round();
+          if (holdDelay > 0) {
+            await Future.delayed(Duration(milliseconds: holdDelay));
+          }
+        }
       }
     }
 
@@ -462,6 +529,7 @@ class MacroService {
   void stopPlayback() {
     _playbackTimer?.cancel();
     _playbackTimer = null;
+    final macro = _currentMacro;
     _currentMacro = null;
     _currentRepeat = 0;
     final wasPlaying = _status == MacroStatus.playing;
@@ -473,6 +541,13 @@ class MacroService {
     if (wasPlaying) {
       // Release all keys that may be stuck after playback
       _releaseAllKeys();
+      // Play macro end sound
+      if (macro?.soundEnabled ?? false) {
+        final config = getConfig?.call();
+        if (config != null && config.soundFeedbackEnabled) {
+          _playMacroSound(config.soundFeedbackMacro, isStart: false);
+        }
+      }
       onStatusChanged?.call(_status);
     }
   }

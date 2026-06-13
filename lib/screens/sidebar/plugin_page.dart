@@ -118,20 +118,6 @@ class _PluginPageState extends State<PluginPage> {
     List<ClickerPlugin> allPlugins, dynamic config, bool isDark, AppState state,
   ) {
     return [
-      // Core settings (always available)
-      _buildGroup('核心设置', isDark, [
-        _buildCoreToggle(context, icon: FluentIcons.accounts, name: '拟人模式',
-          enabled: config.humanLikeEnabled,
-          onChanged: (v) => state.setClickerConfig(config.copyWith(
-            humanLikeEnabled: v, smartDelayEnabled: v, randomOffsetEnabled: v))),
-        _buildCoreToggle(context, icon: FluentIcons.volume2, name: '声音反馈',
-          enabled: config.soundFeedbackEnabled,
-          onChanged: (v) => state.setClickerConfig(config.copyWith(soundFeedbackEnabled: v))),
-        _buildCoreToggle(context, icon: FluentIcons.chart, name: '统计追踪',
-          enabled: config.statsEnabled,
-          onChanged: (v) => state.setClickerConfig(config.copyWith(statsEnabled: v))),
-      ]),
-
       // Installed plugins grouped by category
       ..._buildCategoryGroups(
         allPlugins.where((p) => p.installed).toList(), isDark),

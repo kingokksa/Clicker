@@ -175,7 +175,7 @@ class HotkeyService {
 
       int nextId = _macroHotkeyBaseId;
       for (final macro in macros) {
-        if (macro.hotkey != null && macro.hotkey!.isNotEmpty) {
+        if (macro.enabled && macro.hotkey != null && macro.hotkey!.isNotEmpty) {
           await winInput.registerHotkey(nextId.toString(), macro.hotkey!);
           _macroHotkeyIds[nextId] = macro.id;
           _macroHotkeys[macro.id] = macro.hotkey!;
