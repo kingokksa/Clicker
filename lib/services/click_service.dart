@@ -10,7 +10,6 @@ import 'dart:io';
 import 'dart:math';
 import 'package:ffi/ffi.dart';
 import 'package:flutter/services.dart';
-import 'package:audioplayers/audioplayers.dart';
 import '../models/clicker_config.dart';
 import 'platform/platform_input.dart';
 import 'platform/windows_input.dart';
@@ -23,12 +22,27 @@ void _playSystemSound() {
   messageBeep(0); // 0 = default beep
 }
 
-/// Audio player instance for custom sound files
-final AudioPlayer _audioPlayer = AudioPlayer();
+/// Play a WAV file via Win32 PlaySound API (winmm.dll).
+/// SND_FILENAME = 0x00020000, SND_ASYNC = 0x0001, SND_NODEFAULT = 0x0002
+void _playWavFile(String path) {
+  if (!Platform.isWindows) return;
+  final winmm = DynamicLibrary.open('winmm.dll');
+  final playSound = winmm.lookupFunction<
+      Int32 Function(Pointer<Utf16> pszSound, IntPtr hmod, Uint32 fdwSound),
+      int Function(Pointer<Utf16> pszSound, int hmod, int fdwSound)
+  >('PlaySoundW');
+  final pathPtr = path.toNativeUtf16();
+  try {
+    // SND_FILENAME | SND_ASYNC | SND_NODEFAULT
+    playSound(pathPtr, 0, 0x00020000 | 0x0001 | 0x0002);
+  } finally {
+    calloc.free(pathPtr);
+  }
+}
 
 /// Play a sound based on SoundConfig.
 /// If path is empty, plays system default beep.
-/// If path is set, plays the custom audio file.
+/// If path is set, plays the custom audio file (WAV).
 Future<void> _playSound(SoundConfig config, {required bool isStart}) async {
   final enabled = isStart ? config.startEnabled : config.endEnabled;
   if (!enabled) return;
@@ -40,7 +54,7 @@ Future<void> _playSound(SoundConfig config, {required bool isStart}) async {
     try {
       final file = File(path);
       if (await file.exists()) {
-        await _audioPlayer.play(DeviceFileSource(path));
+        _playWavFile(path);
       } else {
         _playSystemSound();
       }
