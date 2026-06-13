@@ -7,6 +7,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:archive/archive.dart';
+import 'package:window_manager/window_manager.dart';
 import 'app_paths.dart';
 
 class UpdateService extends ChangeNotifier {
@@ -167,52 +168,76 @@ class UpdateService extends ChangeNotifier {
         sourceDir = topItems.first.path;
       }
 
-      // Create update script that copies files and restarts
-      final scriptPath = '$tempDir${Platform.pathSeparator}apply_update.ps1';
+      // Create a batch script that:
+      // 1. Waits for the app to exit
+      // 2. Copies all files (overwriting existing)
+      // 3. Restarts the app
+      // 4. Cleans up
+      final scriptPath = '$tempDir${Platform.pathSeparator}apply_update.bat';
       final exeName = Platform.resolvedExecutable.split(Platform.pathSeparator).last;
-      final script = '''
-\$sourceDir = "$sourceDir"
-\$appDir = "$appDir"
-\$exeName = "$exeName"
+      final exePath = '$appDir\\$exeName';
 
-# Wait for the app to exit
-Start-Sleep -Seconds 2
+      // Use batch file to avoid PowerShell execution policy issues
+      // and ensure proper process termination
+      final script = '''@echo off
+chcp 65001 >nul
+echo Applying update...
 
-# Copy files, excluding data directory
-Get-ChildItem -Path \$sourceDir -Recurse | Where-Object {
-  \$_.FullName -notlike "*\\data\\*"
-} | ForEach-Object {
-  \$dest = \$_.FullName.Replace(\$sourceDir, \$appDir)
-  if (\$_.PSIsContainer) {
-    if (-not (Test-Path \$dest)) { New-Item -ItemType Directory -Path \$dest -Force | Out-Null }
-  } else {
-    Copy-Item -Path \$_.FullName -Destination \$dest -Force
-  }
-}
+:: Wait for the app to fully exit (up to 30 seconds)
+set WAITED=0
+:waitloop
+tasklist /fi "imagename eq $exeName" 2>nul | find "$exeName" >nul
+if not errorlevel 1 (
+  set /a WAITED+=1
+  if %WAITED% GEQ 30 (
+    echo App did not exit in time, forcing...
+    taskkill /f /im "$exeName" >nul 2>&1
+    timeout /t 2 /nobreak >nul
+    goto copyfiles
+  )
+  timeout /t 1 /nobreak >nul
+  goto waitloop
+)
 
-# Cleanup
-Remove-Item -Path "$extractDir" -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item -Path "$zipPath" -Force -ErrorAction SilentlyContinue
+:copyfiles
+echo Copying files...
+xcopy "$sourceDir\\*" "$appDir\\" /e /y /q
 
-# Restart the app
-Start-Process -FilePath "\$appDir\\\$exeName"
-Remove-Item -Path "$scriptPath" -Force -ErrorAction SilentlyContinue
+echo Cleaning up...
+rd /s /q "$extractDir" 2>nul
+del "$zipPath" 2>nul
+
+echo Starting application...
+start "" "$exePath"
+
+echo Removing update script...
+goto :delete_self
+
+:delete_self
+del "%~f0"
 ''';
       await File(scriptPath).writeAsString(script);
 
-      // Launch the update script and exit
-      final process = await Process.start(
-        'powershell',
-        ['-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', scriptPath],
+      // First, try to close the window gracefully via window_manager
+      // This triggers the onWindowClose handler which saves state
+      try {
+        await windowManager.close();
+      } catch (_) {
+        // If window_manager close fails, force exit
+      }
+
+      // Give a brief moment for graceful shutdown, then launch the updater
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      // Launch the update script in a detached process
+      await Process.start(
+        'cmd',
+        ['/c', 'start', '/min', '', scriptPath],
+        mode: ProcessStartMode.detached,
         runInShell: true,
       );
-      // Don't await - let it run independently
-      process.stdout.drain();
-      process.stderr.drain();
 
-      // Exit the app
-      _downloading = false;
-      notifyListeners();
+      // Force exit the app
       exit(0);
     } catch (e) {
       _updateError = '更新失败: $e';
