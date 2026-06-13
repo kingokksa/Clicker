@@ -5,12 +5,12 @@ library;
 import 'dart:async';
 import 'dart:ffi';
 import 'dart:io';
+import 'package:ffi/ffi.dart';
 import '../models/clicker_config.dart';
 import '../models/macro_model.dart';
 import 'platform/platform_input.dart';
 import 'platform/windows_input.dart';
 import 'plugin_registry.dart';
-import 'package:audioplayers/audioplayers.dart';
 
 /// Play a system sound via Win32 MessageBeep
 void _playSystemSound() {
@@ -20,8 +20,21 @@ void _playSystemSound() {
   messageBeep(0);
 }
 
-/// Shared audio player for macro sounds
-final AudioPlayer _macroAudioPlayer = AudioPlayer();
+/// Play a WAV file via Win32 PlaySound API (winmm.dll).
+void _playWavFile(String path) {
+  if (!Platform.isWindows) return;
+  final winmm = DynamicLibrary.open('winmm.dll');
+  final playSound = winmm.lookupFunction<
+      Int32 Function(Pointer<Utf16> pszSound, IntPtr hmod, Uint32 fdwSound),
+      int Function(Pointer<Utf16> pszSound, int hmod, int fdwSound)
+  >('PlaySoundW');
+  final pathPtr = path.toNativeUtf16();
+  try {
+    playSound(pathPtr, 0, 0x00020000 | 0x0001 | 0x0002);
+  } finally {
+    calloc.free(pathPtr);
+  }
+}
 
 /// Play a sound based on SoundConfig
 Future<void> _playMacroSound(SoundConfig config, {required bool isStart}) async {
@@ -34,7 +47,7 @@ Future<void> _playMacroSound(SoundConfig config, {required bool isStart}) async 
     try {
       final file = File(path);
       if (await file.exists()) {
-        await _macroAudioPlayer.play(DeviceFileSource(path));
+        _playWavFile(path);
       } else {
         _playSystemSound();
       }
