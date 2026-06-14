@@ -61,7 +61,7 @@ enum ClickType { single, double }
 
 enum ClickMode { mouse, keyboard }
 
-enum MouseButton { left, right, middle }
+enum MouseButton { left, right, middle, scrollUp, scrollDown, x1, x2 }
 
 enum PositionMode { current, fixed }
 

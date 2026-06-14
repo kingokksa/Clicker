@@ -112,6 +112,22 @@ class WindowsInput extends PlatformInput {
     String button = 'left',
     bool doubleClick = false,
   }) async {
+    // Handle scroll buttons
+    if (button == 'scrollUp' || button == 'scrollDown') {
+      if (x >= 0 && y >= 0) SetCursorPos(x, y);
+      final dy = button == 'scrollUp' ? 120.0 : -120.0;
+      await mouseScroll(dy: dy);
+      return;
+    }
+    // Handle X buttons (side buttons)
+    if (button == 'x1' || button == 'x2') {
+      if (_backgroundMode && _backgroundHwnd != 0) return; // X buttons not supported in background mode
+      if (x >= 0 && y >= 0) SetCursorPos(x, y);
+      final xData = _xButtonData(button);
+      _sendMouseInput(_down(button), mouseData: xData);
+      _sendMouseInput(_up(button), mouseData: xData);
+      return;
+    }
     if (_backgroundMode && _backgroundHwnd != 0) {
       final btn = button == 'right' ? 1 : (button == 'middle' ? 2 : 0);
       // Use event coordinates if provided, otherwise fall back to fixed background position
@@ -144,6 +160,27 @@ class WindowsInput extends PlatformInput {
 
   @override
   void syncClick({required int x, required int y, String button = 'left'}) {
+    // Handle scroll buttons
+    if (button == 'scrollUp' || button == 'scrollDown') {
+      if (x >= 0 && y >= 0) SetCursorPos(x, y);
+      final dy = button == 'scrollUp' ? 120.0 : -120.0;
+      final p = calloc<INPUT>();
+      p.ref.type = INPUT_MOUSE;
+      p.ref.mi.dwFlags = MOUSE_EVENT_FLAGS(MOUSEEVENTF_WHEEL);
+      p.ref.mi.mouseData = (dy).round();
+      SendInput(1, p, sizeOf<INPUT>());
+      calloc.free(p);
+      return;
+    }
+    // Handle X buttons
+    if (button == 'x1' || button == 'x2') {
+      if (_backgroundMode && _backgroundHwnd != 0) return;
+      if (x >= 0 && y >= 0) SetCursorPos(x, y);
+      final xData = _xButtonData(button);
+      _sendMouseInput(_down(button), mouseData: xData);
+      _sendMouseInput(_up(button), mouseData: xData);
+      return;
+    }
     if (_backgroundMode && _backgroundHwnd != 0) {
       final btn = button == 'right' ? 1 : (button == 'middle' ? 2 : 0);
       final cx = (x > 0 || y > 0) ? x : _backgroundX;
@@ -166,6 +203,12 @@ class WindowsInput extends PlatformInput {
     required int y,
     String button = 'left',
   }) async {
+    if (button == 'x1' || button == 'x2') {
+      if (_backgroundMode && _backgroundHwnd != 0) return;
+      if (x >= 0 && y >= 0) SetCursorPos(x, y);
+      _sendMouseInput(_down(button), mouseData: _xButtonData(button));
+      return;
+    }
     if (_backgroundMode && _backgroundHwnd != 0) {
       final btn = button == 'right' ? 1 : (button == 'middle' ? 2 : 0);
       final cx = (x > 0 || y > 0) ? x : _backgroundX;
@@ -187,6 +230,12 @@ class WindowsInput extends PlatformInput {
     required int y,
     String button = 'left',
   }) async {
+    if (button == 'x1' || button == 'x2') {
+      if (_backgroundMode && _backgroundHwnd != 0) return;
+      if (x >= 0 && y >= 0) SetCursorPos(x, y);
+      _sendMouseInput(_up(button), mouseData: _xButtonData(button));
+      return;
+    }
     if (_backgroundMode && _backgroundHwnd != 0) {
       final btn = button == 'right' ? 1 : (button == 'middle' ? 2 : 0);
       final cx = (x > 0 || y > 0) ? x : _backgroundX;
@@ -217,23 +266,31 @@ class WindowsInput extends PlatformInput {
   MOUSE_EVENT_FLAGS _down(String b) => switch (b) {
         'right' => MOUSE_EVENT_FLAGS(MOUSEEVENTF_RIGHTDOWN),
         'middle' => MOUSE_EVENT_FLAGS(MOUSEEVENTF_MIDDLEDOWN),
+        'x1' => MOUSE_EVENT_FLAGS(MOUSEEVENTF_XDOWN),
+        'x2' => MOUSE_EVENT_FLAGS(MOUSEEVENTF_XDOWN),
         _ => MOUSE_EVENT_FLAGS(MOUSEEVENTF_LEFTDOWN),
       };
 
   MOUSE_EVENT_FLAGS _up(String b) => switch (b) {
         'right' => MOUSE_EVENT_FLAGS(MOUSEEVENTF_RIGHTUP),
         'middle' => MOUSE_EVENT_FLAGS(MOUSEEVENTF_MIDDLEUP),
+        'x1' => MOUSE_EVENT_FLAGS(MOUSEEVENTF_XUP),
+        'x2' => MOUSE_EVENT_FLAGS(MOUSEEVENTF_XUP),
         _ => MOUSE_EVENT_FLAGS(MOUSEEVENTF_LEFTUP),
       };
 
-  void _sendMouseInput(MOUSE_EVENT_FLAGS flags) {
+  /// Get the X button mouseData value for XDOWN/XUP events
+  int _xButtonData(String b) => b == 'x2' ? 2 : 1;
+
+  void _sendMouseInput(MOUSE_EVENT_FLAGS flags, {int mouseData = 0}) {
     final p = calloc<INPUT>();
     p.ref.type = INPUT_MOUSE;
     p.ref.mi.dwFlags = flags;
+    p.ref.mi.mouseData = mouseData;
     final result = SendInput(1, p, sizeOf<INPUT>());
     calloc.free(p);
     if (result == 0) {
-      _mouseEventFallback(flags);
+      _mouseEventFallback(flags, mouseData);
     }
   }
 
@@ -242,8 +299,8 @@ class WindowsInput extends PlatformInput {
       Void Function(Uint32, Int32, Int32, Uint32, IntPtr),
       void Function(int, int, int, int, int)>('mouse_event');
 
-  void _mouseEventFallback(int flags) {
-    _mouseEventPtr(flags, 0, 0, 0, 0);
+  void _mouseEventFallback(int flags, [int mouseData = 0]) {
+    _mouseEventPtr(flags, 0, 0, mouseData, 0);
   }
 
   // ── Keyboard ─────────────────────────────────────────────

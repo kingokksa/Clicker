@@ -503,8 +503,12 @@ class _ClickerPageState extends State<ClickerPage> {
   // ─── Mouse Button ─────────────────────────────────────────
 
   Widget _buildMouseButtonSelector(ClickerConfig config, AppState state, FluentThemeData theme) {
-    final labels = {MouseButton.left: '左键', MouseButton.right: '右键', MouseButton.middle: '中键'};
-    return Wrap(spacing: 6, children: MouseButton.values.map((btn) =>
+    final labels = {
+      MouseButton.left: '左键', MouseButton.right: '右键', MouseButton.middle: '中键',
+      MouseButton.scrollUp: '滚轮上', MouseButton.scrollDown: '滚轮下',
+      MouseButton.x1: '侧键1', MouseButton.x2: '侧键2',
+    };
+    return Wrap(spacing: 6, runSpacing: 4, children: MouseButton.values.map((btn) =>
       _selectChip(labels[btn]!, config.mouseButton == btn,
         () => state.setClickerConfig(config.copyWith(mouseButton: btn))),
     ).toList());

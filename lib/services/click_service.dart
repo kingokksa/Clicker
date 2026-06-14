@@ -235,7 +235,11 @@ class ClickService {
     int x = _config.positionMode == PositionMode.fixed ? _config.fixedX : -1;
     int y = _config.positionMode == PositionMode.fixed ? _config.fixedY : -1;
     int button = _config.mouseButton == MouseButton.right ? 1
-        : (_config.mouseButton == MouseButton.middle ? 2 : 0);
+        : (_config.mouseButton == MouseButton.middle ? 2
+        : (_config.mouseButton == MouseButton.x1 ? 3
+        : (_config.mouseButton == MouseButton.x2 ? 4
+        : (_config.mouseButton == MouseButton.scrollUp ? 5
+        : (_config.mouseButton == MouseButton.scrollDown ? 6 : 0)))));
     int targetCount = _targetCount > 0 ? _targetCount : -1;
     int intervalUs = (_config.intervalMs * 1000).round();
     if (intervalUs < 10000) intervalUs = 10000;

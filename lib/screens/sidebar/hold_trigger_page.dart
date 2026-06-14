@@ -164,6 +164,8 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
     switch (btn) {
       case 'right': return '右键';
       case 'middle': return '中键';
+      case 'x1': return '侧键1';
+      case 'x2': return '侧键2';
       default: return '左键';
     }
   }
@@ -328,11 +330,13 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
               Text('触发鼠标按键', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80))),
               const SizedBox(height: 6),
               ComboBox<String>(
-                value: ['left', 'right', 'middle'].contains(triggerMouseButton) ? triggerMouseButton : 'left',
+                value: ['left', 'right', 'middle', 'x1', 'x2'].contains(triggerMouseButton) ? triggerMouseButton : 'left',
                 items: const [
                   ComboBoxItem(value: 'left', child: Text('左键')),
                   ComboBoxItem(value: 'right', child: Text('右键')),
                   ComboBoxItem(value: 'middle', child: Text('中键')),
+                  ComboBoxItem(value: 'x1', child: Text('侧键1')),
+                  ComboBoxItem(value: 'x2', child: Text('侧键2')),
                 ],
                 onChanged: (v) {
                   if (v != null) setDialogState(() => triggerMouseButton = v);
@@ -363,11 +367,13 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
               Text('鼠标按键', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80))),
               const SizedBox(height: 6),
               ComboBox<String>(
-                value: ['left', 'right', 'middle'].contains(mouseButton) ? mouseButton : 'left',
+                value: ['left', 'right', 'middle', 'x1', 'x2'].contains(mouseButton) ? mouseButton : 'left',
                 items: const [
                   ComboBoxItem(value: 'left', child: Text('左键')),
                   ComboBoxItem(value: 'right', child: Text('右键')),
                   ComboBoxItem(value: 'middle', child: Text('中键')),
+                  ComboBoxItem(value: 'x1', child: Text('侧键1')),
+                  ComboBoxItem(value: 'x2', child: Text('侧键2')),
                 ],
                 onChanged: (v) {
                   if (v != null) setDialogState(() => mouseButton = v);
