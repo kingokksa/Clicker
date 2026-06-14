@@ -458,22 +458,39 @@ static void SendHoldTriggerAction(HoldTriggerEntry* entry) {
     }
   } else {
     if (entry->background_mode && entry->target_hwnd) {
+      // Scroll not supported in background mode
+      if (entry->mouse_button >= 5) return;
       LPARAM lp = MAKELPARAM(static_cast<WORD>(entry->client_x),
                               static_cast<WORD>(entry->client_y));
       UINT msg_down = WM_LBUTTONDOWN, msg_up = WM_LBUTTONUP;
+      WPARAM wp = MK_LBUTTON;
       if (entry->mouse_button == 1) { msg_down = WM_RBUTTONDOWN; msg_up = WM_RBUTTONUP; }
       else if (entry->mouse_button == 2) { msg_down = WM_MBUTTONDOWN; msg_up = WM_MBUTTONUP; }
-      PostMessage(entry->target_hwnd, msg_down, MK_LBUTTON, lp);
+      else if (entry->mouse_button == 3 || entry->mouse_button == 4) {
+        msg_down = WM_XBUTTONDOWN; msg_up = WM_XBUTTONUP;
+        wp = MAKELPARAM((entry->mouse_button == 4) ? XBUTTON2 : XBUTTON1, 0);
+      }
+      PostMessage(entry->target_hwnd, msg_down, wp, lp);
       PostMessage(entry->target_hwnd, msg_up, 0, lp);
       return;
     }
 
+    // Handle scroll
+    if (entry->mouse_button == 5 || entry->mouse_button == 6) {
+      int delta = (entry->mouse_button == 5) ? 120 : -120;
+      mouse_event(MOUSEEVENTF_WHEEL, 0, 0, (DWORD)delta, 0);
+      return;
+    }
+
     DWORD flags_down = MOUSEEVENTF_LEFTDOWN, flags_up = MOUSEEVENTF_LEFTUP;
+    DWORD mouse_data = 0;
     if (entry->mouse_button == 1) { flags_down = MOUSEEVENTF_RIGHTDOWN; flags_up = MOUSEEVENTF_RIGHTUP; }
     else if (entry->mouse_button == 2) { flags_down = MOUSEEVENTF_MIDDLEDOWN; flags_up = MOUSEEVENTF_MIDDLEUP; }
+    else if (entry->mouse_button == 3) { flags_down = MOUSEEVENTF_XDOWN; flags_up = MOUSEEVENTF_XUP; mouse_data = XBUTTON1; }
+    else if (entry->mouse_button == 4) { flags_down = MOUSEEVENTF_XDOWN; flags_up = MOUSEEVENTF_XUP; mouse_data = XBUTTON2; }
 
-    mouse_event(flags_down, 0, 0, 0, 0);
-    mouse_event(flags_up, 0, 0, 0, 0);
+    mouse_event(flags_down, 0, 0, mouse_data, 0);
+    mouse_event(flags_up, 0, 0, mouse_data, 0);
   }
 }
 
@@ -3166,6 +3183,7 @@ LRESULT CALLBACK FlutterWindow::MouseHookProc(int code, WPARAM wparam, LPARAM lp
       if (wparam == WM_LBUTTONDOWN || wparam == WM_LBUTTONUP ||
           wparam == WM_RBUTTONDOWN || wparam == WM_RBUTTONUP ||
           wparam == WM_MBUTTONDOWN || wparam == WM_MBUTTONUP ||
+          wparam == WM_XBUTTONDOWN || wparam == WM_XBUTTONUP ||
           wparam == WM_MOUSEWHEEL || wparam == WM_MOUSEHWHEEL) {
         DWORD elapsed = GetTickCount() - self->record_start_tick_;
         int message = static_cast<int>(wparam);
@@ -3525,6 +3543,11 @@ static void SendOneClick() {
   }
 
   if (g_clicker.background_mode && g_clicker.target_hwnd) {
+    // Scroll buttons not supported in background mode
+    if (g_clicker.button >= 5) {
+      g_clicker.click_count++;
+      return;
+    }
     LPARAM lp = MAKELPARAM(static_cast<WORD>(g_clicker.client_x),
                             static_cast<WORD>(g_clicker.client_y));
     WPARAM wp = MK_LBUTTON;
@@ -3534,6 +3557,10 @@ static void SendOneClick() {
       msg_down = WM_RBUTTONDOWN; msg_up = WM_RBUTTONUP;
     } else if (g_clicker.button == 2) {
       msg_down = WM_MBUTTONDOWN; msg_up = WM_MBUTTONUP;
+    } else if (g_clicker.button == 3 || g_clicker.button == 4) {
+      // X buttons (side buttons) — use WM_XBUTTONDOWN/UP
+      msg_down = WM_XBUTTONDOWN; msg_up = WM_XBUTTONUP;
+      wp = MAKELPARAM((g_clicker.button == 4) ? XBUTTON2 : XBUTTON1, 0);
     }
     PostMessage(g_clicker.target_hwnd, msg_down, wp, lp);
     PostMessage(g_clicker.target_hwnd, msg_up, 0, lp);
@@ -3546,17 +3573,29 @@ static void SendOneClick() {
       SetCursorPos(g_clicker.x, g_clicker.y);
     }
 
+    // Handle scroll buttons
+    if (g_clicker.button == 5 || g_clicker.button == 6) {
+      // 5 = scrollUp, 6 = scrollDown
+      int delta = (g_clicker.button == 5) ? 120 : -120;
+      mouse_event(MOUSEEVENTF_WHEEL, 0, 0, (DWORD)delta, 0);
+      g_clicker.click_count++;
+      return;
+    }
+
     DWORD flags_down = MOUSEEVENTF_LEFTDOWN;
     DWORD flags_up = MOUSEEVENTF_LEFTUP;
+    DWORD mouse_data = 0;
     if (g_clicker.button == 1) { flags_down = MOUSEEVENTF_RIGHTDOWN; flags_up = MOUSEEVENTF_RIGHTUP; }
     else if (g_clicker.button == 2) { flags_down = MOUSEEVENTF_MIDDLEDOWN; flags_up = MOUSEEVENTF_MIDDLEUP; }
+    else if (g_clicker.button == 3) { flags_down = MOUSEEVENTF_XDOWN; flags_up = MOUSEEVENTF_XUP; mouse_data = XBUTTON1; }
+    else if (g_clicker.button == 4) { flags_down = MOUSEEVENTF_XDOWN; flags_up = MOUSEEVENTF_XUP; mouse_data = XBUTTON2; }
 
     if (g_clicker.self_hwnd && g_perform_click_msg) {
       WPARAM wp2 = (WPARAM)((0 << 16) | (flags_down & 0xFFFF));
       PostMessage(g_clicker.self_hwnd, g_perform_click_msg, wp2, (LPARAM)flags_up);
     } else {
-      mouse_event(flags_down, 0, 0, 0, 0);
-      mouse_event(flags_up, 0, 0, 0, 0);
+      mouse_event(flags_down, 0, 0, mouse_data, 0);
+      mouse_event(flags_up, 0, 0, mouse_data, 0);
     }
   }
 

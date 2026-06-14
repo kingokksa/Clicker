@@ -210,11 +210,9 @@ del "$zipPath" 2>nul
 echo Starting application...
 start "" "$exePath"
 
-echo Removing update script...
-goto :delete_self
-
-:delete_self
-del "%~f0"
+:: Self-delete via a new cmd process to avoid "batch file cannot be found" error
+cmd /c "timeout /t 2 /nobreak >nul & del "%~f0""
+exit
 ''';
       await File(scriptPath).writeAsString(script);
 

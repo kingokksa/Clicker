@@ -420,6 +420,14 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener, Si
                                 _chip('中', config.mouseButton == MouseButton.middle, () {
                                   state.setClickerConfig(config.copyWith(mouseButton: MouseButton.middle));
                                 }, isDark, accent),
+                                const SizedBox(width: 3),
+                                _chip('↑', config.mouseButton == MouseButton.scrollUp, () {
+                                  state.setClickerConfig(config.copyWith(mouseButton: MouseButton.scrollUp));
+                                }, isDark, accent),
+                                const SizedBox(width: 3),
+                                _chip('↓', config.mouseButton == MouseButton.scrollDown, () {
+                                  state.setClickerConfig(config.copyWith(mouseButton: MouseButton.scrollDown));
+                                }, isDark, accent),
                                 const Spacer(),
                                 Text('类型', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: textSecondary,
                                   fontFamily: 'Segoe UI Variable, Segoe UI, Microsoft YaHei UI')),

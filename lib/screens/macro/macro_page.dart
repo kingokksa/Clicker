@@ -547,7 +547,7 @@ class MacroPage extends StatelessWidget {
         final delayMs = (1.0 / macro.speed).round();
         switch (event.type) {
           case MacroEventType.mouseDown:
-            final btn = event.button == 'right' ? 'R' : (event.button == 'middle' ? 'M' : '');
+            final btn = event.button == 'right' ? 'R' : (event.button == 'middle' ? 'M' : (event.button == 'x1' ? 'X1' : (event.button == 'x2' ? 'X2' : '')));
             if (event.x != null && event.y != null) {
               buf.writeln('Click, $btn${event.x}, ${event.y}, D');
             } else {
@@ -555,7 +555,7 @@ class MacroPage extends StatelessWidget {
             }
             break;
           case MacroEventType.mouseUp:
-            final btn = event.button == 'right' ? 'R' : (event.button == 'middle' ? 'M' : '');
+            final btn = event.button == 'right' ? 'R' : (event.button == 'middle' ? 'M' : (event.button == 'x1' ? 'X1' : (event.button == 'x2' ? 'X2' : '')));
             if (event.x != null && event.y != null) {
               buf.writeln('Click, $btn${event.x}, ${event.y}, U');
             } else {
@@ -563,7 +563,7 @@ class MacroPage extends StatelessWidget {
             }
             break;
           case MacroEventType.click:
-            final btn = event.button == 'right' ? 'R' : (event.button == 'middle' ? 'M' : '');
+            final btn = event.button == 'right' ? 'R' : (event.button == 'middle' ? 'M' : (event.button == 'x1' ? 'X1' : (event.button == 'x2' ? 'X2' : '')));
             if (event.x != null && event.y != null) {
               buf.writeln('Click, $btn${event.x}, ${event.y}');
             } else {
@@ -792,16 +792,14 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
   }
 
   String _eventLabel(MacroEvent e) {
+    String btnLabel(String? btn) => btn == 'right' ? '右键' : (btn == 'middle' ? '中键' : (btn == 'x1' ? '侧键1' : (btn == 'x2' ? '侧键2' : '左键')));
     switch (e.type) {
       case MacroEventType.mouseDown:
-        final btn = e.button == 'right' ? '右键' : (e.button == 'middle' ? '中键' : '左键');
-        return '$btn按下 (${e.x}, ${e.y})';
+        return '${btnLabel(e.button)}按下 (${e.x}, ${e.y})';
       case MacroEventType.mouseUp:
-        final btn = e.button == 'right' ? '右键' : (e.button == 'middle' ? '中键' : '左键');
-        return '$btn释放 (${e.x}, ${e.y})';
+        return '${btnLabel(e.button)}释放 (${e.x}, ${e.y})';
       case MacroEventType.click:
-        final btn = e.button == 'right' ? '右键' : (e.button == 'middle' ? '中键' : '左键');
-        return '$btn点击 (${e.x}, ${e.y})';
+        return '${btnLabel(e.button)}点击 (${e.x}, ${e.y})';
       case MacroEventType.keyPress:
         return '按下 ${e.key ?? "?"}';
       case MacroEventType.keyRelease:
@@ -810,7 +808,10 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
         final dir = (e.scrollDy ?? 0) > 0 ? '上' : '下';
         return '滚轮$dir';
       case MacroEventType.wait:
-        return '等待';
+        final ms = e.timestampMs;
+        if (ms >= 60000) return '等待 ${(ms / 60000).toStringAsFixed(1)} 分钟';
+        if (ms >= 1000) return '等待 ${(ms / 1000).toStringAsFixed(1)} 秒';
+        return '等待 $ms 毫秒';
     }
   }
 
@@ -907,8 +908,8 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
               const SizedBox(height: 8),
               Row(children: [
                 const SizedBox(width: 50, child: Text('按钮:', style: TextStyle(fontSize: 12))),
-                ...['left', 'right', 'middle'].map((btn) {
-                  final label = btn == 'left' ? '左键' : (btn == 'right' ? '右键' : '中键');
+                ...['left', 'right', 'middle', 'x1', 'x2'].map((btn) {
+                  final label = btn == 'left' ? '左键' : (btn == 'right' ? '右键' : (btn == 'middle' ? '中键' : (btn == 'x1' ? '侧1' : '侧2')));
                   final selected = clickButton == btn;
                   return Padding(padding: const EdgeInsets.only(right: 6), child: GestureDetector(
                     onTap: () => setDialogState(() => clickButton = btn),
@@ -1003,12 +1004,24 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
               Row(children: [
                 const Text('等待时长:', style: TextStyle(fontSize: 13)),
                 const SizedBox(width: 8),
-                Text(waitMs >= 1000 ? '${(waitMs / 1000).toStringAsFixed(1)} 秒' : '$waitMs 毫秒', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                SizedBox(
+                  width: 100,
+                  child: TextBox(
+                    controller: TextEditingController(text: waitMs.toString())
+                      ..selection = TextSelection.collapsed(offset: waitMs.toString().length),
+                    placeholder: '毫秒',
+                    onChanged: (v) {
+                      final val = int.tryParse(v);
+                      if (val != null && val > 0) setDialogState(() => waitMs = val.clamp(1, 600000));
+                    },
+                  ),
+                ),
+                const SizedBox(width: 6),
+                const Text('ms', style: TextStyle(fontSize: 12)),
               ]),
-              Slider(value: waitMs.toDouble(), min: 50, max: 10000, divisions: 199, onChanged: (v) => setDialogState(() => waitMs = v.round())),
               const SizedBox(height: 4),
               Wrap(spacing: 4, runSpacing: 4, children: [
-                ('100ms', 100), ('500ms', 500), ('1秒', 1000), ('2秒', 2000), ('3秒', 3000), ('5秒', 5000),
+                ('100ms', 100), ('500ms', 500), ('1秒', 1000), ('2秒', 2000), ('5秒', 5000), ('10秒', 10000), ('30秒', 30000), ('1分钟', 60000),
               ].map((p) => GestureDetector(
                 onTap: () => setDialogState(() => waitMs = p.$2),
                 child: Container(
@@ -1534,8 +1547,8 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
           const SizedBox(height: 4),
           Row(children: [
             const SizedBox(width: 60, child: Text('按钮:', style: TextStyle(fontSize: 12))),
-            ...['left', 'right', 'middle'].map((btn) {
-              final label = btn == 'left' ? '左键' : (btn == 'right' ? '右键' : '中键');
+            ...['left', 'right', 'middle', 'x1', 'x2'].map((btn) {
+              final label = btn == 'left' ? '左键' : (btn == 'right' ? '右键' : (btn == 'middle' ? '中键' : (btn == 'x1' ? '侧1' : '侧2')));
               final selected = event.button == btn;
               return Padding(padding: const EdgeInsets.only(right: 6), child: MouseRegion(cursor: SystemMouseCursors.click, child: GestureDetector(
                 onTap: () => setState(() {

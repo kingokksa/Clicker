@@ -5,6 +5,7 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'dart:io';
 import 'package:window_manager/window_manager.dart';
 import '../../services/app_state.dart';
@@ -29,8 +30,8 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _loadVersion() async {
-    // Keep in sync with pubspec.yaml version
-    const version = '1.1.0';
+    final info = await PackageInfo.fromPlatform();
+    final version = info.version; // reads from pubspec.yaml automatically
     if (mounted) setState(() => _appVersion = version);
     UpdateService.instance.setCurrentVersion(version);
   }

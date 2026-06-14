@@ -178,6 +178,18 @@ class MacroService {
       } else if (msg == WM_MBUTTONUP) {
         _heldMouseButtons.remove('middle');
         _addEvent(MacroEventType.mouseUp, time, button: 'middle', x: x, y: y);
+      } else if (msg == WM_XBUTTONDOWN) {
+        final mouseData = data['mouseData'] as int? ?? 0;
+        final xbtn = (mouseData >> 16) == 2 ? 'x2' : 'x1';
+        if (!_heldMouseButtons.contains(xbtn)) {
+          _heldMouseButtons.add(xbtn);
+          _addEvent(MacroEventType.mouseDown, time, button: xbtn, x: x, y: y);
+        }
+      } else if (msg == WM_XBUTTONUP) {
+        final mouseData = data['mouseData'] as int? ?? 0;
+        final xbtn = (mouseData >> 16) == 2 ? 'x2' : 'x1';
+        _heldMouseButtons.remove(xbtn);
+        _addEvent(MacroEventType.mouseUp, time, button: xbtn, x: x, y: y);
       } else if (msg == WM_MOUSEWHEEL) {
         final mouseData = data['mouseData'] as int? ?? 0;
         final delta = mouseData >> 16;
@@ -197,6 +209,8 @@ class MacroService {
   static const int WM_RBUTTONUP = 0x0205;
   static const int WM_MBUTTONDOWN = 0x0207;
   static const int WM_MBUTTONUP = 0x0208;
+  static const int WM_XBUTTONDOWN = 0x020B;
+  static const int WM_XBUTTONUP = 0x020C;
   static const int WM_MOUSEWHEEL = 0x020A;
 
   void _addEvent(MacroEventType type, int timestampMs, {String? button, int? x, int? y, String? key, double? scrollDx, double? scrollDy}) {
