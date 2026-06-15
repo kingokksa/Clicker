@@ -97,8 +97,9 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener, Si
     final winH = screen.height;
 
     Edge? nearEdge;
-    if (pos.dx <= _kEdgeHideThreshold) nearEdge = Edge.left;
-    else if (pos.dx + winW >= screenWidth - _kEdgeHideThreshold) nearEdge = Edge.right;
+    if (pos.dx <= _kEdgeHideThreshold) {
+      nearEdge = Edge.left;
+    } else if (pos.dx + winW >= screenWidth - _kEdgeHideThreshold) nearEdge = Edge.right;
     else if (pos.dy <= _kEdgeHideThreshold) nearEdge = Edge.top;
 
     if (nearEdge != null) {
@@ -186,8 +187,9 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener, Si
       final sh = display.size.height / display.devicePixelRatio;
 
       Edge? nearEdge;
-      if (pos.dx <= _kEdgeHideThreshold) nearEdge = Edge.left;
-      else if (pos.dx + size.width >= sw - _kEdgeHideThreshold) nearEdge = Edge.right;
+      if (pos.dx <= _kEdgeHideThreshold) {
+        nearEdge = Edge.left;
+      } else if (pos.dx + size.width >= sw - _kEdgeHideThreshold) nearEdge = Edge.right;
       else if (pos.dy <= _kEdgeHideThreshold) nearEdge = Edge.top;
 
       if (nearEdge != null) {
@@ -670,7 +672,7 @@ class _SimpleSliderState extends State<_SimpleSlider> {
         height: 20,
         alignment: Alignment.center,
         child: CustomPaint(
-          size: Size(double.infinity, 20),
+          size: const Size(double.infinity, 20),
           painter: _SliderPainter(t: t, trackColor: trackColor, activeColor: widget.accent),
         ),
       ),
@@ -688,7 +690,7 @@ class _SliderPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final cy = size.height / 2;
-    final trackR = Radius.circular(2);
+    const trackR = Radius.circular(2);
     canvas.drawRRect(
       RRect.fromRectAndRadius(Rect.fromPoints(Offset(0, cy - 2), Offset(size.width, cy + 2)), trackR),
       Paint()..color = trackColor,

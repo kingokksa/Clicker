@@ -57,13 +57,16 @@ class SoundConfig {
   );
 }
 
-enum ClickType { single, double }
+enum ClickType { single, double, drag, swipe }
 
-enum ClickMode { mouse, keyboard }
+enum ClickMode { mouse, keyboard, touch }
+
+/// Touch gesture types — used on mobile and also available on desktop.
+enum TouchAction { tap, longPress, drag, swipe }
 
 enum MouseButton { left, right, middle, scrollUp, scrollDown, x1, x2 }
 
-enum PositionMode { current, fixed }
+enum PositionMode { current, fixed, pick }
 
 enum ClickRepeatMode { infinite, count, duration }
 
@@ -107,6 +110,19 @@ class ClickerConfig {
   String keyToRepeat;
   bool holdKey;
   KeyActionMode keyActionMode;
+
+  // Touch-specific
+  TouchAction touchAction;
+  int longPressDurationMs; // duration for long press gesture
+  int dragStartX;
+  int dragStartY;
+  int dragEndX;
+  int dragEndY;
+  int swipeStartX;
+  int swipeStartY;
+  int swipeEndX;
+  int swipeEndY;
+  int swipeDurationMs; // duration of swipe gesture
 
   // Key sequence
   List<KeySequenceItem> keySequence;
@@ -189,6 +205,17 @@ class ClickerConfig {
     this.keyToRepeat = 'space',
     this.holdKey = false,
     this.keyActionMode = KeyActionMode.repeat,
+    this.touchAction = TouchAction.tap,
+    this.longPressDurationMs = 500,
+    this.dragStartX = 0,
+    this.dragStartY = 0,
+    this.dragEndX = 0,
+    this.dragEndY = 0,
+    this.swipeStartX = 0,
+    this.swipeStartY = 0,
+    this.swipeEndX = 0,
+    this.swipeEndY = 0,
+    this.swipeDurationMs = 300,
     this.keySequence = const [],
     this.comboKeys = const [],
     this.textToType = '',
@@ -267,6 +294,20 @@ class ClickerConfig {
             (e) => e.name == json['keyActionMode'],
           ) ??
           KeyActionMode.repeat,
+      touchAction: TouchAction.values.firstWhereOrNull(
+            (e) => e.name == json['touchAction'],
+          ) ??
+          TouchAction.tap,
+      longPressDurationMs: json['longPressDurationMs'] ?? 500,
+      dragStartX: json['dragStartX'] ?? 0,
+      dragStartY: json['dragStartY'] ?? 0,
+      dragEndX: json['dragEndX'] ?? 0,
+      dragEndY: json['dragEndY'] ?? 0,
+      swipeStartX: json['swipeStartX'] ?? 0,
+      swipeStartY: json['swipeStartY'] ?? 0,
+      swipeEndX: json['swipeEndX'] ?? 0,
+      swipeEndY: json['swipeEndY'] ?? 0,
+      swipeDurationMs: json['swipeDurationMs'] ?? 300,
       keySequence: (json['keySequence'] as List<dynamic>?)
               ?.map((e) => KeySequenceItem.fromJson(e as Map<String, dynamic>))
               .toList() ??
@@ -345,6 +386,17 @@ class ClickerConfig {
         'keyToRepeat': keyToRepeat,
         'holdKey': holdKey,
         'keyActionMode': keyActionMode.name,
+        'touchAction': touchAction.name,
+        'longPressDurationMs': longPressDurationMs,
+        'dragStartX': dragStartX,
+        'dragStartY': dragStartY,
+        'dragEndX': dragEndX,
+        'dragEndY': dragEndY,
+        'swipeStartX': swipeStartX,
+        'swipeStartY': swipeStartY,
+        'swipeEndX': swipeEndX,
+        'swipeEndY': swipeEndY,
+        'swipeDurationMs': swipeDurationMs,
         'keySequence': keySequence.map((e) => e.toJson()).toList(),
         'comboKeys': comboKeys,
         'textToType': textToType,
@@ -404,6 +456,17 @@ class ClickerConfig {
     String? keyToRepeat,
     bool? holdKey,
     KeyActionMode? keyActionMode,
+    TouchAction? touchAction,
+    int? longPressDurationMs,
+    int? dragStartX,
+    int? dragStartY,
+    int? dragEndX,
+    int? dragEndY,
+    int? swipeStartX,
+    int? swipeStartY,
+    int? swipeEndX,
+    int? swipeEndY,
+    int? swipeDurationMs,
     List<KeySequenceItem>? keySequence,
     List<String>? comboKeys,
     String? textToType,
@@ -462,6 +525,17 @@ class ClickerConfig {
       keyToRepeat: keyToRepeat ?? this.keyToRepeat,
       holdKey: holdKey ?? this.holdKey,
       keyActionMode: keyActionMode ?? this.keyActionMode,
+      touchAction: touchAction ?? this.touchAction,
+      longPressDurationMs: longPressDurationMs ?? this.longPressDurationMs,
+      dragStartX: dragStartX ?? this.dragStartX,
+      dragStartY: dragStartY ?? this.dragStartY,
+      dragEndX: dragEndX ?? this.dragEndX,
+      dragEndY: dragEndY ?? this.dragEndY,
+      swipeStartX: swipeStartX ?? this.swipeStartX,
+      swipeStartY: swipeStartY ?? this.swipeStartY,
+      swipeEndX: swipeEndX ?? this.swipeEndX,
+      swipeEndY: swipeEndY ?? this.swipeEndY,
+      swipeDurationMs: swipeDurationMs ?? this.swipeDurationMs,
       keySequence: keySequence ?? this.keySequence,
       comboKeys: comboKeys ?? this.comboKeys,
       textToType: textToType ?? this.textToType,

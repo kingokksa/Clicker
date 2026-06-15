@@ -13,6 +13,7 @@ import 'package:flutter/services.dart';
 import '../models/clicker_config.dart';
 import 'platform/platform_input.dart';
 import 'platform/windows_input.dart';
+import 'platform/android_input.dart';
 
 /// Play a system sound via Win32 MessageBeep
 void _playSystemSound() {
@@ -70,6 +71,10 @@ class ClickService {
   final PlatformInput _input;
   ClickerConfig _config = ClickerConfig();
   ClickerStatus _status = ClickerStatus.idle;
+
+  /// When true, click actions are skipped but the loop keeps running.
+  /// Used by floating panel to pause clicks while user interacts with it.
+  static bool floatingPanelPaused = false;
 
   int _clickCount = 0;
   int _targetCount = 0;
@@ -138,8 +143,20 @@ class ClickService {
       return;
     }
 
+    // Check accessibility service on Android
+    if (Platform.isAndroid && _input is AndroidInput) {
+      final enabled = await (_input as AndroidInput).isAccessibilityServiceEnabled();
+      if (!enabled) {
+        onError?.call('无障碍服务未开启，请在系统设置中开启');
+        await (_input as AndroidInput).openAccessibilitySettings();
+        return;
+      }
+    }
+
     _clickCount = 0;
     _startTime = DateTime.now();
+    // Clear any emergency stop flag from native layer
+    floatingPanelPaused = false;
 
     switch (_config.repeatMode) {
       case ClickRepeatMode.count:
@@ -159,7 +176,7 @@ class ClickService {
 
     // Set background mode on WindowsInput for Dart timer mode
     if (_input is WindowsInput && isBackgroundMode) {
-      (_input as WindowsInput).setBackgroundMode(
+      (_input).setBackgroundMode(
         true,
         hwnd: _config.targetHwnd,
         x: _config.targetClientX,
@@ -200,7 +217,8 @@ class ClickService {
 
     final baseUs = (_config.intervalMs * 1000).round();
 
-    if (baseUs <= 50000) {
+    // Native fast clicker is only available on Windows
+    if (baseUs <= 50000 && Platform.isWindows) {
       _log('using native fast clicker (base=${baseUs}us)');
       _startNativeFastClicker();
       return;
@@ -211,6 +229,14 @@ class ClickService {
 
     _timer = Timer(Duration(microseconds: delayUs), () async {
       if (_status != ClickerStatus.running) return;
+      // Skip click action while floating panel is being interacted with
+      if (floatingPanelPaused) {
+        // Re-schedule with a small delay to avoid busy-waiting
+        _timer = Timer(const Duration(milliseconds: 50), () {
+          if (_status == ClickerStatus.running) _scheduleClick();
+        });
+        return;
+      }
       try {
         await _performAction();
       } catch (e) {
@@ -356,18 +382,91 @@ class ClickService {
   }
 
   Future<void> _performAction() async {
+    // Double-check pause flag before executing
+    if (floatingPanelPaused) return;
     if (_config.clickMode == ClickMode.keyboard) {
       await _performKeyAction();
+    } else if (_config.clickMode == ClickMode.touch) {
+      await _performTouchAction();
     } else {
-      await _performMouseClick();
+      // Mouse mode — supports click, drag, swipe
+      if (_config.clickType == ClickType.drag) {
+        await _input.mouseDrag(
+          startX: _config.dragStartX, startY: _config.dragStartY,
+          endX: _config.dragEndX, endY: _config.dragEndY,
+          durationMs: _config.swipeDurationMs,
+        );
+      } else if (_config.clickType == ClickType.swipe) {
+        await _input.mouseSwipe(
+          startX: _config.swipeStartX, startY: _config.swipeStartY,
+          endX: _config.swipeEndX, endY: _config.swipeEndY,
+          durationMs: _config.swipeDurationMs,
+        );
+      } else {
+        await _performMouseClick();
+      }
+    }
+  }
+
+  Future<void> _performTouchAction() async {
+    int x, y;
+    if (_config.positionMode == PositionMode.fixed ||
+        _config.positionMode == PositionMode.pick) {
+      x = _config.fixedX;
+      y = _config.fixedY;
+    } else {
+      // PositionMode.current: use screen center on mobile
+      if (Platform.isAndroid || Platform.isIOS) {
+        try {
+          final size = await _input.getScreenSize();
+          x = size.width ~/ 2;
+          y = size.height ~/ 2;
+        } catch (_) {
+          x = 540;
+          y = 960;
+        }
+      } else {
+        x = -1;
+        y = -1;
+      }
+    }
+
+    switch (_config.touchAction) {
+      case TouchAction.tap:
+        await _input.mouseClick(x: x, y: y, button: 'left');
+        break;
+      case TouchAction.longPress:
+        await _input.touchLongPress(
+          x: x, y: y,
+          durationMs: _config.longPressDurationMs,
+        );
+        break;
+      case TouchAction.drag:
+        await _input.touchDrag(
+          startX: _config.dragStartX, startY: _config.dragStartY,
+          endX: _config.dragEndX, endY: _config.dragEndY,
+          durationMs: _config.swipeDurationMs,
+        );
+        break;
+      case TouchAction.swipe:
+        await _input.touchSwipe(
+          startX: _config.swipeStartX, startY: _config.swipeStartY,
+          endX: _config.swipeEndX, endY: _config.swipeEndY,
+          durationMs: _config.swipeDurationMs,
+        );
+        break;
     }
   }
 
   Future<void> _performMouseClick() async {
-    int x = _config.positionMode == PositionMode.fixed
+    int x = _config.positionMode == PositionMode.fixed ||
+            _config.positionMode == PositionMode.pick
         ? _config.fixedX
         : -1;
-    int y = _config.positionMode == PositionMode.fixed ? _config.fixedY : -1;
+    int y = _config.positionMode == PositionMode.fixed ||
+            _config.positionMode == PositionMode.pick
+        ? _config.fixedY
+        : -1;
 
     // Apply random offset if enabled
     if (x >= 0 && y >= 0 && _config.randomOffsetEnabled) {
@@ -512,7 +611,7 @@ class ClickService {
 
     // Restore foreground mode on WindowsInput
     if (_input is WindowsInput) {
-      (_input as WindowsInput).setBackgroundMode(false);
+      (_input).setBackgroundMode(false);
     }
 
     onStatusChanged?.call(_status, _clickCount);

@@ -4,7 +4,6 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.annotation.TargetApi
 import android.app.Activity
-import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -16,10 +15,12 @@ import android.media.Image
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.util.DisplayMetrics
 import android.view.Gravity
 import android.view.WindowManager
@@ -31,8 +32,6 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
 
 class MainActivity : FlutterActivity() {
     private val INPUT_CHANNEL = "clicker/input"
@@ -56,14 +55,26 @@ class MainActivity : FlutterActivity() {
         var instance: MainActivity? = null
     }
 
+    fun getFlutterMessenger(): io.flutter.plugin.common.BinaryMessenger? {
+        return flutterEngine?.dartExecutor?.binaryMessenger
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         instance = this
 
         val metrics = resources.displayMetrics
         screenDensity = metrics.densityDpi
-        screenWidth = metrics.widthPixels
-        screenHeight = metrics.heightPixels
+        // Use real physical pixels for gesture coordinates
+        val realMetrics = android.util.DisplayMetrics()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
+            windowManager.defaultDisplay.getRealMetrics(realMetrics)
+            screenWidth = realMetrics.widthPixels
+            screenHeight = realMetrics.heightPixels
+        } else {
+            screenWidth = metrics.widthPixels
+            screenHeight = metrics.heightPixels
+        }
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
@@ -123,7 +134,12 @@ class MainActivity : FlutterActivity() {
                 val x = (args?.get("x") as? Number)?.toFloat() ?: 0f
                 val y = (args?.get("y") as? Number)?.toFloat() ?: 0f
                 val action = args?.get("action") as? String ?: "click"
-                dispatchGestureAction(x, y, action, result)
+                val durationMs = (args?.get("durationMs") as? Number)?.toInt() ?: 300
+                val startX = (args?.get("startX") as? Number)?.toFloat() ?: x
+                val startY = (args?.get("startY") as? Number)?.toFloat() ?: y
+                val endX = (args?.get("endX") as? Number)?.toFloat() ?: x
+                val endY = (args?.get("endY") as? Number)?.toFloat() ?: y
+                dispatchGestureAction(x, y, action, result, durationMs, startX, startY, endX, endY)
             }
             "mouseClick" -> {
                 val x = (args?.get("x") as? Number)?.toFloat() ?: 0f
@@ -212,15 +228,82 @@ class MainActivity : FlutterActivity() {
             "enumerateWindows" -> {
                 result.success(emptyList<Map<String, Any>>())
             }
-            "startFastClicker" -> result.success(true)
+            "startFastClicker" -> {
+                // Clear emergency stop when starting a new click session
+                ClickerAccessibilityService.emergencyStopped = false
+                ClickerAccessibilityService.gesturePaused = false
+                result.success(true)
+            }
             "stopFastClicker" -> result.success(true)
             "initSystemTray" -> result.success(true)
             "destroySystemTray" -> result.success(true)
             "enableAutoStart" -> result.success(true)
             "disableAutoStart" -> result.success(true)
             "captureKey" -> result.success(true)
+            "showFloatingPanel" -> {
+                FloatingControlPanel.show(this)
+                result.success(true)
+            }
+            "hideFloatingPanel" -> {
+                FloatingControlPanel.hide(this)
+                result.success(true)
+            }
+            "updateFloatingPanel" -> {
+                val running = (args as? Map<*, *>)?.get("running") as? Boolean ?: false
+                FloatingControlPanel.updateRunning(running)
+                result.success(true)
+            }
+            "updateFloatingPanelConfig" -> {
+                val config = (args as? Map<*, *>)?.mapKeys { it.key.toString() }
+                    ?.mapValues { it.value } as? Map<String, Any>
+                if (config != null) {
+                    FloatingControlPanel.updateConfig(config)
+                }
+                result.success(true)
+            }
+            "isAccessibilityEnabled" -> {
+                val enabled = isAccessibilityServiceEnabled()
+                result.success(enabled)
+            }
+            "openAccessibilitySettings" -> {
+                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+                result.success(true)
+            }
+            "checkOverlayPermission" -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    result.success(Settings.canDrawOverlays(this))
+                } else {
+                    result.success(true)
+                }
+            }
+            "requestOverlayPermission" -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    if (!Settings.canDrawOverlays(this)) {
+                        val intent = Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:$packageName")
+                        )
+                        startActivity(intent)
+                    }
+                }
+                result.success(true)
+            }
             else -> result.notImplemented()
         }
+    }
+
+    private fun isAccessibilityServiceEnabled(): Boolean {
+        // Check if ClickerAccessibilityService is running
+        if (ClickerAccessibilityService.instance != null) return true
+        // Fallback: check system settings
+        val serviceName = "$packageName/.ClickerAccessibilityService"
+        val enabledServices = Settings.Secure.getString(
+            contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+        return enabledServices.contains(serviceName)
     }
 
     private fun handleHotkeyCall(method: String, args: Any?, result: MethodChannel.Result) {
@@ -247,29 +330,83 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun dispatchGestureAction(x: Float, y: Float, action: String, result: MethodChannel.Result) {
+    private fun dispatchGestureAction(
+        x: Float, y: Float, action: String, result: MethodChannel.Result,
+        durationMs: Int = 300,
+        startX: Float = x, startY: Float = y,
+        endX: Float = x, endY: Float = y
+    ) {
+        // Native-level pause check — blocks gestures when floating panel is being used
+        if (ClickerAccessibilityService.gesturePaused) {
+            android.util.Log.d("Clicker", "dispatchGesture BLOCKED (panel paused)")
+            result.success(false)
+            return
+        }
+        if (ClickerAccessibilityService.emergencyStopped) {
+            android.util.Log.d("Clicker", "dispatchGesture BLOCKED (emergency stop)")
+            result.success(false)
+            return
+        }
+
         val service = ClickerAccessibilityService.instance
         if (service == null) {
+            android.util.Log.e("Clicker", "dispatchGesture: Accessibility service not running!")
             result.error("NO_ACCESSIBILITY", "Accessibility service not running. Enable it in Settings > Accessibility", null)
             return
         }
 
-        val path = Path()
-        path.moveTo(x, y)
-
         when (action) {
             "click" -> {
+                android.util.Log.d("Clicker", "dispatchGesture click at ($x, $y)")
+                val path = Path()
+                path.moveTo(x, y)
+                // 50ms is sufficient for a click and won't block user input
+                // Longer durations (200ms+) block touch when interval < duration
                 val stroke = GestureDescription.StrokeDescription(path, 0, 50)
                 val gesture = GestureDescription.Builder().addStroke(stroke).build()
-                service.dispatchGesture(gesture, null, null)
+                val dispatched = service.dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: GestureDescription?) {
+                        android.util.Log.d("Clicker", "click gesture completed at ($x, $y)")
+                    }
+                    override fun onCancelled(gestureDescription: GestureDescription?) {
+                        android.util.Log.e("Clicker", "click gesture CANCELLED at ($x, $y)")
+                    }
+                }, null)
+                android.util.Log.d("Clicker", "dispatchGesture call returned: $dispatched")
             }
             "down" -> {
+                val path = Path()
+                path.moveTo(x, y)
                 val stroke = GestureDescription.StrokeDescription(path, 0, 500)
                 val gesture = GestureDescription.Builder().addStroke(stroke).build()
                 service.dispatchGesture(gesture, null, null)
             }
             "up" -> {
+                val path = Path()
+                path.moveTo(x, y)
                 val stroke = GestureDescription.StrokeDescription(path, 0, 10)
+                val gesture = GestureDescription.Builder().addStroke(stroke).build()
+                service.dispatchGesture(gesture, null, null)
+            }
+            "longPress" -> {
+                val path = Path()
+                path.moveTo(x, y)
+                val stroke = GestureDescription.StrokeDescription(path, 0, durationMs.toLong())
+                val gesture = GestureDescription.Builder().addStroke(stroke).build()
+                service.dispatchGesture(gesture, null, null)
+            }
+            "drag", "swipe" -> {
+                val path = Path()
+                path.moveTo(startX, startY)
+                // Create intermediate points for smooth gesture
+                val steps = (durationMs / 16f).coerceIn(2f, 60f).toInt()
+                for (i in 1..steps) {
+                    val t = i.toFloat() / steps
+                    val cx = startX + (endX - startX) * t
+                    val cy = startY + (endY - startY) * t
+                    path.lineTo(cx, cy)
+                }
+                val stroke = GestureDescription.StrokeDescription(path, 0, durationMs.toLong())
                 val gesture = GestureDescription.Builder().addStroke(stroke).build()
                 service.dispatchGesture(gesture, null, null)
             }
@@ -494,39 +631,110 @@ class MainActivity : FlutterActivity() {
         )
         params.gravity = Gravity.TOP or Gravity.START
 
-        val overlayView = android.view.View(this)
-        overlayView.setBackgroundColor(android.graphics.Color.TRANSPARENT)
-        overlayView.setOnTouchListener { view, event ->
-            when (event.action) {
-                android.view.MotionEvent.ACTION_DOWN -> {
-                    val channel = flutterEngine?.dartExecutor?.binaryMessenger?.let {
-                        MethodChannel(it, PLATFORM_CHANNEL)
-                    }
-                    channel?.invokeMethod("onOverlayAreaSelected", mapOf(
-                        "x1" to event.rawX.toInt(),
-                        "y1" to event.rawY.toInt(),
-                        "x2" to event.rawX.toInt(),
-                        "y2" to event.rawY.toInt()
-                    ))
-                }
-                android.view.MotionEvent.ACTION_UP -> {
-                    val channel = flutterEngine?.dartExecutor?.binaryMessenger?.let {
-                        MethodChannel(it, PLATFORM_CHANNEL)
-                    }
-                    channel?.invokeMethod("onOverlayAreaSelected", mapOf(
-                        "x1" to 0,
-                        "y1" to 0,
-                        "x2" to event.rawX.toInt(),
-                        "y2" to event.rawY.toInt()
-                    ))
-                    removeOverlay()
-                }
+        // Create a frame layout with hint text
+        val container = android.widget.FrameLayout(this)
+
+        // Semi-transparent background
+        val bgView = android.view.View(this)
+        bgView.setBackgroundColor(0x40000000.toInt())
+        container.addView(bgView, android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+
+        // Hint text
+        val hintText = android.widget.TextView(this).apply {
+            text = if (mode == "pick") "点击屏幕选取坐标" else "拖拽选取区域"
+            setTextColor(android.graphics.Color.WHITE)
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 18f)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            gravity = android.view.Gravity.CENTER
+            setShadowLayer(4f, 1f, 1f, android.graphics.Color.BLACK)
+        }
+        val hintParams = android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = android.view.Gravity.CENTER
+        }
+        container.addView(hintText, hintParams)
+
+        // Cancel button at top-right
+        val cancelBtn = android.widget.TextView(this).apply {
+            text = "✕"
+            setTextColor(android.graphics.Color.WHITE)
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 22f)
+            setPadding((16 * resources.displayMetrics.density).toInt(),
+                       (8 * resources.displayMetrics.density).toInt(),
+                       (16 * resources.displayMetrics.density).toInt(),
+                       (8 * resources.displayMetrics.density).toInt())
+            setShadowLayer(4f, 1f, 1f, android.graphics.Color.BLACK)
+        }
+        val cancelParams = android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = android.view.Gravity.TOP or android.view.Gravity.END
+            topMargin = (32 * resources.displayMetrics.density).toInt()
+            rightMargin = (16 * resources.displayMetrics.density).toInt()
+        }
+        container.addView(cancelBtn, cancelParams)
+
+        cancelBtn.setOnClickListener {
+            val channel = flutterEngine?.dartExecutor?.binaryMessenger?.let {
+                MethodChannel(it, PLATFORM_CHANNEL)
             }
-            true
+            channel?.invokeMethod("onOverlayCancelled", null)
+            removeOverlay()
         }
 
-        windowManager.addView(overlayView, params)
-        this.overlayView = overlayView
+        val channel = flutterEngine?.dartExecutor?.binaryMessenger?.let {
+            MethodChannel(it, PLATFORM_CHANNEL)
+        }
+
+        if (mode == "pick") {
+            // Pick mode: single click to get coordinates
+            container.setOnTouchListener { view, event ->
+                when (event.action) {
+                    android.view.MotionEvent.ACTION_DOWN -> true
+                    android.view.MotionEvent.ACTION_UP -> {
+                        channel?.invokeMethod("onOverlayClick", mapOf(
+                            "x" to event.rawX.toInt(),
+                            "y" to event.rawY.toInt()
+                        ))
+                        removeOverlay()
+                    }
+                }
+                true
+            }
+        } else {
+            // Area select mode: drag to select area
+            var startX = 0
+            var startY = 0
+            container.setOnTouchListener { view, event ->
+                when (event.action) {
+                    android.view.MotionEvent.ACTION_DOWN -> {
+                        startX = event.rawX.toInt()
+                        startY = event.rawY.toInt()
+                    }
+                    android.view.MotionEvent.ACTION_UP -> {
+                        val endX = event.rawX.toInt()
+                        val endY = event.rawY.toInt()
+                        channel?.invokeMethod("onOverlayAreaSelected", mapOf(
+                            "x1" to minOf(startX, endX),
+                            "y1" to minOf(startY, endY),
+                            "x2" to maxOf(startX, endX),
+                            "y2" to maxOf(startY, endY)
+                        ))
+                        removeOverlay()
+                    }
+                }
+                true
+            }
+        }
+
+        windowManager.addView(container, params)
+        this.overlayView = container
         result.success(true)
     }
 
@@ -538,6 +746,172 @@ class MainActivity : FlutterActivity() {
             } catch (_: Exception) {}
             overlayView = null
         }
+    }
+
+    // ─── Floating Panel Coordinate Pick ──────────────────────
+
+    fun startPickOverlayFromFloating(callback: (Int, Int) -> Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (!android.provider.Settings.canDrawOverlays(this)) return
+        }
+        removeOverlay()
+
+        val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_SYSTEM_ALERT,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        )
+        params.gravity = Gravity.TOP or Gravity.START
+
+        val container = android.widget.FrameLayout(this)
+
+        val bgView = android.view.View(this)
+        bgView.setBackgroundColor(0x40000000.toInt())
+        container.addView(bgView, android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+
+        val hintText = android.widget.TextView(this).apply {
+            text = "点击屏幕选取坐标"
+            setTextColor(android.graphics.Color.WHITE)
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 18f)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            gravity = android.view.Gravity.CENTER
+            setShadowLayer(4f, 1f, 1f, android.graphics.Color.BLACK)
+        }
+        container.addView(hintText, android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply { gravity = android.view.Gravity.CENTER })
+
+        val cancelBtn = android.widget.TextView(this).apply {
+            text = "✕"
+            setTextColor(android.graphics.Color.WHITE)
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 22f)
+            setPadding((16 * resources.displayMetrics.density).toInt(),
+                       (8 * resources.displayMetrics.density).toInt(),
+                       (16 * resources.displayMetrics.density).toInt(),
+                       (8 * resources.displayMetrics.density).toInt())
+            setShadowLayer(4f, 1f, 1f, android.graphics.Color.BLACK)
+        }
+        container.addView(cancelBtn, android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = android.view.Gravity.TOP or android.view.Gravity.END
+            topMargin = (32 * resources.displayMetrics.density).toInt()
+            rightMargin = (16 * resources.displayMetrics.density).toInt()
+        })
+
+        cancelBtn.setOnClickListener { removeOverlay() }
+
+        container.setOnTouchListener { _, event ->
+            when (event.action) {
+                android.view.MotionEvent.ACTION_DOWN -> true
+                android.view.MotionEvent.ACTION_UP -> {
+                    callback(event.rawX.toInt(), event.rawY.toInt())
+                    removeOverlay()
+                }
+            }
+            true
+        }
+
+        windowManager.addView(container, params)
+        this.overlayView = container
+    }
+
+    fun startAreaOverlayFromFloating(callback: (Int, Int, Int, Int) -> Unit) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (!android.provider.Settings.canDrawOverlays(this)) return
+        }
+        removeOverlay()
+
+        val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_SYSTEM_ALERT,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        )
+        params.gravity = Gravity.TOP or Gravity.START
+
+        val container = android.widget.FrameLayout(this)
+
+        val bgView = android.view.View(this)
+        bgView.setBackgroundColor(0x40000000.toInt())
+        container.addView(bgView, android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+
+        val hintText = android.widget.TextView(this).apply {
+            text = "拖拽选取区域"
+            setTextColor(android.graphics.Color.WHITE)
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 18f)
+            setTypeface(null, android.graphics.Typeface.BOLD)
+            gravity = android.view.Gravity.CENTER
+            setShadowLayer(4f, 1f, 1f, android.graphics.Color.BLACK)
+        }
+        container.addView(hintText, android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply { gravity = android.view.Gravity.CENTER })
+
+        val cancelBtn = android.widget.TextView(this).apply {
+            text = "✕"
+            setTextColor(android.graphics.Color.WHITE)
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 22f)
+            setPadding((16 * resources.displayMetrics.density).toInt(),
+                       (8 * resources.displayMetrics.density).toInt(),
+                       (16 * resources.displayMetrics.density).toInt(),
+                       (8 * resources.displayMetrics.density).toInt())
+            setShadowLayer(4f, 1f, 1f, android.graphics.Color.BLACK)
+        }
+        container.addView(cancelBtn, android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            gravity = android.view.Gravity.TOP or android.view.Gravity.END
+            topMargin = (32 * resources.displayMetrics.density).toInt()
+            rightMargin = (16 * resources.displayMetrics.density).toInt()
+        })
+
+        cancelBtn.setOnClickListener { removeOverlay() }
+
+        var startX = 0
+        var startY = 0
+        container.setOnTouchListener { _, event ->
+            when (event.action) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    startX = event.rawX.toInt()
+                    startY = event.rawY.toInt()
+                }
+                android.view.MotionEvent.ACTION_UP -> {
+                    val endX = event.rawX.toInt()
+                    val endY = event.rawY.toInt()
+                    callback(minOf(startX, endX), minOf(startY, endY),
+                             maxOf(startX, endX), maxOf(startY, endY))
+                    removeOverlay()
+                }
+            }
+            true
+        }
+
+        windowManager.addView(container, params)
+        this.overlayView = container
     }
 
     @TargetApi(Build.VERSION_CODES.LOLLIPOP)
@@ -817,24 +1191,74 @@ class MainActivity : FlutterActivity() {
             return
         }
 
-        val image = InputImage.fromBitmap(bitmap, 0)
-        val recognizer = com.google.mlkit.vision.text.TextRecognition.getClient(
-            ChineseTextRecognizerOptions.Builder().build()
-        )
+        // ML Kit is only available in the "full" flavor.
+        // In the "lite" flavor, the dependency is not included.
+        try {
+            val inputImageClass = Class.forName("com.google.mlkit.vision.common.InputImage")
+            val fromBitmap = inputImageClass.getMethod("fromBitmap", Bitmap::class.java, Int::class.javaPrimitiveType)
+            val image = fromBitmap.invoke(null, bitmap, 0)
 
-        recognizer.process(image)
-            .addOnSuccessListener { visionText ->
-                val text = visionText.text
-                result.success(mapOf(
-                    "text" to text,
-                    "x" to x,
-                    "y" to y,
-                    "width" to w,
-                    "height" to h
-                ))
+            val optionsClass = Class.forName("com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions")
+            val optionsCtor = optionsClass.getConstructor()
+            val optionsBuilder = optionsCtor.newInstance()
+            val buildMethod = optionsClass.getMethod("build")
+            val options = buildMethod.invoke(optionsBuilder)
+
+            val textRecognitionClass = Class.forName("com.google.mlkit.vision.text.TextRecognition")
+            val getClientMethod = textRecognitionClass.getMethod("getClient", optionsClass)
+            val recognizer = getClientMethod.invoke(null, options)
+
+            val processMethod = recognizer.javaClass.getMethod("process", inputImageClass)
+            val task = processMethod.invoke(recognizer, image)
+
+            // Use reflection to call addOnSuccessListener / addOnFailureListener
+            // since com.google.android.gms.tasks.Task may not be on classpath in lite flavor
+            val onSuccessListenerClass = Class.forName("com.google.android.gms.tasks.OnSuccessListener")
+            val onFailureListenerClass = Class.forName("com.google.android.gms.tasks.OnFailureListener")
+
+            val onSuccessProxy = java.lang.reflect.Proxy.newProxyInstance(
+                onSuccessListenerClass.classLoader,
+                arrayOf(onSuccessListenerClass)
+            ) { _, method, args ->
+                if (method.name == "onSuccess" && args != null && args.isNotEmpty()) {
+                    try {
+                        val textMethod = args[0]!!.javaClass.getMethod("getText")
+                        val text = textMethod.invoke(args[0]) as? String ?: ""
+                        result.success(mapOf(
+                            "text" to text,
+                            "x" to x,
+                            "y" to y,
+                            "width" to w,
+                            "height" to h
+                        ))
+                    } catch (e: Exception) {
+                        result.success(mapOf("text" to "", "x" to x, "y" to y, "width" to w, "height" to h))
+                    }
+                }
+                null
             }
-            .addOnFailureListener { e ->
-                result.error("OCR_FAILED", e.message, null)
+
+            val onFailureProxy = java.lang.reflect.Proxy.newProxyInstance(
+                onFailureListenerClass.classLoader,
+                arrayOf(onFailureListenerClass)
+            ) { _, method, args ->
+                if (method.name == "onFailure" && args != null && args.isNotEmpty()) {
+                    val exception = args[0] as? Exception
+                    result.error("OCR_FAILED", exception?.message, null)
+                }
+                null
             }
+
+            val addOnSuccessListener = task.javaClass.getMethod("addOnSuccessListener", onSuccessListenerClass)
+            val addOnFailureListener = task.javaClass.getMethod("addOnFailureListener", onFailureListenerClass)
+
+            addOnSuccessListener.invoke(task, onSuccessProxy)
+            addOnFailureListener.invoke(task, onFailureProxy)
+        } catch (e: ClassNotFoundException) {
+            result.error("OCR_NOT_AVAILABLE",
+                "ML Kit not available. Install the full version or download the OCR module in Settings.", null)
+        } catch (e: Exception) {
+            result.error("OCR_FAILED", e.message, null)
+        }
     }
 }

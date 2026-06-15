@@ -165,8 +165,8 @@ class WindowsInput extends PlatformInput {
       if (x >= 0 && y >= 0) SetCursorPos(x, y);
       final dy = button == 'scrollUp' ? 120.0 : -120.0;
       final p = calloc<INPUT>();
-      p.ref.type = INPUT_MOUSE;
-      p.ref.mi.dwFlags = MOUSE_EVENT_FLAGS(MOUSEEVENTF_WHEEL);
+      p.ref.type = INPUT_TYPE.INPUT_MOUSE;
+      p.ref.mi.dwFlags = const MOUSE_EVENT_FLAGS(MOUSE_EVENT_FLAGS.MOUSEEVENTF_WHEEL);
       p.ref.mi.mouseData = (dy).round();
       SendInput(1, p, sizeOf<INPUT>());
       calloc.free(p);
@@ -255,28 +255,72 @@ class WindowsInput extends PlatformInput {
   Future<void> mouseScroll({double dx = 0, double dy = 0}) async {
     if (dy != 0) {
       final p = calloc<INPUT>();
-      p.ref.type = INPUT_MOUSE;
-      p.ref.mi.dwFlags = MOUSE_EVENT_FLAGS(MOUSEEVENTF_WHEEL);
+      p.ref.type = INPUT_TYPE.INPUT_MOUSE;
+      p.ref.mi.dwFlags = const MOUSE_EVENT_FLAGS(MOUSE_EVENT_FLAGS.MOUSEEVENTF_WHEEL);
       p.ref.mi.mouseData = (dy * 120).round();
       SendInput(1, p, sizeOf<INPUT>());
       calloc.free(p);
     }
   }
 
+  @override
+  Future<void> touchLongPress({required int x, required int y, int durationMs = 500}) async {
+    // On desktop, long press = mouse down, wait, mouse up
+    await mouseDown(x: x, y: y);
+    await Future.delayed(Duration(milliseconds: durationMs));
+    await mouseUp(x: x, y: y);
+  }
+
+  @override
+  Future<void> touchDrag({
+    required int startX, required int startY,
+    required int endX, required int endY,
+    int durationMs = 300,
+  }) async {
+    // On desktop, drag = move to start, mouse down, move to end, mouse up
+    await mouseMove(startX, startY);
+    await mouseDown(x: startX, y: startY);
+    // Animate movement in steps
+    final steps = (durationMs / 16).ceil().clamp(1, 60);
+    final stepDelay = Duration(milliseconds: (durationMs / steps).round());
+    for (int i = 1; i <= steps; i++) {
+      final t = i / steps;
+      final cx = (startX + (endX - startX) * t).round();
+      final cy = (startY + (endY - startY) * t).round();
+      await mouseMove(cx, cy);
+      await Future.delayed(stepDelay);
+    }
+    await mouseUp(x: endX, y: endY);
+  }
+
+  @override
+  Future<void> touchSwipe({
+    required int startX, required int startY,
+    required int endX, required int endY,
+    int durationMs = 200,
+  }) async {
+    // Swipe is the same as drag but faster
+    await touchDrag(
+      startX: startX, startY: startY,
+      endX: endX, endY: endY,
+      durationMs: durationMs,
+    );
+  }
+
   MOUSE_EVENT_FLAGS _down(String b) => switch (b) {
-        'right' => MOUSE_EVENT_FLAGS(MOUSEEVENTF_RIGHTDOWN),
-        'middle' => MOUSE_EVENT_FLAGS(MOUSEEVENTF_MIDDLEDOWN),
-        'x1' => MOUSE_EVENT_FLAGS(MOUSEEVENTF_XDOWN),
-        'x2' => MOUSE_EVENT_FLAGS(MOUSEEVENTF_XDOWN),
-        _ => MOUSE_EVENT_FLAGS(MOUSEEVENTF_LEFTDOWN),
+        'right' => const MOUSE_EVENT_FLAGS(MOUSE_EVENT_FLAGS.MOUSEEVENTF_RIGHTDOWN),
+        'middle' => const MOUSE_EVENT_FLAGS(MOUSE_EVENT_FLAGS.MOUSEEVENTF_MIDDLEDOWN),
+        'x1' => const MOUSE_EVENT_FLAGS(MOUSE_EVENT_FLAGS.MOUSEEVENTF_XDOWN),
+        'x2' => const MOUSE_EVENT_FLAGS(MOUSE_EVENT_FLAGS.MOUSEEVENTF_XDOWN),
+        _ => const MOUSE_EVENT_FLAGS(MOUSE_EVENT_FLAGS.MOUSEEVENTF_LEFTDOWN),
       };
 
   MOUSE_EVENT_FLAGS _up(String b) => switch (b) {
-        'right' => MOUSE_EVENT_FLAGS(MOUSEEVENTF_RIGHTUP),
-        'middle' => MOUSE_EVENT_FLAGS(MOUSEEVENTF_MIDDLEUP),
-        'x1' => MOUSE_EVENT_FLAGS(MOUSEEVENTF_XUP),
-        'x2' => MOUSE_EVENT_FLAGS(MOUSEEVENTF_XUP),
-        _ => MOUSE_EVENT_FLAGS(MOUSEEVENTF_LEFTUP),
+        'right' => const MOUSE_EVENT_FLAGS(MOUSE_EVENT_FLAGS.MOUSEEVENTF_RIGHTUP),
+        'middle' => const MOUSE_EVENT_FLAGS(MOUSE_EVENT_FLAGS.MOUSEEVENTF_MIDDLEUP),
+        'x1' => const MOUSE_EVENT_FLAGS(MOUSE_EVENT_FLAGS.MOUSEEVENTF_XUP),
+        'x2' => const MOUSE_EVENT_FLAGS(MOUSE_EVENT_FLAGS.MOUSEEVENTF_XUP),
+        _ => const MOUSE_EVENT_FLAGS(MOUSE_EVENT_FLAGS.MOUSEEVENTF_LEFTUP),
       };
 
   /// Get the X button mouseData value for XDOWN/XUP events
@@ -284,7 +328,7 @@ class WindowsInput extends PlatformInput {
 
   void _sendMouseInput(MOUSE_EVENT_FLAGS flags, {int mouseData = 0}) {
     final p = calloc<INPUT>();
-    p.ref.type = INPUT_MOUSE;
+    p.ref.type = INPUT_TYPE.INPUT_MOUSE;
     p.ref.mi.dwFlags = flags;
     p.ref.mi.mouseData = mouseData;
     final result = SendInput(1, p, sizeOf<INPUT>());
@@ -365,7 +409,7 @@ class WindowsInput extends PlatformInput {
     final vk = _vk[key.toLowerCase()] ??
         (key.length == 1 ? key.toUpperCase().codeUnitAt(0) : null);
     if (vk == null) return;
-    _sendKey(vk, KEYBD_EVENT_FLAGS(0));
+    _sendKey(vk, const KEYBD_EVENT_FLAGS(0));
   }
 
   @override
@@ -373,7 +417,7 @@ class WindowsInput extends PlatformInput {
     final vk = _vk[key.toLowerCase()] ??
         (key.length == 1 ? key.toUpperCase().codeUnitAt(0) : null);
     if (vk == null) return;
-    _sendKey(vk, KEYBD_EVENT_FLAGS(KEYEVENTF_KEYUP));
+    _sendKey(vk, const KEYBD_EVENT_FLAGS(KEYBD_EVENT_FLAGS.KEYEVENTF_KEYUP));
   }
 
   @override
@@ -396,11 +440,11 @@ class WindowsInput extends PlatformInput {
     await Future.delayed(const Duration(milliseconds: 30));
 
     // Send Ctrl+V
-    _sendKey(VK_CONTROL, KEYBD_EVENT_FLAGS(0));
-    _sendKey(0x56, KEYBD_EVENT_FLAGS(0)); // V key
+    _sendKey(VIRTUAL_KEY.VK_CONTROL, const KEYBD_EVENT_FLAGS(0));
+    _sendKey(0x56, const KEYBD_EVENT_FLAGS(0)); // V key
     await Future.delayed(const Duration(milliseconds: 10));
-    _sendKey(0x56, KEYBD_EVENT_FLAGS(KEYEVENTF_KEYUP));
-    _sendKey(VK_CONTROL, KEYBD_EVENT_FLAGS(KEYEVENTF_KEYUP));
+    _sendKey(0x56, const KEYBD_EVENT_FLAGS(KEYBD_EVENT_FLAGS.KEYEVENTF_KEYUP));
+    _sendKey(VIRTUAL_KEY.VK_CONTROL, const KEYBD_EVENT_FLAGS(KEYBD_EVENT_FLAGS.KEYEVENTF_KEYUP));
 
     // Wait for paste to complete
     await Future.delayed(const Duration(milliseconds: 50));
@@ -415,10 +459,10 @@ class WindowsInput extends PlatformInput {
 
   /// Release all modifier keys to prevent them from interfering with text input
   void _releaseModifiers() {
-    const modifiers = [VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN];
+    const modifiers = [VIRTUAL_KEY.VK_SHIFT, VIRTUAL_KEY.VK_CONTROL, VIRTUAL_KEY.VK_MENU, VIRTUAL_KEY.VK_LWIN, VIRTUAL_KEY.VK_RWIN];
     final p = calloc<INPUT>();
-    p.ref.type = INPUT_KEYBOARD;
-    p.ref.ki.dwFlags = KEYEVENTF_KEYUP;
+    p.ref.type = INPUT_TYPE.INPUT_KEYBOARD;
+    p.ref.ki.dwFlags = KEYBD_EVENT_FLAGS.KEYEVENTF_KEYUP;
     for (final vk in modifiers) {
       if (GetAsyncKeyState(vk) & 0x8000 != 0) {
         p.ref.ki.wVk = VIRTUAL_KEY(vk);
@@ -430,7 +474,7 @@ class WindowsInput extends PlatformInput {
 
   void _sendKey(int vk, KEYBD_EVENT_FLAGS flags) {
     final p = calloc<INPUT>();
-    p.ref.type = INPUT_KEYBOARD;
+    p.ref.type = INPUT_TYPE.INPUT_KEYBOARD;
     p.ref.ki.wVk = VIRTUAL_KEY(vk);
     p.ref.ki.dwFlags = flags;
     SendInput(1, p, sizeOf<INPUT>());
@@ -554,8 +598,8 @@ class WindowsInput extends PlatformInput {
 
   @override
   Future<({int height, int width})> getScreenSize() {
-    final w = GetSystemMetrics(SM_CXSCREEN);
-    final h = GetSystemMetrics(SM_CYSCREEN);
+    final w = GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CXSCREEN);
+    final h = GetSystemMetrics(SYSTEM_METRICS_INDEX.SM_CYSCREEN);
     return Future.value((width: w, height: h));
   }
 

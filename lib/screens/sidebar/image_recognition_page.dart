@@ -136,13 +136,13 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
   int _checkIntervalMs = 500;
 
   // OCR state (used by trigger textMatch)
-  String _ocrLanguage = 'zh-Hans-CN';
+  final String _ocrLanguage = 'zh-Hans-CN';
 
   // OCR tools install state
   bool _tesseractInstalled = false;
   bool _pythonInstalled = false;
   bool _checkingTools = true;
-  bool _installingTool = false;
+  final bool _installingTool = false;
   // bool _paddleOcrInstalled = false;  // PaddleOCR 暂时禁用
   // bool _checkingPaddleOcr = true;
   // bool _installingPaddleOcr = false;
@@ -499,10 +499,10 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
                 threshold: trigger.matchThreshold,
               );
               conditionMet = result != null;
-              statusText = conditionMet ? '匹配成功 score=${result!.score.toStringAsFixed(2)}' : '未找到匹配';
+              statusText = conditionMet ? '匹配成功 score=${result.score.toStringAsFixed(2)}' : '未找到匹配';
               debugPrint('[图像匹配] 结果: $statusText');
 
-              if (conditionMet && result != null) {
+              if (conditionMet) {
                 _lastDetectionResults[trigger.id] = VisionMatchResult(
                   x: result.x, y: result.y, width: result.width, height: result.height, score: result.score,
                 );
@@ -849,7 +849,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
               const SizedBox(width: 8),
               Container(width: 8, height: 8, decoration: BoxDecoration(color: const Color(0xFF00E676), borderRadius: BorderRadius.circular(4))),
               const SizedBox(width: 4),
-              Text('检测中', style: TextStyle(fontSize: 11, color: const Color(0xFF00E676))),
+              const Text('检测中', style: TextStyle(fontSize: 11, color: Color(0xFF00E676))),
             ],
           ]),
           const SizedBox(height: 10),
@@ -915,10 +915,10 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
       ),
       const SizedBox(height: 10),
 
-      SizedBox(width: double.infinity, child: Button(onPressed: () => _addTrigger(isDark, state), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-        const Icon(FluentIcons.add, size: 14),
-        const SizedBox(width: 6),
-        const Text('添加触发条件'),
+      SizedBox(width: double.infinity, child: Button(onPressed: () => _addTrigger(isDark, state), child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        Icon(FluentIcons.add, size: 14),
+        SizedBox(width: 6),
+        Text('添加触发条件'),
       ]))),
       const SizedBox(height: 10),
 
@@ -1235,7 +1235,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
         border: Border.all(color: const Color(0xFFD32F2F).withValues(alpha: 0.3)),
       ),
       child: Row(children: [
-        Icon(FluentIcons.info, size: 14, color: const Color(0xFFD32F2F)),
+        const Icon(FluentIcons.info, size: 14, color: Color(0xFFD32F2F)),
         const SizedBox(width: 8),
         Expanded(child: Text('$text，按 ESC 取消', style: const TextStyle(fontSize: 13, color: Color(0xFFD32F2F)))),
       ]),
@@ -1702,7 +1702,7 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
     '腾讯源': 'https://mirrors.cloud.tencent.com/pypi/simple',
   };
 
-  String _selectedPipMirror = '清华源';
+  final String _selectedPipMirror = '清华源';
 
   // PaddleOCR 暂时禁用
   // Future<void> _downloadPaddleOcr() async {
@@ -1826,7 +1826,7 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
                   onPressed: _downloading ? null : () => setState(() => _selectedMirror = name),
                   style: ButtonStyle(
                     backgroundColor: WidgetStatePropertyAll(bgColor),
-                    padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 10, vertical: 4)),
+                    padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 10, vertical: 4)),
                   ),
                   child: Text(name, style: TextStyle(
                     fontSize: 11,
@@ -1917,7 +1917,7 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
             onPressed: _downloading ? null : _downloadAll,
             style: ButtonStyle(
               backgroundColor: WidgetStatePropertyAll(accent.withValues(alpha: 0.15)),
-              padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 20, vertical: 10)),
+              padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 20, vertical: 10)),
             ),
             child: Row(mainAxisSize: MainAxisSize.min, children: [
               Icon(FluentIcons.download, size: 14, color: accent),
@@ -1970,13 +1970,13 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
           const SizedBox(width: 8),
           Button(
             onPressed: _downloading ? null : _uninstallAll,
-            style: ButtonStyle(
-              padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 10, vertical: 4)),
+            style: const ButtonStyle(
+              padding: WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 10, vertical: 4)),
             ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(FluentIcons.delete, size: 10, color: const Color(0xFFFF0000)),
-              const SizedBox(width: 4),
-              Text('卸载', style: const TextStyle(fontSize: 11, color: Color(0xFFFF0000))),
+            child: const Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(FluentIcons.delete, size: 10, color: Color(0xFFFF0000)),
+              SizedBox(width: 4),
+              Text('卸载', style: TextStyle(fontSize: 11, color: Color(0xFFFF0000))),
             ]),
           ),
         ]),
@@ -1992,12 +1992,12 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
             borderRadius: BorderRadius.circular(8),
             border: Border.all(color: const Color(0x4D4FC3F7)),
           ),
-          child: Row(children: [
-            Icon(FluentIcons.info, size: 14, color: const Color(0xFF4FC3F7)),
-            const SizedBox(width: 8),
+          child: const Row(children: [
+            Icon(FluentIcons.info, size: 14, color: Color(0xFF4FC3F7)),
+            SizedBox(width: 8),
             Expanded(child: Text(
               '安装依赖后，可在「条件触发」中使用「目标检测」条件类型。\n目标检测功能已整合到条件触发系统中。',
-              style: const TextStyle(fontSize: 12, color: Color(0xFF4FC3F7)),
+              style: TextStyle(fontSize: 12, color: Color(0xFF4FC3F7)),
             )),
           ]),
         ),
@@ -2076,8 +2076,8 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
           if (!installed)
             Button(
               onPressed: onInstall,
-              style: ButtonStyle(
-                padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 10, vertical: 4)),
+              style: const ButtonStyle(
+                padding: WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 10, vertical: 4)),
               ),
               child: Row(mainAxisSize: MainAxisSize.min, children: [
                 Icon(FluentIcons.download, size: 10, color: accent),
@@ -2241,7 +2241,7 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
   String _actionKey = '';
   String _macroId = '';
   int _intervalMs = 500;
-  String _colorInfo = '';
+  final String _colorInfo = '';
   String _actionPosInfo = '';
   double _matchThreshold = 0.8;
   String _targetText = '';
@@ -2364,10 +2364,10 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
                 });
               }
             },
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              const Icon(FluentIcons.edit, size: 12),
-              const SizedBox(width: 4),
-              const Text('重选'),
+            child: const Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(FluentIcons.edit, size: 12),
+              SizedBox(width: 4),
+              Text('重选'),
             ]),
           )),
         ]),
@@ -2386,15 +2386,15 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
                   });
                 }
               } : null,
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                const Icon(FluentIcons.camera, size: 14),
-                const SizedBox(width: 6),
-                const Text('截取模板'),
+              child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(FluentIcons.camera, size: 14),
+                SizedBox(width: 6),
+                Text('截取模板'),
               ]),
             ),
             if (_templateData != null) ...[
               const SizedBox(width: 12),
-              Icon(FluentIcons.completed, size: 16, color: const Color(0xFF00E676)),
+              const Icon(FluentIcons.completed, size: 16, color: Color(0xFF00E676)),
               const SizedBox(width: 4),
               Text(_templateInfo, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
               const SizedBox(width: 8),
@@ -2433,16 +2433,16 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
             width: double.infinity,
             padding: const EdgeInsets.all(6),
             decoration: BoxDecoration(
-              color: const Color(0x1FFFF9800),
+              color: const Color(0x1ffff9800),
               borderRadius: BorderRadius.circular(4),
               border: Border.all(color: const Color(0x4DFF9800)),
             ),
-            child: Row(children: [
-              Icon(FluentIcons.info, size: 12, color: const Color(0xFFFF9800)),
-              const SizedBox(width: 4),
+            child: const Row(children: [
+              Icon(FluentIcons.info, size: 12, color: Color(0xFFFF9800)),
+              SizedBox(width: 4),
               Expanded(child: Text(
                 'Windows OCR 已就绪，支持中英文识别',  // PaddleOCR 暂时禁用
-                style: const TextStyle(fontSize: 10, color: Color(0xFF00E676)),
+                style: TextStyle(fontSize: 10, color: Color(0xFF00E676)),
               )),
             ]),
           ),
@@ -2531,12 +2531,12 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
               borderRadius: BorderRadius.circular(6),
               border: Border.all(color: const Color(0xFFFF5252).withValues(alpha: 0.2)),
             ),
-            child: Row(children: [
-              const Icon(FluentIcons.machine_learning, size: 14, color: Color(0xFFFF5252)),
-              const SizedBox(width: 6),
+            child: const Row(children: [
+              Icon(FluentIcons.machine_learning, size: 14, color: Color(0xFFFF5252)),
+              SizedBox(width: 6),
               Expanded(child: Text(
                 '检测到目标后，自动点击目标中心位置',
-                style: const TextStyle(fontSize: 11, color: Color(0xFFFF5252)),
+                style: TextStyle(fontSize: 11, color: Color(0xFFFF5252)),
               )),
             ]),
           ),

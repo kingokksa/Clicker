@@ -85,7 +85,7 @@ class YoloDetectPlugin extends VisionPlugin {
       }
     }
 
-    final modelLoaded = statusResult!.contains('"model_loaded":true');
+    final modelLoaded = statusResult.contains('"model_loaded":true');
     if (!modelLoaded) {
       final modelPath = await _findModelPath();
       if (modelPath == null) {
@@ -169,7 +169,7 @@ class YoloDetectPlugin extends VisionPlugin {
 
       for (final mirror in mirrors) {
         try {
-          final url = '${mirror}$ortUrl';
+          final url = '$mirror$ortUrl';
           debugPrint('[YoloDetectPlugin] 尝试从 $url 下载 ONNX Runtime...');
           final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 120));
           if (response.statusCode == 200 && response.bodyBytes.length > 1000000) {
@@ -211,7 +211,7 @@ class YoloDetectPlugin extends VisionPlugin {
 
       for (final mirror in mirrors) {
         try {
-          final url = '${mirror}$modelUrl';
+          final url = '$mirror$modelUrl';
           debugPrint('[YoloDetectPlugin] 尝试从 $url 下载模型...');
           final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 60));
           if (response.statusCode == 200 && response.bodyBytes.length > 1000000) {
@@ -278,10 +278,10 @@ class YoloDetectPlugin extends VisionPlugin {
             }
           }
         }
-        debugPrint('[YoloDetectPlugin] 像素大小不匹配: got=${pixels.length} expected=$expectedLen, 推断尺寸=${actualW}x${actualH}');
+        debugPrint('[YoloDetectPlugin] 像素大小不匹配: got=${pixels.length} expected=$expectedLen, 推断尺寸=${actualW}x$actualH');
       }
 
-      debugPrint('[YoloDetectPlugin] 开始推理: region=(${regionX},${regionY},${regionW},${regionH}) actualSize=${actualW}x${actualH} pixels=${pixels.length}');
+      debugPrint('[YoloDetectPlugin] 开始推理: region=($regionX,$regionY,$regionW,$regionH) actualSize=${actualW}x$actualH pixels=${pixels.length}');
 
       final pixelPtr = malloc<Uint8>(pixels.length);
       try {

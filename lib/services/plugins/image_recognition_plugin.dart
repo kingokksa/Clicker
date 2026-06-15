@@ -4,7 +4,6 @@ library;
 import 'package:fluent_ui/fluent_ui.dart';
 import '../plugin_system.dart';
 import '../plugin_registry.dart';
-import 'ai_tracker_plugin.dart';
 import '../../screens/sidebar/image_recognition_page.dart';
 
 class ImageRecognitionPlugin extends ClickerPlugin {

@@ -289,12 +289,12 @@ class _PluginPageState extends State<PluginPage> {
           ])),
           // Action button
           if (!isSupported)
-            Button(
+            const Button(
               onPressed: null,
               style: ButtonStyle(
-                padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
+                padding: WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
               ),
-              child: const Text('不兼容', style: TextStyle(fontSize: 12)),
+              child: Text('不兼容', style: TextStyle(fontSize: 12)),
             )
           else if (isEnabled)
             Button(
@@ -315,8 +315,8 @@ class _PluginPageState extends State<PluginPage> {
                   setState(() {});
                 }
               },
-              style: ButtonStyle(
-                padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
+              style: const ButtonStyle(
+                padding: WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
               ),
               child: const Text('卸载', style: TextStyle(fontSize: 12)),
             )
@@ -329,7 +329,7 @@ class _PluginPageState extends State<PluginPage> {
               },
               style: ButtonStyle(
                 backgroundColor: WidgetStatePropertyAll(accent.withValues(alpha: 0.15)),
-                padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
+                padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
               ),
               child: Row(mainAxisSize: MainAxisSize.min, children: [
                 Icon(FluentIcons.play, size: 12, color: accent),
@@ -351,7 +351,7 @@ class _PluginPageState extends State<PluginPage> {
               },
               style: ButtonStyle(
                 backgroundColor: WidgetStatePropertyAll(accent.withValues(alpha: 0.15)),
-                padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
+                padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 12, vertical: 6)),
               ),
               child: _isInstalling
                 ? const SizedBox(width: 14, height: 14, child: ProgressRing(strokeWidth: 2))
@@ -370,7 +370,7 @@ class _PluginPageState extends State<PluginPage> {
 
   List<Widget> _buildCategoryGroups(List<ClickerPlugin> plugins, bool isDark, {String? groupTitle}) {
     if (plugins.isEmpty) return [];
-    final categories = PluginCategory.values;
+    const categories = PluginCategory.values;
     return categories.expand((cat) {
       final catPlugins = plugins.where((p) => p.manifest.category == cat).toList();
       if (catPlugins.isEmpty) return <Widget>[];
@@ -414,7 +414,7 @@ class _PluginPageState extends State<PluginPage> {
     return Button(
       onPressed: _isInstalling ? null : onPressed,
       style: ButtonStyle(
-        padding: WidgetStatePropertyAll(const EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
+        padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 12, vertical: 8)),
         backgroundColor: WidgetStatePropertyAll(accent.withValues(alpha: 0.08)),
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [

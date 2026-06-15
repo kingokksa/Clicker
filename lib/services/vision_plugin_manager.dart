@@ -7,7 +7,6 @@ import 'dart:io' show Platform;
 import 'vision_plugin.dart';
 import 'plugins/template_match_plugin.dart';
 import 'plugins/windows_ocr_plugin.dart';
-import 'plugins/paddle_ocr_plugin.dart';
 import 'plugins/android_ocr_plugin.dart';
 import 'plugins/yolo_detect_plugin.dart';
 

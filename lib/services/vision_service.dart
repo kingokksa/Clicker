@@ -228,7 +228,7 @@ class VisionService {
       );
     } on PlatformException catch (e) {
       if (e.code == 'OCR_NOT_AVAILABLE') {
-        return OcrResult(text: '', error: 'OCR不可用，请安装Windows OCR语言包');
+        return const OcrResult(text: '', error: 'OCR不可用，请安装Windows OCR语言包');
       }
       return null;
     }

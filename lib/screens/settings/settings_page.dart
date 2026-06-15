@@ -209,7 +209,7 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _setAutoStart(bool enabled) async {
     if (!Platform.isWindows) return;
     try {
-      final channel = MethodChannel('com.clicker.pro/platform');
+      const channel = MethodChannel('com.clicker.pro/platform');
       await channel.invokeMethod(enabled ? 'enableAutoStart' : 'disableAutoStart');
     } catch (_) {}
   }
@@ -305,10 +305,10 @@ class _SettingsPageState extends State<SettingsPage> {
             Text('v$_appVersion', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
           ]),
           const SizedBox(height: 6),
-          Row(children: [
-            const Text('作者:', style: TextStyle(fontSize: 13)),
-            const SizedBox(width: 8),
-            const Text('kingokksa', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          const Row(children: [
+            Text('作者:', style: TextStyle(fontSize: 13)),
+            SizedBox(width: 8),
+            Text('kingokksa', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
           ]),
           const SizedBox(height: 6),
           HyperlinkButton(
@@ -369,10 +369,10 @@ class _SettingsPageState extends State<SettingsPage> {
               ])),
             ],
           ] else if (update.latestVersion.isNotEmpty) ...[
-            Row(children: [
-              Icon(FluentIcons.completed, size: 16, color: const Color(0xFF00E676)),
-              const SizedBox(width: 8),
-              const Text('已是最新版本', style: TextStyle(fontSize: 13)),
+            const Row(children: [
+              Icon(FluentIcons.completed, size: 16, color: Color(0xFF00E676)),
+              SizedBox(width: 8),
+              Text('已是最新版本', style: TextStyle(fontSize: 13)),
             ]),
           ] else ...[
             Button(onPressed: () => update.checkForUpdates(), child: const Row(mainAxisSize: MainAxisSize.min, children: [

@@ -57,7 +57,7 @@ class AppPaths {
 
   static Future<String> getPluginDir(String pluginId) async {
     final pluginsDir = await getPluginsDir();
-    final dir = Directory('$pluginsDir${sep}$pluginId');
+    final dir = Directory('$pluginsDir$sep$pluginId');
     return dir.path;
   }
 }

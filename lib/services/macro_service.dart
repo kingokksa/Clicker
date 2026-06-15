@@ -415,7 +415,7 @@ class MacroService {
       }
       if (hwnd != 0) {
         // For macros, only set hwnd — coordinates come from each event
-        (_input as WindowsInput).setBackgroundMode(true, hwnd: hwnd);
+        (_input).setBackgroundMode(true, hwnd: hwnd);
       }
     }
 
@@ -472,8 +472,8 @@ class MacroService {
         if (_status != MacroStatus.playing) break;
 
         // Check if background target window still exists
-        if (_input is WindowsInput && (_input as WindowsInput).isBackgroundMode) {
-          if (!(_input as WindowsInput).isBackgroundWindowValid()) {
+        if (_input is WindowsInput && (_input).isBackgroundMode) {
+          if (!(_input).isBackgroundWindowValid()) {
             onError?.call('目标窗口已关闭，宏已停止');
             stopPlayback();
             break;
@@ -547,6 +547,22 @@ class MacroService {
         );
         break;
 
+      case MacroEventType.drag:
+        await _input.mouseDrag(
+          startX: event.x ?? 0, startY: event.y ?? 0,
+          endX: event.endX ?? 0, endY: event.endY ?? 0,
+          durationMs: event.durationMs ?? 300,
+        );
+        break;
+
+      case MacroEventType.swipe:
+        await _input.mouseSwipe(
+          startX: event.x ?? 0, startY: event.y ?? 0,
+          endX: event.endX ?? 0, endY: event.endY ?? 0,
+          durationMs: event.durationMs ?? 200,
+        );
+        break;
+
       case MacroEventType.wait:
         // Wait events are handled by timestamp calculation above
         break;
@@ -563,7 +579,7 @@ class MacroService {
     _status = MacroStatus.idle;
     // Restore foreground mode on WindowsInput
     if (_input is WindowsInput) {
-      (_input as WindowsInput).setBackgroundMode(false);
+      (_input).setBackgroundMode(false);
     }
     if (wasPlaying) {
       // Release all keys that may be stuck after playback

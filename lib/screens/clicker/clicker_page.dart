@@ -3,6 +3,7 @@ library;
 
 import 'dart:io';
 import 'package:fluent_ui/fluent_ui.dart';
+import '../../widgets/debounced_text_box.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../services/app_state.dart';
@@ -38,7 +39,7 @@ class _ClickerPageState extends State<ClickerPage> {
     if (_textTypeController.text != config.textToType) {
       final sel = _textTypeController.selection;
       _textTypeController.text = config.textToType;
-      if (sel.start >= 0 && sel.end! <= config.textToType.length) {
+      if (sel.start >= 0 && sel.end <= config.textToType.length) {
         _textTypeController.selection = sel;
       }
     }
@@ -69,10 +70,18 @@ class _ClickerPageState extends State<ClickerPage> {
       ]);
     } else {
       modeSections.addAll([
-        _spacing, _section(title: '点击类型', icon: FluentIcons.touch, child: _buildClickTypeSelector(config, state, theme)),
-        _spacing, _section(title: '鼠标按键', icon: FluentIcons.touch_pointer, child: _buildMouseButtonSelector(config, state, theme)),
-        _spacing, _section(title: '点击位置', icon: FluentIcons.map_pin, child: _buildPositionSelector(context, config, state, theme)),
-        _spacing, _section(title: '随机偏移', icon: FluentIcons.open_in_new_tab, child: _buildRandomOffset(config, state, theme)),
+        _spacing, _section(title: '操作类型', icon: FluentIcons.touch, child: _buildMouseActionSelector(config, state, theme)),
+        if (config.clickType == ClickType.single || config.clickType == ClickType.double) ...[
+          _spacing, _section(title: '鼠标按键', icon: FluentIcons.touch_pointer, child: _buildMouseButtonSelector(config, state, theme)),
+          _spacing, _section(title: '点击位置', icon: FluentIcons.map_pin, child: _buildPositionSelector(context, config, state, theme)),
+          _spacing, _section(title: '随机偏移', icon: FluentIcons.open_in_new_tab, child: _buildRandomOffset(config, state, theme)),
+        ],
+        if (config.clickType == ClickType.drag) ...[
+          _spacing, _section(title: '拖拽路径', icon: FluentIcons.move, child: _buildMouseDragPathSelector(context, config, state, theme)),
+        ],
+        if (config.clickType == ClickType.swipe) ...[
+          _spacing, _section(title: '扫过路径', icon: FluentIcons.forward, child: _buildMouseSwipePathSelector(context, config, state, theme)),
+        ],
       ]);
     }
 
@@ -488,15 +497,86 @@ class _ClickerPageState extends State<ClickerPage> {
     ]);
   }
 
-  // ─── Click Type ───────────────────────────────────────────
+  // ─── Mouse Action Type (click / drag / swipe) ────────────
 
-  Widget _buildClickTypeSelector(ClickerConfig config, AppState state, FluentThemeData theme) {
+  Widget _buildMouseActionSelector(ClickerConfig config, AppState state, FluentThemeData theme) {
+    return Wrap(spacing: 6, runSpacing: 6, children: [
+      _selectChip('单击', config.clickType == ClickType.single,
+        () => state.setClickerConfig(config.copyWith(clickType: ClickType.single))),
+      _selectChip('双击', config.clickType == ClickType.double,
+        () => state.setClickerConfig(config.copyWith(clickType: ClickType.double))),
+      _selectChip('拖拽', config.clickType == ClickType.drag,
+        () => state.setClickerConfig(config.copyWith(clickType: ClickType.drag)), icon: FluentIcons.move),
+      _selectChip('扫过', config.clickType == ClickType.swipe,
+        () => state.setClickerConfig(config.copyWith(clickType: ClickType.swipe)), icon: FluentIcons.forward),
+    ]);
+  }
+
+  // ─── Mouse Drag Path ──────────────────────────────────────
+
+  Widget _buildMouseDragPathSelector(BuildContext context, ClickerConfig config, AppState state, FluentThemeData theme) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _buildCoordRow('起点', config.dragStartX, config.dragStartY, (x, y) =>
+        state.setClickerConfig(config.copyWith(dragStartX: x, dragStartY: y))),
+      const SizedBox(height: 8),
+      _buildCoordRow('终点', config.dragEndX, config.dragEndY, (x, y) =>
+        state.setClickerConfig(config.copyWith(dragEndX: x, dragEndY: y))),
+      const SizedBox(height: 8),
+      Row(children: [
+        Button(onPressed: () async {
+          final result = await ScreenOverlayService.instance.startPick();
+          if (result != null) state.setClickerConfig(config.copyWith(dragStartX: result.$1, dragStartY: result.$2));
+        }, child: const Text('选取起点')),
+        const SizedBox(width: 8),
+        Button(onPressed: () async {
+          final result = await ScreenOverlayService.instance.startPick();
+          if (result != null) state.setClickerConfig(config.copyWith(dragEndX: result.$1, dragEndY: result.$2));
+        }, child: const Text('选取终点')),
+      ]),
+    ]);
+  }
+
+  // ─── Mouse Swipe Path ─────────────────────────────────────
+
+  Widget _buildMouseSwipePathSelector(BuildContext context, ClickerConfig config, AppState state, FluentThemeData theme) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _buildCoordRow('起点', config.swipeStartX, config.swipeStartY, (x, y) =>
+        state.setClickerConfig(config.copyWith(swipeStartX: x, swipeStartY: y))),
+      const SizedBox(height: 8),
+      _buildCoordRow('终点', config.swipeEndX, config.swipeEndY, (x, y) =>
+        state.setClickerConfig(config.copyWith(swipeEndX: x, swipeEndY: y))),
+      const SizedBox(height: 8),
+      Row(children: [
+        Button(onPressed: () async {
+          final result = await ScreenOverlayService.instance.startPick();
+          if (result != null) state.setClickerConfig(config.copyWith(swipeStartX: result.$1, swipeStartY: result.$2));
+        }, child: const Text('选取起点')),
+        const SizedBox(width: 8),
+        Button(onPressed: () async {
+          final result = await ScreenOverlayService.instance.startPick();
+          if (result != null) state.setClickerConfig(config.copyWith(swipeEndX: result.$1, swipeEndY: result.$2));
+        }, child: const Text('选取终点')),
+      ]),
+    ]);
+  }
+
+  Widget _buildCoordRow(String label, int x, int y, void Function(int, int) onChanged) {
     return Row(children: [
-      Expanded(child: _selectChip('单击', config.clickType == ClickType.single,
-        () => state.setClickerConfig(config.copyWith(clickType: ClickType.single)))),
+      Text(label, style: const TextStyle(fontSize: 13)),
       const SizedBox(width: 8),
-      Expanded(child: _selectChip('双击', config.clickType == ClickType.double,
-        () => state.setClickerConfig(config.copyWith(clickType: ClickType.double)))),
+      const Text('X:', style: TextStyle(fontSize: 13)),
+      const SizedBox(width: 4),
+      SizedBox(width: 70, child: TextBox(
+        controller: TextEditingController(text: x.toString()),
+        onChanged: (v) { final p = int.tryParse(v); if (p != null) onChanged(p, y); },
+      )),
+      const SizedBox(width: 8),
+      const Text('Y:', style: TextStyle(fontSize: 13)),
+      const SizedBox(width: 4),
+      SizedBox(width: 70, child: TextBox(
+        controller: TextEditingController(text: y.toString()),
+        onChanged: (v) { final p = int.tryParse(v); if (p != null) onChanged(x, p); },
+      )),
     ]);
   }
 
@@ -592,11 +672,9 @@ class _ClickerPageState extends State<ClickerPage> {
         Text('5min', style: TextStyle(fontSize: 11, color: theme.brightness == Brightness.dark ? const Color(0xFF707090) : const Color(0xFF9A9AAA))),
       ]),
       const SizedBox(height: 6),
-      SizedBox(width: 140, child: TextBox(
-        placeholder: '自定义(ms)',
-        textAlign: TextAlign.center,
-        controller: TextEditingController(text: ms == ms.roundToDouble() ? ms.toInt().toString() : ms.toStringAsFixed(2)),
-        onChanged: (v) { final p = double.tryParse(v); if (p != null && p >= 10) state.setClickerConfig(config.copyWith(intervalMs: p)); },
+      SizedBox(width: 140, child: _DebouncedIntervalTextBox(
+        value: ms,
+        onChanged: (v) => state.setClickerConfig(config.copyWith(intervalMs: v)),
       )),
     ]);
   }
@@ -650,19 +728,23 @@ class _ClickerPageState extends State<ClickerPage> {
         Row(children: [
           const Text('次数:', style: TextStyle(fontSize: 13)),
           const SizedBox(width: 8),
-          SizedBox(width: 100, child: TextBox(
-            controller: TextEditingController(text: config.repeatCount.toString()),
-            onChanged: (v) { final p = int.tryParse(v); if (p != null && p > 0) state.setClickerConfig(config.copyWith(repeatCount: p)); },
-          )),
+          DebouncedTextBox(
+            value: config.repeatCount,
+            min: 1, max: 999999,
+            onChanged: (v) => state.setClickerConfig(config.copyWith(repeatCount: v)),
+            width: 100,
+          ),
         ])
       else if (config.repeatMode == ClickRepeatMode.duration)
         Row(children: [
           const Text('时长:', style: TextStyle(fontSize: 13)),
           const SizedBox(width: 8),
-          SizedBox(width: 100, child: TextBox(
-            controller: TextEditingController(text: config.durationSeconds.toString()),
-            onChanged: (v) { final p = int.tryParse(v); if (p != null && p > 0) state.setClickerConfig(config.copyWith(durationSeconds: p)); },
-          )),
+          DebouncedTextBox(
+            value: config.durationSeconds,
+            min: 1, max: 86400,
+            onChanged: (v) => state.setClickerConfig(config.copyWith(durationSeconds: v)),
+            width: 100,
+          ),
           const Text(' 秒', style: TextStyle(fontSize: 12)),
         ]),
     ]);
@@ -957,6 +1039,73 @@ class _ComboKeyPickerDialogState extends State<_ComboKeyPickerDialog> {
           ])),
       ])),
       actions: [FilledButton(onPressed: _selectedKey.isEmpty ? null : () => widget.onConfirm(_selectedKey), child: const Text('确认'))],
+    );
+  }
+}
+
+/// Debounced interval TextBox for double values (ms).
+class _DebouncedIntervalTextBox extends StatefulWidget {
+  final double value;
+  final ValueChanged<double> onChanged;
+  const _DebouncedIntervalTextBox({required this.value, required this.onChanged});
+
+  @override
+  State<_DebouncedIntervalTextBox> createState() => _DebouncedIntervalTextBoxState();
+}
+
+class _DebouncedIntervalTextBoxState extends State<_DebouncedIntervalTextBox> {
+  late TextEditingController _controller;
+  late FocusNode _focusNode;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: _formatValue(widget.value));
+    _focusNode = FocusNode();
+    _focusNode.addListener(_onFocusChange);
+  }
+
+  static String _formatValue(double v) =>
+      v == v.roundToDouble() ? v.toInt().toString() : v.toStringAsFixed(2);
+
+  @override
+  void didUpdateWidget(covariant _DebouncedIntervalTextBox oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_focusNode.hasFocus && widget.value != oldWidget.value) {
+      _controller.text = _formatValue(widget.value);
+    }
+  }
+
+  void _onFocusChange() {
+    if (!_focusNode.hasFocus) _commitValue();
+  }
+
+  void _commitValue() {
+    final p = double.tryParse(_controller.text);
+    if (p != null && p >= 10) {
+      _controller.text = _formatValue(p);
+      if (p != widget.value) widget.onChanged(p);
+    } else {
+      _controller.text = _formatValue(widget.value);
+    }
+  }
+
+  @override
+  void dispose() {
+    _focusNode.removeListener(_onFocusChange);
+    _focusNode.dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextBox(
+      controller: _controller,
+      focusNode: _focusNode,
+      placeholder: '自定义(ms)',
+      textAlign: TextAlign.center,
+      onSubmitted: (_) => _commitValue(),
     );
   }
 }

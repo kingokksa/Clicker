@@ -14,6 +14,23 @@ class AndroidInput extends PlatformInput {
 
   bool _listening = false;
 
+  /// Check if accessibility service is enabled
+  Future<bool> isAccessibilityServiceEnabled() async {
+    try {
+      final result = await _platformChannel.invokeMethod<bool>('isAccessibilityEnabled');
+      return result ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Open accessibility settings
+  Future<void> openAccessibilitySettings() async {
+    try {
+      await _platformChannel.invokeMethod('openAccessibilitySettings');
+    } catch (_) {}
+  }
+
   @override
   bool get isSupported => Platform.isAndroid;
 
@@ -35,7 +52,13 @@ class AndroidInput extends PlatformInput {
           await Future.delayed(const Duration(milliseconds: 50));
         }
       }
-    } catch (_) {}
+    } on PlatformException catch (e) {
+      print('[AndroidInput] mouseClick failed: ${e.code} - ${e.message}');
+      rethrow;
+    } catch (e) {
+      print('[AndroidInput] mouseClick failed: $e');
+      rethrow;
+    }
   }
 
   @override
@@ -83,6 +106,50 @@ class AndroidInput extends PlatformInput {
         'action': 'scroll',
         'dx': dx,
         'dy': dy,
+      });
+    } catch (_) {}
+  }
+
+  @override
+  Future<void> touchLongPress({required int x, required int y, int durationMs = 500}) async {
+    try {
+      await _inputChannel.invokeMethod('dispatchGesture', {
+        'action': 'longPress',
+        'x': x,
+        'y': y,
+        'durationMs': durationMs,
+      });
+    } catch (_) {}
+  }
+
+  @override
+  Future<void> touchDrag({
+    required int startX, required int startY,
+    required int endX, required int endY,
+    int durationMs = 300,
+  }) async {
+    try {
+      await _inputChannel.invokeMethod('dispatchGesture', {
+        'action': 'drag',
+        'startX': startX, 'startY': startY,
+        'endX': endX, 'endY': endY,
+        'durationMs': durationMs,
+      });
+    } catch (_) {}
+  }
+
+  @override
+  Future<void> touchSwipe({
+    required int startX, required int startY,
+    required int endX, required int endY,
+    int durationMs = 200,
+  }) async {
+    try {
+      await _inputChannel.invokeMethod('dispatchGesture', {
+        'action': 'swipe',
+        'startX': startX, 'startY': startY,
+        'endX': endX, 'endY': endY,
+        'durationMs': durationMs,
       });
     } catch (_) {}
   }

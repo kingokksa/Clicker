@@ -11,6 +11,8 @@ enum MacroEventType {
   keyRelease,
   scroll,
   wait,
+  drag,
+  swipe,
 }
 
 class MacroEvent {
@@ -24,6 +26,9 @@ class MacroEvent {
   final String? key; // key name (for keyPress/keyRelease)
   final double? scrollDx;
   final double? scrollDy;
+  final int? endX; // drag/swipe end X
+  final int? endY; // drag/swipe end Y
+  final int? durationMs; // drag/swipe duration
 
   const MacroEvent({
     required this.type,
@@ -36,6 +41,9 @@ class MacroEvent {
     this.key,
     this.scrollDx,
     this.scrollDy,
+    this.endX,
+    this.endY,
+    this.durationMs,
   });
 
   factory MacroEvent.fromJson(Map<String, dynamic> json) {
@@ -50,6 +58,9 @@ class MacroEvent {
       key: json['key'],
       scrollDx: (json['scrollDx'] as num?)?.toDouble(),
       scrollDy: (json['scrollDy'] as num?)?.toDouble(),
+      endX: json['endX'],
+      endY: json['endY'],
+      durationMs: json['durationMs'],
     );
   }
 
@@ -64,6 +75,9 @@ class MacroEvent {
         if (key != null) 'key': key,
         if (scrollDx != null) 'scrollDx': scrollDx,
         if (scrollDy != null) 'scrollDy': scrollDy,
+        if (endX != null) 'endX': endX,
+        if (endY != null) 'endY': endY,
+        if (durationMs != null) 'durationMs': durationMs,
       };
 
   MacroEvent copyWith({
@@ -77,6 +91,9 @@ class MacroEvent {
     Object? key = _notProvided,
     double? scrollDx,
     double? scrollDy,
+    int? endX,
+    int? endY,
+    int? durationMs,
   }) {
     return MacroEvent(
       type: type ?? this.type,
@@ -89,6 +106,9 @@ class MacroEvent {
       key: key == _notProvided ? this.key : key as String?,
       scrollDx: scrollDx ?? this.scrollDx,
       scrollDy: scrollDy ?? this.scrollDy,
+      endX: endX ?? this.endX,
+      endY: endY ?? this.endY,
+      durationMs: durationMs ?? this.durationMs,
     );
   }
 

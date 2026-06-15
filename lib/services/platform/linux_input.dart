@@ -91,6 +91,46 @@ class LinuxInput extends PlatformInput {
   }
 
   @override
+  Future<void> touchLongPress({required int x, required int y, int durationMs = 500}) async {
+    await mouseDown(x: x, y: y);
+    await Future.delayed(Duration(milliseconds: durationMs));
+    await mouseUp(x: x, y: y);
+  }
+
+  @override
+  Future<void> touchDrag({
+    required int startX, required int startY,
+    required int endX, required int endY,
+    int durationMs = 300,
+  }) async {
+    await mouseMove(startX, startY);
+    await mouseDown(x: startX, y: startY);
+    final steps = (durationMs / 16).ceil().clamp(1, 60);
+    final stepDelay = Duration(milliseconds: (durationMs / steps).round());
+    for (int i = 1; i <= steps; i++) {
+      final t = i / steps;
+      final cx = (startX + (endX - startX) * t).round();
+      final cy = (startY + (endY - startY) * t).round();
+      await mouseMove(cx, cy);
+      await Future.delayed(stepDelay);
+    }
+    await mouseUp(x: endX, y: endY);
+  }
+
+  @override
+  Future<void> touchSwipe({
+    required int startX, required int startY,
+    required int endX, required int endY,
+    int durationMs = 200,
+  }) async {
+    await touchDrag(
+      startX: startX, startY: startY,
+      endX: endX, endY: endY,
+      durationMs: durationMs,
+    );
+  }
+
+  @override
   Future<void> keyPress(String key) async {
     try {
       await _channel.invokeMethod('keyPress', {'key': key});
