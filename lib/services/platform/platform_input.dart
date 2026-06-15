@@ -24,8 +24,57 @@ abstract class PlatformInput {
   Future<void> mouseDown({required int x, required int y, String button = 'left'});
   Future<void> mouseUp({required int x, required int y, String button = 'left'});
 
+  /// Mouse drag: press at start, move to end, release.
+  /// Default implementation uses mouseDown → mouseMove → mouseUp.
+  Future<void> mouseDrag({
+    required int startX, required int startY,
+    required int endX, required int endY,
+    int durationMs = 300,
+  }) async {
+    await mouseDown(x: startX, y: startY);
+    // Interpolate movement over durationMs
+    final steps = (durationMs / 16).ceil().clamp(1, 100);
+    final dx = (endX - startX) / steps;
+    final dy = (endY - startY) / steps;
+    for (int i = 1; i <= steps; i++) {
+      await mouseMove((startX + dx * i).round(), (startY + dy * i).round());
+      if (i < steps) await Future.delayed(Duration(milliseconds: (durationMs / steps).round()));
+    }
+    await mouseUp(x: endX, y: endY);
+  }
+
+  /// Mouse swipe: fast drag with shorter duration.
+  Future<void> mouseSwipe({
+    required int startX, required int startY,
+    required int endX, required int endY,
+    int durationMs = 200,
+  }) async {
+    await mouseDrag(
+      startX: startX, startY: startY,
+      endX: endX, endY: endY,
+      durationMs: durationMs,
+    );
+  }
+
   /// Scroll wheel.
   Future<void> mouseScroll({double dx = 0, double dy = 0});
+
+  /// Touch gesture: long press at (x, y) for [durationMs].
+  Future<void> touchLongPress({required int x, required int y, int durationMs = 500});
+
+  /// Touch gesture: drag from (startX, startY) to (endX, endY) over [durationMs].
+  Future<void> touchDrag({
+    required int startX, required int startY,
+    required int endX, required int endY,
+    int durationMs = 300,
+  });
+
+  /// Touch gesture: swipe (fast drag) from (startX, startY) to (endX, endY) over [durationMs].
+  Future<void> touchSwipe({
+    required int startX, required int startY,
+    required int endX, required int endY,
+    int durationMs = 200,
+  });
 
   /// Keyboard press/release.
   Future<void> keyPress(String key);

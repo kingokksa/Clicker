@@ -263,7 +263,9 @@ class HomeScreenState extends State<HomeScreen> with WindowListener {
 
     // Build all pages in order for IndexedStack
     final allPageIds = <String>['clicker'];
-    for (final p in plugins) allPageIds.add(p.manifest.id);
+    for (final p in plugins) {
+      allPageIds.add(p.manifest.id);
+    }
     allPageIds.add('plugin_center');
     allPageIds.add('settings');
 
@@ -298,7 +300,7 @@ class HomeScreenState extends State<HomeScreen> with WindowListener {
 
     // Build all sidebar items
     final items = <_SidebarItem>[
-      _SidebarItem(icon: FluentIcons.touch, label: '连点', index: 0),
+      const _SidebarItem(icon: FluentIcons.touch, label: '连点', index: 0),
       // Plugin items (index 1..pluginCount)
       for (int i = 0; i < plugins.length; i++)
         _SidebarItem(icon: plugins[i].manifest.icon, label: plugins[i].manifest.name, index: i + 1),

@@ -37,8 +37,39 @@ jobs:
           name: windows-release
           path: Clicker-*.zip
 
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.3.0
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.1'
+          channel: 'stable'
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build APK (full)
+        run: flutter build apk --release --flavor full
+
+      - name: Build APK (lite)
+        run: flutter build apk --release --flavor lite
+
+      - name: Rename APKs
+        run: |
+          tag="${{ github.ref_name }}"
+          mv build/app/outputs/flutter-apk/app-full-release.apk "Clicker-${tag}-android-full.apk"
+          mv build/app/outputs/flutter-apk/app-lite-release.apk "Clicker-${tag}-android-lite.apk"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: android-release
+          path: Clicker-*.apk
+
   release:
-    needs: build-windows
+    needs: [build-windows, build-android]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4.3.0
@@ -46,9 +77,15 @@ jobs:
       - uses: actions/download-artifact@v4.3.0
         with:
           name: windows-release
+          path: artifacts/
+
+      - uses: actions/download-artifact@v4.3.0
+        with:
+          name: android-release
+          path: artifacts/
 
       - name: Create Release
         uses: softprops/action-gh-release@v2.3.2
         with:
           generate_release_notes: true
-          files: Clicker-*.zip
+          files: artifacts/Clicker-*

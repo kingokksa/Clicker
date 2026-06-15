@@ -36,7 +36,7 @@ class _ClickerAppState extends State<ClickerApp> {
           }
 
           if (!state.isInitialized) {
-            return FluentApp(
+            return const FluentApp(
               debugShowCheckedModeBanner: false,
               home: ExcludeSemantics(
                 child: ScaffoldPage(

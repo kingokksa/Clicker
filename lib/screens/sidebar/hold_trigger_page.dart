@@ -37,10 +37,10 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
           const SizedBox(width: 10),
           const Text('按住触发', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
           const Spacer(),
-          Button(onPressed: _addNewKey, child: Row(mainAxisSize: MainAxisSize.min, children: [
-            const Icon(FluentIcons.add, size: 12),
-            const SizedBox(width: 6),
-            const Text('添加按键'),
+          Button(onPressed: _addNewKey, child: const Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(FluentIcons.add, size: 12),
+            SizedBox(width: 6),
+            Text('添加按键'),
           ])),
         ]),
         const SizedBox(height: 16),
@@ -315,7 +315,7 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
                     });
                   },
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Text(listeningTrigger ? '按下任意键...' : _displayName(triggerKey), style: TextStyle(fontWeight: FontWeight.w600)),
+                    Text(listeningTrigger ? '按下任意键...' : _displayName(triggerKey), style: const TextStyle(fontWeight: FontWeight.w600)),
                     if (!listeningTrigger) ...[
                       const SizedBox(width: 6),
                       const Icon(FluentIcons.edit, size: 10),
@@ -439,7 +439,7 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
                     });
                   },
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(FluentIcons.add, size: 10),
+                    const Icon(FluentIcons.add, size: 10),
                     const SizedBox(width: 4),
                     Text(listeningCombo ? '...' : '添加'),
                   ]),

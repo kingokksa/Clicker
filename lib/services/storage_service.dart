@@ -24,6 +24,7 @@ class StorageService {
   static const _keyUiAnimations = 'ui_animations';
   static const _keyProfiles = 'profiles';
   static const _keyHoldTriggerKeys = 'hold_trigger_keys';
+  static const _keyFloatingPanelVisible = 'floating_panel_visible';
 
   late String _macrosDir;
 
@@ -112,6 +113,14 @@ class StorageService {
 
   Future<void> setFloatingAlwaysOnTop(bool value) async {
     await _prefs.setBool(_keyFloatingAlwaysOnTop, value);
+  }
+
+  // ─── Floating Panel Visible ───────────────────────────────
+
+  bool get floatingPanelVisible => _prefs.getBool(_keyFloatingPanelVisible) ?? false;
+
+  Future<void> setFloatingPanelVisible(bool value) async {
+    await _prefs.setBool(_keyFloatingPanelVisible, value);
   }
 
   // ─── Accent Color ─────────────────────────────────────────

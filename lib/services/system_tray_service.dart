@@ -29,10 +29,15 @@ class SystemTrayService {
   }
 
   Future<void> init() async {
-    if (_initialized) return;
-    if (!Platform.isWindows && !Platform.isLinux) return;
-
+    // Always set up the method call handler (needed for overlay callbacks on all platforms)
     _channel.setMethodCallHandler(_handleMethodCall);
+
+    if (_initialized) return;
+    if (!Platform.isWindows && !Platform.isLinux) {
+      _initialized = true;
+      return;
+    }
+
     await _channel.invokeMethod('initSystemTray');
     _initialized = true;
   }

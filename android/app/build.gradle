@@ -24,14 +24,28 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-        ndk {
-            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+    }
+
+    flavorDimensions = ["edition"]
+    productFlavors {
+        full {
+            dimension = "edition"
+            applicationIdSuffix = ""
+            versionNameSuffix = ""
+        }
+        lite {
+            dimension = "edition"
+            applicationIdSuffix = ".lite"
+            versionNameSuffix = "-lite"
         }
     }
 
     buildTypes {
         release {
             signingConfig = signingConfigs.debug
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
 
@@ -47,6 +61,6 @@ flutter {
 }
 
 dependencies {
-    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.17.0'
-    implementation 'com.google.mlkit:text-recognition-chinese:16.0.1'
+    fullImplementation 'com.microsoft.onnxruntime:onnxruntime-android:1.17.0'
+    fullImplementation 'com.google.mlkit:text-recognition-chinese:16.0.1'
 }

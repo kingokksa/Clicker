@@ -63,6 +63,10 @@ class MacroPage extends StatelessWidget {
           ]),
           const SizedBox(height: 8),
           Row(children: [
+            Expanded(child: Button(onPressed: () => _showDragBuilder(context, state), child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(FluentIcons.move, size: 14), SizedBox(width: 4), Text('拖拽宏')]))),
+            const SizedBox(width: 8),
+            Expanded(child: Button(onPressed: () => _showSwipeBuilder(context, state), child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(FluentIcons.forward, size: 14), SizedBox(width: 4), Text('滑动宏')]))),
+            const SizedBox(width: 8),
             Expanded(child: Button(onPressed: () => _showNewMacroEditor(context, state), child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(FluentIcons.add, size: 14), SizedBox(width: 4), Text('新建宏')]))),
           ]),
         ],
@@ -136,13 +140,13 @@ class MacroPage extends StatelessWidget {
         Expanded(child: SizedBox(height: 48, child: FilledButton(
           onPressed: () => _stopRecording(context, state),
           style: ButtonStyle(backgroundColor: WidgetStatePropertyAll(FluentTheme.of(context).accentColor)),
-          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(FluentIcons.save, size: 18, color: Colors.white), SizedBox(width: 8), Text('保存录制', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white))]),
+          child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(FluentIcons.save, size: 18, color: Colors.white), SizedBox(width: 8), Text('保存录制', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white))]),
         ))),
         const SizedBox(width: 8),
         Expanded(child: SizedBox(height: 48, child: FilledButton(
           onPressed: () => _discardRecording(context, state),
           style: ButtonStyle(backgroundColor: WidgetStatePropertyAll(Colors.red)),
-          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(FluentIcons.cancel, size: 18, color: Colors.white), SizedBox(width: 8), Text('丢弃录制', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white))]),
+          child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(FluentIcons.cancel, size: 18, color: Colors.white), SizedBox(width: 8), Text('丢弃录制', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white))]),
         ))),
       ]);
     }
@@ -150,20 +154,20 @@ class MacroPage extends StatelessWidget {
       return SizedBox(width: double.infinity, height: 48, child: FilledButton(
         onPressed: () => _stopRecording(context, state),
         style: ButtonStyle(backgroundColor: WidgetStatePropertyAll(Colors.red)),
-        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(FluentIcons.stop, size: 18, color: Colors.white), SizedBox(width: 8), Text('停止录制', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white))]),
+        child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(FluentIcons.stop, size: 18, color: Colors.white), SizedBox(width: 8), Text('停止录制', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white))]),
       ));
     }
     if (state.isPlaying) {
       return SizedBox(width: double.infinity, height: 48, child: FilledButton(
         onPressed: () => state.stopMacro(),
         style: ButtonStyle(backgroundColor: WidgetStatePropertyAll(Colors.orange)),
-        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(FluentIcons.stop, size: 18, color: Colors.white), SizedBox(width: 8), Text('停止播放', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white))]),
+        child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(FluentIcons.stop, size: 18, color: Colors.white), SizedBox(width: 8), Text('停止播放', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white))]),
       ));
     }
     return SizedBox(width: double.infinity, height: 48, child: FilledButton(
       onPressed: () => state.startRecording(),
       style: ButtonStyle(backgroundColor: WidgetStatePropertyAll(FluentTheme.of(context).accentColor)),
-      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(FluentIcons.record2, size: 18, color: Colors.white), SizedBox(width: 8), Text('开始录制', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white))]),
+      child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(FluentIcons.record2, size: 18, color: Colors.white), SizedBox(width: 8), Text('开始录制', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.white))]),
     ));
   }
 
@@ -441,6 +445,32 @@ class MacroPage extends StatelessWidget {
     }));
   }
 
+  // ─── Drag Builder ────────────────────────────────────────
+
+  void _showDragBuilder(BuildContext context, AppState state) {
+    showDialog(context: context, builder: (ctx) => _DragSwipeBuilderDialog(
+      isSwipe: false,
+      onConfirm: (name, events) async {
+        final macro = MacroModel(id: DateTime.now().millisecondsSinceEpoch.toString(), name: name, events: events, repeatCount: 1);
+        await state.saveMacroFromBuilder(macro);
+        if (ctx.mounted) Navigator.pop(ctx);
+      },
+    ));
+  }
+
+  // ─── Swipe Builder ────────────────────────────────────────
+
+  void _showSwipeBuilder(BuildContext context, AppState state) {
+    showDialog(context: context, builder: (ctx) => _DragSwipeBuilderDialog(
+      isSwipe: true,
+      onConfirm: (name, events) async {
+        final macro = MacroModel(id: DateTime.now().millisecondsSinceEpoch.toString(), name: name, events: events, repeatCount: 1);
+        await state.saveMacroFromBuilder(macro);
+        if (ctx.mounted) Navigator.pop(ctx);
+      },
+    ));
+  }
+
   // ─── Import / Export ──────────────────────────────────────
 
   Future<void> _importMacro(BuildContext context, AppState state) async {
@@ -587,6 +617,16 @@ class MacroPage extends StatelessWidget {
             final ms = delayMs > 0 ? delayMs : 10;
             buf.writeln('Sleep, $ms');
             break;
+          case MacroEventType.drag:
+            buf.writeln('Click, ${event.x}, ${event.y}, D');
+            buf.writeln('Sleep, ${event.durationMs ?? 300}');
+            buf.writeln('Click, ${event.endX}, ${event.endY}, U');
+            break;
+          case MacroEventType.swipe:
+            buf.writeln('Click, ${event.x}, ${event.y}, D');
+            buf.writeln('Sleep, ${event.durationMs ?? 200}');
+            buf.writeln('Click, ${event.endX}, ${event.endY}, U');
+            break;
         }
       }
     }
@@ -635,8 +675,9 @@ class MacroPage extends StatelessWidget {
           y = int.tryParse(remaining[1]);
         }
         MacroEventType type = MacroEventType.click;
-        if (isDown) type = MacroEventType.mouseDown;
-        else if (isUp) type = MacroEventType.mouseUp;
+        if (isDown) {
+          type = MacroEventType.mouseDown;
+        } else if (isUp) type = MacroEventType.mouseUp;
         events.add(MacroEvent(type: type, timestampMs: ts, x: x, y: y, button: button));
         ts += 10;
       }
@@ -812,6 +853,10 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
         if (ms >= 60000) return '等待 ${(ms / 60000).toStringAsFixed(1)} 分钟';
         if (ms >= 1000) return '等待 ${(ms / 1000).toStringAsFixed(1)} 秒';
         return '等待 $ms 毫秒';
+      case MacroEventType.drag:
+        return '拖拽 (${e.x},${e.y}) → (${e.endX},${e.endY}) ${e.durationMs ?? 300}ms';
+      case MacroEventType.swipe:
+        return '滑动 (${e.x},${e.y}) → (${e.endX},${e.endY}) ${e.durationMs ?? 200}ms';
     }
   }
 
@@ -824,6 +869,8 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
       case MacroEventType.keyRelease: return FluentIcons.keyboard_classic;
       case MacroEventType.scroll: return FluentIcons.scroll_up_down;
       case MacroEventType.wait: return FluentIcons.stopwatch;
+      case MacroEventType.drag: return FluentIcons.move;
+      case MacroEventType.swipe: return FluentIcons.forward;
     }
   }
 
@@ -839,11 +886,11 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
   }
 
   // Track pending modifiers even when no key is selected yet
-  List<String> _pendingMods = [];
+  final List<String> _pendingMods = [];
 
   void _insertAction(BuildContext context, {int? insertAt}) {
     final insertIndex = insertAt ?? _events.length;
-    String actionType = 'click'; // click, keyPress, keyRelease, mouseDown, mouseUp, scroll, wait
+    String actionType = 'click'; // click, keyPress, keyRelease, mouseDown, mouseUp, scroll, wait, drag, swipe
     // Click fields
     int clickX = 0, clickY = 0;
     String clickButton = 'left';
@@ -853,6 +900,9 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
     double scrollDy = 3.0;
     // Wait fields
     int waitMs = 500;
+    // Drag/Swipe fields
+    int dragStartX = 0, dragStartY = 0, dragEndX = 0, dragEndY = 0;
+    int dragDurationMs = 300;
 
     showDialog(context: context, builder: (_) {
       return StatefulBuilder(builder: (context, setDialogState) {
@@ -871,6 +921,7 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
               ('鼠标点击', 'click'), ('鼠标按下', 'mouseDown'), ('鼠标释放', 'mouseUp'),
               ('按键按下', 'keyPress'), ('按键释放', 'keyRelease'),
               ('滚轮', 'scroll'), ('等待', 'wait'),
+              ('拖拽', 'drag'), ('滑动', 'swipe'),
             ].map((item) {
               final selected = actionType == item.$2;
               return GestureDetector(
@@ -1035,6 +1086,52 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
                 ),
               )).toList()),
             ],
+            if (actionType == 'drag' || actionType == 'swipe') ...[
+              const SizedBox(height: 8),
+              Row(children: [
+                const Text('起点:', style: TextStyle(fontSize: 13)),
+                const SizedBox(width: 6),
+                SizedBox(width: 65, child: TextBox(
+                  controller: TextEditingController(text: dragStartX.toString()),
+                  onChanged: (v) { final p = int.tryParse(v); if (p != null) setDialogState(() => dragStartX = p); },
+                  placeholder: 'X',
+                )),
+                const SizedBox(width: 4),
+                SizedBox(width: 65, child: TextBox(
+                  controller: TextEditingController(text: dragStartY.toString()),
+                  onChanged: (v) { final p = int.tryParse(v); if (p != null) setDialogState(() => dragStartY = p); },
+                  placeholder: 'Y',
+                )),
+              ]),
+              const SizedBox(height: 6),
+              Row(children: [
+                const Text('终点:', style: TextStyle(fontSize: 13)),
+                const SizedBox(width: 6),
+                SizedBox(width: 65, child: TextBox(
+                  controller: TextEditingController(text: dragEndX.toString()),
+                  onChanged: (v) { final p = int.tryParse(v); if (p != null) setDialogState(() => dragEndX = p); },
+                  placeholder: 'X',
+                )),
+                const SizedBox(width: 4),
+                SizedBox(width: 65, child: TextBox(
+                  controller: TextEditingController(text: dragEndY.toString()),
+                  onChanged: (v) { final p = int.tryParse(v); if (p != null) setDialogState(() => dragEndY = p); },
+                  placeholder: 'Y',
+                )),
+              ]),
+              const SizedBox(height: 6),
+              Row(children: [
+                const Text('时长:', style: TextStyle(fontSize: 13)),
+                const SizedBox(width: 6),
+                SizedBox(width: 80, child: TextBox(
+                  controller: TextEditingController(text: dragDurationMs.toString()),
+                  onChanged: (v) { final p = int.tryParse(v); if (p != null) setDialogState(() => dragDurationMs = p); },
+                  placeholder: 'ms',
+                )),
+                const SizedBox(width: 4),
+                const Text('ms', style: TextStyle(fontSize: 12)),
+              ]),
+            ],
           ])),
           actions: [
             Button(onPressed: () => Navigator.pop(context), child: const Text('取消')),
@@ -1057,6 +1154,10 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
                   newEvent = MacroEvent(type: MacroEventType.scroll, timestampMs: baseTime, scrollDx: 0, scrollDy: scrollDy);
                 case 'wait':
                   newEvent = MacroEvent(type: MacroEventType.wait, timestampMs: baseTime + waitMs);
+                case 'drag':
+                  newEvent = MacroEvent(type: MacroEventType.drag, timestampMs: baseTime, x: dragStartX, y: dragStartY, endX: dragEndX, endY: dragEndY, durationMs: dragDurationMs);
+                case 'swipe':
+                  newEvent = MacroEvent(type: MacroEventType.swipe, timestampMs: baseTime, x: dragStartX, y: dragStartY, endX: dragEndX, endY: dragEndY, durationMs: dragDurationMs);
                 default:
                   newEvent = MacroEvent(type: MacroEventType.wait, timestampMs: baseTime + waitMs);
               }
@@ -1306,8 +1407,9 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
                         _events.insert(newIndex, event);
                         // Update editing index
                         if (_editingIndex != null) {
-                          if (_editingIndex == oldIndex) _editingIndex = newIndex;
-                          else if (oldIndex < _editingIndex! && newIndex >= _editingIndex!) _editingIndex = _editingIndex! - 1;
+                          if (_editingIndex == oldIndex) {
+                            _editingIndex = newIndex;
+                          } else if (oldIndex < _editingIndex! && newIndex >= _editingIndex!) _editingIndex = _editingIndex! - 1;
                           else if (oldIndex > _editingIndex! && newIndex <= _editingIndex!) _editingIndex = _editingIndex! + 1;
                         }
                       });
@@ -1406,8 +1508,9 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
           Navigator.pop(context);
           setState(() {
             _events.removeAt(index);
-            if (_editingIndex == index) _editingIndex = null;
-            else if (_editingIndex != null && _editingIndex! > index) _editingIndex = _editingIndex! - 1;
+            if (_editingIndex == index) {
+              _editingIndex = null;
+            } else if (_editingIndex != null && _editingIndex! > index) _editingIndex = _editingIndex! - 1;
           });
         }, isDestructive: true),
       ]),
@@ -1579,6 +1682,41 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
             SizedBox(width: 80, child: TextBox(controller: scrollCtrl, placeholder: '0')),
           ]),
         ],
+        if (event.type == MacroEventType.drag || event.type == MacroEventType.swipe) ...[
+          Row(children: [
+            const SizedBox(width: 60, child: Text('起点:', style: TextStyle(fontSize: 12))),
+            SizedBox(width: 70, child: TextBox(
+              controller: TextEditingController(text: (event.x ?? 0).toString()),
+              placeholder: 'X', onChanged: (v) { final p = int.tryParse(v); if (p != null) setState(() => _events[index] = event.copyWith(x: p)); },
+            )),
+            const SizedBox(width: 4),
+            SizedBox(width: 70, child: TextBox(
+              controller: TextEditingController(text: (event.y ?? 0).toString()),
+              placeholder: 'Y', onChanged: (v) { final p = int.tryParse(v); if (p != null) setState(() => _events[index] = event.copyWith(y: p)); },
+            )),
+          ]),
+          const SizedBox(height: 4),
+          Row(children: [
+            const SizedBox(width: 60, child: Text('终点:', style: TextStyle(fontSize: 12))),
+            SizedBox(width: 70, child: TextBox(
+              controller: TextEditingController(text: (event.endX ?? 0).toString()),
+              placeholder: 'X', onChanged: (v) { final p = int.tryParse(v); if (p != null) setState(() => _events[index] = event.copyWith(endX: p)); },
+            )),
+            const SizedBox(width: 4),
+            SizedBox(width: 70, child: TextBox(
+              controller: TextEditingController(text: (event.endY ?? 0).toString()),
+              placeholder: 'Y', onChanged: (v) { final p = int.tryParse(v); if (p != null) setState(() => _events[index] = event.copyWith(endY: p)); },
+            )),
+          ]),
+          const SizedBox(height: 4),
+          Row(children: [
+            const SizedBox(width: 60, child: Text('时长(ms):', style: TextStyle(fontSize: 12))),
+            SizedBox(width: 80, child: TextBox(
+              controller: TextEditingController(text: (event.durationMs ?? (event.type == MacroEventType.swipe ? 200 : 300)).toString()),
+              placeholder: 'ms', onChanged: (v) { final p = int.tryParse(v); if (p != null) setState(() => _events[index] = event.copyWith(durationMs: p)); },
+            )),
+          ]),
+        ],
         const SizedBox(height: 8),
         // Apply button
         Row(mainAxisAlignment: MainAxisAlignment.end, children: [
@@ -1619,6 +1757,10 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
                   type: event.type, timestampMs: event.timestampMs,
                   holdMs: newHoldMs, waitMs: newWaitMs,
                 );
+                break;
+              case MacroEventType.drag:
+              case MacroEventType.swipe:
+                newEvent = event.copyWith(holdMs: newHoldMs, waitMs: newWaitMs);
                 break;
             }
             setState(() {
@@ -2101,6 +2243,138 @@ class _DelayBuilderDialogState extends State<_DelayBuilderDialog> {
             const SizedBox(width: 6),
             Expanded(child: Text(
               _addKeyPress ? '每 $_delayMs ms 按一次 ${_keyToPress.toUpperCase()}，共 $_repeatCount 次' : '等待 $_delayMs ms，共 $_repeatCount 次',
+              style: const TextStyle(fontSize: 11),
+            )),
+          ]),
+        ),
+      ])),
+      actions: [FilledButton(onPressed: _confirm, child: const Text('创建宏'))],
+    );
+  }
+}
+
+// ─── Drag / Swipe Builder Dialog ──────────────────────────
+
+class _DragSwipeBuilderDialog extends StatefulWidget {
+  final bool isSwipe;
+  final Future<void> Function(String name, List<MacroEvent> events) onConfirm;
+  const _DragSwipeBuilderDialog({required this.isSwipe, required this.onConfirm});
+  @override
+  State<_DragSwipeBuilderDialog> createState() => _DragSwipeBuilderDialogState();
+}
+
+class _DragSwipeBuilderDialogState extends State<_DragSwipeBuilderDialog> {
+  late final _nameCtrl = TextEditingController(text: widget.isSwipe ? '滑动宏' : '拖拽宏');
+  int _startX = 0, _startY = 0, _endX = 0, _endY = 0;
+  late int _durationMs = widget.isSwipe ? 200 : 300;
+  int _repeatCount = 1;
+  int _waitMs = 100;
+
+  Future<void> _pickCoord(bool isStart) async {
+    final result = await ScreenOverlayService.instance.startPick();
+    if (result != null && mounted) {
+      setState(() {
+        if (isStart) { _startX = result.$1; _startY = result.$2; }
+        else { _endX = result.$1; _endY = result.$2; }
+      });
+    }
+  }
+
+  void _confirm() {
+    final events = <MacroEvent>[];
+    int ts = 0;
+    for (int i = 0; i < _repeatCount; i++) {
+      events.add(MacroEvent(
+        type: widget.isSwipe ? MacroEventType.swipe : MacroEventType.drag,
+        timestampMs: ts,
+        x: _startX, y: _startY,
+        endX: _endX, endY: _endY,
+        durationMs: _durationMs,
+      ));
+      ts += _durationMs + _waitMs;
+    }
+    widget.onConfirm(_nameCtrl.text, events);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final label = widget.isSwipe ? '滑动宏' : '拖拽宏';
+    final isDark = FluentTheme.of(context).brightness == Brightness.dark;
+    final containerBg = isDark ? const Color(0xFF303050) : const Color(0xFFF0F0F8);
+    return ContentDialog(
+      title: Text(label),
+      content: SizedBox(width: 420, child: Column(mainAxisSize: MainAxisSize.min, children: [
+        TextBox(controller: _nameCtrl, placeholder: '宏名称'),
+        const SizedBox(height: 12),
+        // Start point
+        Row(children: [
+          const Text('起点:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          const SizedBox(width: 8),
+          SizedBox(width: 70, child: TextBox(
+            controller: TextEditingController(text: _startX.toString()),
+            onChanged: (v) { final p = int.tryParse(v); if (p != null) setState(() => _startX = p); },
+            placeholder: 'X',
+          )),
+          const SizedBox(width: 4),
+          SizedBox(width: 70, child: TextBox(
+            controller: TextEditingController(text: _startY.toString()),
+            onChanged: (v) { final p = int.tryParse(v); if (p != null) setState(() => _startY = p); },
+            placeholder: 'Y',
+          )),
+          const SizedBox(width: 6),
+          Button(onPressed: () => _pickCoord(true), child: const Text('选取')),
+        ]),
+        const SizedBox(height: 8),
+        // End point
+        Row(children: [
+          const Text('终点:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          const SizedBox(width: 8),
+          SizedBox(width: 70, child: TextBox(
+            controller: TextEditingController(text: _endX.toString()),
+            onChanged: (v) { final p = int.tryParse(v); if (p != null) setState(() => _endX = p); },
+            placeholder: 'X',
+          )),
+          const SizedBox(width: 4),
+          SizedBox(width: 70, child: TextBox(
+            controller: TextEditingController(text: _endY.toString()),
+            onChanged: (v) { final p = int.tryParse(v); if (p != null) setState(() => _endY = p); },
+            placeholder: 'Y',
+          )),
+          const SizedBox(width: 6),
+          Button(onPressed: () => _pickCoord(false), child: const Text('选取')),
+        ]),
+        const SizedBox(height: 10),
+        // Duration
+        Row(children: [Text('${widget.isSwipe ? "滑动" : "拖拽"}时长:', style: const TextStyle(fontSize: 13)), const SizedBox(width: 8), Text('$_durationMs ms', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13))]),
+        AppSlider(value: _durationMs.toDouble(), min: 50, max: 3000, divisions: 59, label: '$_durationMs ms', onChanged: (v) => setState(() => _durationMs = v.round())),
+        const SizedBox(height: 6),
+        // Repeat
+        Row(children: [
+          const Text('重复次数:', style: TextStyle(fontSize: 13)),
+          const SizedBox(width: 8),
+          SizedBox(width: 70, child: TextBox(
+            controller: TextEditingController(text: _repeatCount.toString()),
+            onChanged: (v) { final p = int.tryParse(v); if (p != null && p > 0) setState(() => _repeatCount = p); },
+          )),
+          const SizedBox(width: 8),
+          const Text('间隔:', style: TextStyle(fontSize: 13)),
+          const SizedBox(width: 4),
+          SizedBox(width: 70, child: TextBox(
+            controller: TextEditingController(text: _waitMs.toString()),
+            onChanged: (v) { final p = int.tryParse(v); if (p != null) setState(() => _waitMs = p); },
+            placeholder: 'ms',
+          )),
+        ]),
+        const SizedBox(height: 8),
+        // Summary
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(color: containerBg, borderRadius: BorderRadius.circular(8)),
+          child: Row(children: [
+            Icon(widget.isSwipe ? FluentIcons.forward : FluentIcons.move, size: 14),
+            const SizedBox(width: 6),
+            Expanded(child: Text(
+              '($_startX,$_startY) → ($_endX,$_endY)，时长 $_durationMs ms，共 $_repeatCount 次',
               style: const TextStyle(fontSize: 11),
             )),
           ]),

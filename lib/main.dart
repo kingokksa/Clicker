@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:flutter_acrylic/flutter_acrylic.dart' as acrylic;
 import 'app.dart';
+import 'mobile_app.dart';
 import 'services/plugin_registry.dart';
 import 'services/plugins/macro_plugin.dart';
 import 'services/plugins/hold_trigger_plugin.dart';
@@ -13,24 +14,29 @@ import 'services/plugins/image_recognition_plugin.dart';
 import 'services/plugins/theme_center_plugin.dart';
 import 'services/plugins/background_execution_plugin.dart';
 import 'services/plugins/ai_tracker_plugin.dart';
+import 'services/system_tray_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  final registry = PluginRegistry.instance;
-  registry.registerPlugin(MacroPlugin());
-  registry.registerPlugin(HoldTriggerPlugin());
-  registry.registerPlugin(ImageRecognitionPlugin());
-  registry.registerPlugin(ThemeCenterPlugin());
-  registry.registerPlugin(BackgroundExecutionPlugin());
-  registry.registerPlugin(AiTrackerPlugin());
-  await registry.loadState();
+  if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+    final registry = PluginRegistry.instance;
+    registry.registerPlugin(MacroPlugin());
+    registry.registerPlugin(HoldTriggerPlugin());
+    registry.registerPlugin(ImageRecognitionPlugin());
+    registry.registerPlugin(ThemeCenterPlugin());
+    registry.registerPlugin(BackgroundExecutionPlugin());
+    registry.registerPlugin(AiTrackerPlugin());
+    await registry.loadState();
 
-  if (Platform.isWindows || Platform.isLinux) {
     await _initDesktopWindow();
+    runApp(const ClickerApp());
+  } else {
+    // Mobile (Android/iOS) — use Material app
+    // Initialize SystemTrayService to set up MethodChannel handler for overlay callbacks
+    await SystemTrayService().init();
+    runApp(const MobileClickerApp());
   }
-
-  runApp(const ClickerApp());
 }
 
 Future<void> _initDesktopWindow() async {

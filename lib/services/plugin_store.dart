@@ -165,10 +165,10 @@ class PluginStore extends ChangeNotifier {
       final exeDir = File(exePath).parent.path;
       // Try multiple paths: next to exe, project root, relative
       final candidates = [
-        '${exeDir}${Platform.pathSeparator}plugins${Platform.pathSeparator}plugin_index.json',
+        '$exeDir${Platform.pathSeparator}plugins${Platform.pathSeparator}plugin_index.json',
         'plugins${Platform.pathSeparator}plugin_index.json',
         // When running from project root in dev mode
-        '${exeDir}${Platform.pathSeparator}..${Platform.pathSeparator}..${Platform.pathSeparator}..${Platform.pathSeparator}..${Platform.pathSeparator}plugins${Platform.pathSeparator}plugin_index.json',
+        '$exeDir${Platform.pathSeparator}..${Platform.pathSeparator}..${Platform.pathSeparator}..${Platform.pathSeparator}..${Platform.pathSeparator}plugins${Platform.pathSeparator}plugin_index.json',
       ];
       for (final path in candidates) {
         final file = File(path);

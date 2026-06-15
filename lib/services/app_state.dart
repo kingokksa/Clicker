@@ -668,8 +668,9 @@ class AppState extends ChangeNotifier {
         case HoldTriggerAction.mouseClick:
           action = 0;
           int mb = 0;
-          if (k.mouseButton == 'right') mb = 1;
-          else if (k.mouseButton == 'middle') mb = 2;
+          if (k.mouseButton == 'right') {
+            mb = 1;
+          } else if (k.mouseButton == 'middle') mb = 2;
           actionParam = mb;
           break;
         case HoldTriggerAction.keyRepeat:

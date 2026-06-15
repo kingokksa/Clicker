@@ -154,7 +154,7 @@ class HotkeyService {
       final winInput = _input as WindowsInput;
       final entry = _macroHotkeyIds.entries.firstWhere(
         (e) => e.value == macroId,
-        orElse: () => MapEntry(-1, ''),
+        orElse: () => const MapEntry(-1, ''),
       );
       if (entry.key >= _macroHotkeyBaseId) {
         await winInput.unregisterHotkey(entry.key.toString());
