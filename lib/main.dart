@@ -7,7 +7,8 @@ import 'package:window_manager/window_manager.dart';
 import 'package:flutter_acrylic/flutter_acrylic.dart' as acrylic;
 import 'app.dart';
 import 'mobile_app.dart';
-import 'services/plugin_registry.dart';
+import 'services/plugin/plugin_manager.dart';
+import 'services/plugin/declarative_settings.dart';
 import 'services/plugins/macro_plugin.dart';
 import 'services/plugins/hold_trigger_plugin.dart';
 import 'services/plugins/image_recognition_plugin.dart';
@@ -20,15 +21,7 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-    final registry = PluginRegistry.instance;
-    registry.registerPlugin(MacroPlugin());
-    registry.registerPlugin(HoldTriggerPlugin());
-    registry.registerPlugin(ImageRecognitionPlugin());
-    registry.registerPlugin(ThemeCenterPlugin());
-    registry.registerPlugin(BackgroundExecutionPlugin());
-    registry.registerPlugin(AiTrackerPlugin());
-    await registry.loadState();
-
+    _registerBuiltinPlugins();
     await _initDesktopWindow();
     runApp(const ClickerApp());
   } else {
@@ -37,6 +30,21 @@ void main() async {
     await SystemTrayService().init();
     runApp(const MobileClickerApp());
   }
+}
+
+/// 注册内置 Dart 插件工厂。
+/// 惰性实例化：注册时仅创建探针实例读取 manifest，激活时才创建正式实例。
+/// initialize() 由 AppState.init() 在宿主服务就绪后调用。
+void _registerBuiltinPlugins() {
+  final pm = PluginManager.instance;
+  pm.registerDartPlugin(MacroPlugin.new);
+  pm.registerDartPlugin(HoldTriggerPlugin.new);
+  pm.registerDartPlugin(ImageRecognitionPlugin.new);
+  pm.registerDartPlugin(ThemeCenterPlugin.new);
+  pm.registerDartPlugin(BackgroundExecutionPlugin.new);
+  pm.registerDartPlugin(AiTrackerPlugin.new);
+  // 原生插件声明式设置页的渲染工厂（UI 层注入）
+  PluginManager.declarativePageFactory = buildDeclarativePluginPage;
 }
 
 Future<void> _initDesktopWindow() async {

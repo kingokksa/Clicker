@@ -5,7 +5,7 @@ library;
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart' show Color, PlatformException;
+import 'package:flutter/services.dart' show Clipboard, ClipboardData, Color, PlatformException;
 import '../models/clicker_config.dart';
 import '../models/hold_trigger_key.dart';
 import '../models/hotkey_config.dart';
@@ -17,6 +17,10 @@ import '../services/storage_service.dart';
 import '../services/window_detect_service.dart';
 import '../services/script_engine.dart';
 import '../services/remote_control_service.dart';
+import '../services/vision_service.dart';
+import 'plugin/plugin_api.dart';
+import 'plugin/plugin_host.dart';
+import 'plugin/plugin_manager.dart';
 import '../services/platform/platform_input.dart';
 import '../services/platform/windows_input.dart';
 import '../services/platform/android_input.dart';
@@ -312,6 +316,31 @@ class AppState extends ChangeNotifier {
 
       // Register per-macro hotkeys
       await _hotkeyService.reregisterAllMacroHotkeys(_macros);
+
+      // ── 插件系统接线：注入宿主服务 → 初始化插件管理器 ──
+      // 宿主服务是插件访问主程序能力的唯一通道（权限由 manifest 控制）
+      PluginHost.instance.setServices(PluginHostServices(
+        mouseDown: (x, y, button) =>
+            _platformInput.mouseDown(x: x, y: y, button: button),
+        mouseUp: (x, y, button) =>
+            _platformInput.mouseUp(x: x, y: y, button: button),
+        keyDown: (key) => _platformInput.keyPress(key),
+        keyUp: (key) => _platformInput.keyRelease(key),
+        moveCursor: (x, y) => _platformInput.mouseMove(x, y),
+        scroll: (dx, dy) => _platformInput.mouseScroll(dx: dx, dy: dy),
+        captureScreen: (x, y, w, h) =>
+            VisionService().captureScreenRect(x, y, w, h),
+        showNotification: (title, message) {
+          debugPrint('[plugin-notification] $title: $message');
+        },
+        readClipboard: () async =>
+            (await Clipboard.getData('text/plain'))?.text,
+        writeClipboard: (text) =>
+            Clipboard.setData(ClipboardData(text: text)),
+      ));
+      // 初始化插件管理器：加载持久化状态 → 发现外部插件 → 激活 onStartup 插件
+      // manual/onPage/onCommand 插件保持未激活，真正使用时才按需激活
+      await PluginManager.instance.initialize();
 
       _isInitialized = true;
       notifyListeners();

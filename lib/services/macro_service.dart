@@ -10,7 +10,7 @@ import '../models/clicker_config.dart';
 import '../models/macro_model.dart';
 import 'platform/platform_input.dart';
 import 'platform/windows_input.dart';
-import 'plugin_registry.dart';
+import 'plugin/plugin_manager.dart';
 
 /// Play a system sound via Win32 MessageBeep
 void _playSystemSound() {
@@ -402,9 +402,8 @@ class MacroService {
     _heldPlaybackMouseButtons.clear();
 
     // Set background mode on WindowsInput if macro has background mode enabled and plugin is available
-    final bgPlugin = PluginRegistry.instance.getPlugin('background_execution');
-    final bgPluginAvailable = bgPlugin != null && bgPlugin.installed && bgPlugin.enabled;
-    if (_input is WindowsInput && macro.backgroundMode && bgPluginAvailable) {
+    final bgEnabled = PluginManager.instance.isEnabled('background_execution');
+    if (_input is WindowsInput && macro.backgroundMode && bgEnabled) {
       int hwnd = macro.backgroundTargetHwnd;
       // Fallback to plugin config if macro has no target set
       if (hwnd == 0) {

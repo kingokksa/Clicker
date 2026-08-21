@@ -26,3 +26,16 @@ macros/*.json
 *.pyc
 __pycache__/
 .ruff_cache/
+*.pdb
+
+# Driver build caches (recoverable via packages.config / VS)
+driver/clicker_filter/.vs/
+driver/clicker_filter/packages/
+driver/clicker_filter/build/
+driver/clicker_filter/x64/
+driver/**/*.vcxproj.user
+
+# Allow driver binaries in driver/ directory
+!driver/**/*.sys
+!driver/**/*.cat
+!driver/**/*.inf

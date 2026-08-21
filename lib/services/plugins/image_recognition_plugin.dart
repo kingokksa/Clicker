@@ -1,47 +1,47 @@
-/// Image recognition plugin — template matching, OCR, condition triggers
+/// Image recognition plugin — 模板匹配、OCR、条件触发
 library;
 
-import 'package:fluent_ui/fluent_ui.dart';
-import '../plugin_system.dart';
-import '../plugin_registry.dart';
+import '../plugin/plugin_api.dart';
+import '../plugin/plugin_manifest.dart';
+import '../plugin/plugin_manager.dart';
 import '../../screens/sidebar/image_recognition_page.dart';
 
-class ImageRecognitionPlugin extends ClickerPlugin {
+class ImageRecognitionPlugin extends Plugin {
   @override
-  final manifest = const ClickerPluginManifest(
+  final PluginManifest manifest = const PluginManifest(
     id: 'image_recognition',
     name: '图像识别',
     version: '1.0.0',
     author: 'Clicker',
-    icon: FluentIcons.image_pixel,
-    category: PluginCategory.vision,
-    source: PluginSource.builtin,
+    description: '模板匹配与 OCR 识别，可作点击条件触发',
+    category: 'vision',
     platforms: ['windows'],
+    runtime: PluginRuntime.dart,
+    permissions: [PluginPermission.screen, PluginPermission.input],
+    activationEvents: ['manual'],
+    contributions: PluginContributions(pages: [
+      PageContribution(
+          id: 'image_recognition', title: '图像识别', icon: 'image_pixel', order: 50),
+    ]),
+    icon: 'image_pixel',
   );
 
   @override
-  Future<void> onInitialize() async {
-    // Install AI tracker together with image recognition
-    final registry = PluginRegistry.instance;
-    final aiTracker = registry.getPlugin('ai_tracker');
-    if (aiTracker != null && !aiTracker.installed) {
-      await registry.installPlugin('ai_tracker');
+  Future<void> onActivate(PluginContext context) async {
+    // 联动安装 AI 跟踪器（检测能力提供者）
+    final manager = PluginManager.instance;
+    final aiTracker = manager.byId('ai_tracker');
+    if (aiTracker != null && !aiTracker.isInstalled) {
+      await manager.installPlugin('ai_tracker');
     }
+
+    context.registerPage(
+      const PageContribution(
+          id: 'image_recognition', title: '图像识别', icon: 'image_pixel', order: 50),
+      (context) => const ImageRecognitionPage(),
+    );
   }
 
   @override
-  Future<void> onDispose() async {}
-
-  @override
-  Future<void> onUninstall() async {
-    // Uninstall AI tracker together with image recognition
-    final registry = PluginRegistry.instance;
-    final aiTracker = registry.getPlugin('ai_tracker');
-    if (aiTracker != null && aiTracker.installed) {
-      await registry.uninstallPlugin('ai_tracker');
-    }
-  }
-
-  @override
-  Widget onCreatePage(BuildContext context) => const ImageRecognitionPage();
+  Future<void> onDeactivate() async {}
 }

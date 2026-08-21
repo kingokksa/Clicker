@@ -145,10 +145,10 @@ class ClickService {
 
     // Check accessibility service on Android
     if (Platform.isAndroid && _input is AndroidInput) {
-      final enabled = await (_input as AndroidInput).isAccessibilityServiceEnabled();
+      final enabled = await (_input).isAccessibilityServiceEnabled();
       if (!enabled) {
         onError?.call('无障碍服务未开启，请在系统设置中开启');
-        await (_input as AndroidInput).openAccessibilitySettings();
+        await (_input).openAccessibilitySettings();
         return;
       }
     }

@@ -1,6 +1,7 @@
 {
   "version": 1,
-  "updated": "2025-01-01",
+  "name": "官方插件",
+  "updated": "2026-08-21",
   "plugins": [
     {
       "id": "hold_trigger",

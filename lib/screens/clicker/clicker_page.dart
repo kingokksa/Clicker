@@ -1,10 +1,8 @@
 /// Auto-clicker page — Fluent UI design.
 library;
 
-import 'dart:io';
 import 'package:fluent_ui/fluent_ui.dart';
 import '../../widgets/debounced_text_box.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../services/app_state.dart';
 import '../../services/screen_overlay_service.dart';

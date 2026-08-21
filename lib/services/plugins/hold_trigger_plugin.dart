@@ -1,29 +1,39 @@
-/// Hold trigger plugin — configure keys that auto-repeat when held
+/// Hold trigger plugin — 按住自动连发
 library;
 
-import 'package:fluent_ui/fluent_ui.dart';
-import '../plugin_system.dart';
+import '../plugin/plugin_api.dart';
+import '../plugin/plugin_manifest.dart';
 import '../../screens/sidebar/hold_trigger_page.dart';
 
-class HoldTriggerPlugin extends ClickerPlugin {
+class HoldTriggerPlugin extends Plugin {
   @override
-  final manifest = const ClickerPluginManifest(
+  final PluginManifest manifest = const PluginManifest(
     id: 'hold_trigger',
     name: '按住触发',
     version: '1.0.0',
     author: 'Clicker',
-    icon: FluentIcons.keyboard_classic,
-    category: PluginCategory.click,
-    source: PluginSource.builtin,
+    description: '按住指定按键时自动连发，松开即停',
+    category: 'click',
     platforms: ['windows', 'linux', 'macos'],
+    runtime: PluginRuntime.dart,
+    permissions: [PluginPermission.input, PluginPermission.storage],
+    activationEvents: ['manual'],
+    contributions: PluginContributions(pages: [
+      PageContribution(
+          id: 'hold_trigger', title: '按住触发', icon: 'keyboard_classic', order: 30),
+    ]),
+    icon: 'keyboard_classic',
   );
 
   @override
-  Future<void> onInitialize() async {}
+  Future<void> onActivate(PluginContext context) async {
+    context.registerPage(
+      const PageContribution(
+          id: 'hold_trigger', title: '按住触发', icon: 'keyboard_classic', order: 30),
+      (context) => const HoldTriggerPage(),
+    );
+  }
 
   @override
-  Future<void> onDispose() async {}
-
-  @override
-  Widget onCreatePage(BuildContext context) => const HoldTriggerPage();
+  Future<void> onDeactivate() async {}
 }

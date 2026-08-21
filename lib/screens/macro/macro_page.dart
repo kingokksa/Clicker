@@ -7,14 +7,13 @@ import 'package:provider/provider.dart';
 import 'package:flutter/services.dart';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
 import '../../services/app_state.dart';
 import '../../models/macro_model.dart';
 import '../../models/hotkey_config.dart';
 import '../../models/clicker_config.dart';
-import '../../services/plugin_registry.dart';
+import '../../services/plugin/plugin_manager.dart';
 import '../../services/screen_overlay_service.dart';
 import '../../widgets/app_slider.dart';
 
@@ -778,8 +777,7 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
   bool _loadingWindows = false;
 
   bool get _bgPluginAvailable {
-    final plugin = PluginRegistry.instance.getPlugin('background_execution');
-    return plugin != null && plugin.installed && plugin.enabled;
+    return PluginManager.instance.isEnabled('background_execution');
   }
 
   static const _platformChannel = MethodChannel('com.clicker.pro/platform');

@@ -2,6 +2,7 @@
 /// Supports window resizing via DragToResizeArea, system tray, and floating window mode.
 library;
 
+import 'dart:async';
 import 'dart:io';
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:provider/provider.dart';
@@ -9,12 +10,22 @@ import 'package:window_manager/window_manager.dart';
 import 'package:flutter/services.dart';
 import '../services/app_state.dart';
 import '../services/system_tray_service.dart';
-import '../services/plugin_system.dart';
-import '../services/plugin_registry.dart';
+import '../services/plugin/plugin_manager.dart';
+import '../services/plugin/plugin_host.dart';
+import '../services/plugin/plugin_manifest.dart';
+import '../services/plugin/icon_resolver.dart';
 import 'clicker/clicker_page.dart';
 import 'settings/settings_page.dart';
 import 'sidebar/plugin_page.dart';
 import 'floating_window.dart';
+
+/// 导航条目（来自已启用插件 manifest 的页面声明，静态数据零加载成本）
+class _NavItem {
+  final String pageId;
+  final String label;
+  final IconData icon;
+  const _NavItem({required this.pageId, required this.label, required this.icon});
+}
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -32,73 +43,100 @@ class HomeScreenState extends State<HomeScreen> with WindowListener {
   bool _isMaximized = false;
   bool _isClosing = false;
 
-  final Map<String, ({Widget widget, GlobalKey key})> _pluginPageCache = {};
-  final Map<String, ({Widget widget, GlobalKey key})> _lazyPages = {};
+  /// 插件页面 widget 缓存（激活后首次构建，切换页面不销毁）
+  final Map<String, Widget> _pluginPageCache = {};
+  /// 按需激活防重入
+  final Set<String> _activatingPages = {};
 
-  /// Navigate to a specific page by ID (e.g., 'hold_trigger', 'background_execution')
+  /// Navigate to a specific page by ID (e.g., 'macro', 'hold_trigger', 'settings')
   void navigateTo(String pageId) {
     if (mounted) setState(() => _currentPageId = pageId);
   }
 
-  List<ClickerPlugin> get _navPlugins => PluginRegistry.instance.enabledPlugins.where((p) => p.manifest.showInNav).toList();
-
-  int _pageIdToIndex(String pageId) {
-    final plugins = _navPlugins;
-    if (pageId == 'clicker') return 0;
-    for (int i = 0; i < plugins.length; i++) {
-      if (plugins[i].manifest.id == pageId) return i + 1;
+  /// 导航条目：已启用插件 manifest 声明的页面（静态，无需激活插件）。
+  /// 点击页面时才触发插件按需激活（onPage 事件）。
+  List<_NavItem> _navItems() {
+    final pm = PluginManager.instance;
+    final items = <_NavItem>[];
+    for (final desc in pm.plugins) {
+      if (!pm.isInstalled(desc.id) || !pm.isEnabled(desc.id)) continue;
+      for (final page in desc.manifest.contributions.pages) {
+        if (!page.showInNav) continue;
+        items.add(_NavItem(
+          pageId: resolveFullPageId(desc.id, page.id),
+          label: page.title,
+          icon: resolvePluginIcon(page.icon ?? desc.manifest.icon),
+        ));
+      }
     }
-    final pluginCount = plugins.length;
-    if (pageId == 'plugin_center') return pluginCount + 1;
-    if (pageId == 'settings') return pluginCount + 2;
+    // 按 manifest 声明的 order 排序（PageContribution 无序时保持注册顺序）
+    final orders = <String, int>{};
+    for (final desc in pm.plugins) {
+      for (final page in desc.manifest.contributions.pages) {
+        orders[resolveFullPageId(desc.id, page.id)] = page.order;
+      }
+    }
+    items.sort((a, b) =>
+        (orders[a.pageId] ?? 100).compareTo(orders[b.pageId] ?? 100));
+    return items;
+  }
+
+  int _pageIdToIndex(String pageId, List<_NavItem> navItems) {
+    if (pageId == 'clicker') return 0;
+    for (int i = 0; i < navItems.length; i++) {
+      if (navItems[i].pageId == pageId) return i + 1;
+    }
+    final n = navItems.length;
+    if (pageId == 'plugin_center') return n + 1;
+    if (pageId == 'settings') return n + 2;
     return 0;
   }
 
-  String _indexToPageId(int index) {
-    final plugins = _navPlugins;
-    final pluginCount = plugins.length;
+  String _indexToPageId(int index, List<_NavItem> navItems) {
+    final n = navItems.length;
     if (index == 0) return 'clicker';
-    if (index >= 1 && index <= pluginCount) return plugins[index - 1].manifest.id;
-    if (index == pluginCount + 1) return 'plugin_center';
-    if (index == pluginCount + 2) return 'settings';
+    if (index >= 1 && index <= n) return navItems[index - 1].pageId;
+    if (index == n + 1) return 'plugin_center';
+    if (index == n + 2) return 'settings';
     return 'clicker';
   }
 
-  Widget _getOrCreatePage(String pageId) {
-    final existing = _lazyPages[pageId];
-    if (existing != null) return existing.widget;
+  /// 页面切换入口：插件页面若未激活则触发按需激活
+  void _selectPage(String pageId) {
+    setState(() => _currentPageId = pageId);
+    final reg = PluginHost.instance.page(pageId);
+    if (reg == null) _ensurePageActivated(pageId);
+  }
 
-    final plugins = _navPlugins;
+  void _ensurePageActivated(String pageId) {
+    if (_activatingPages.contains(pageId)) return;
+    _activatingPages.add(pageId);
+    PluginManager.instance.ensurePageActivated(pageId).whenComplete(() {
+      _activatingPages.remove(pageId);
+    });
+  }
 
-    Widget page;
-    GlobalKey key;
+  /// 构建页面内容。插件页面优先从 PluginHost 取已注册 builder；
+  /// 未注册（插件未激活）时显示加载占位并触发按需激活，
+  /// 激活完成后 PluginHost 通知重建，即可渲染真实页面。
+  Widget _buildPageContent(String pageId) {
+    if (pageId == 'clicker') return const ClickerPage();
+    if (pageId == 'plugin_center') return const PluginPage();
+    if (pageId == 'settings') return const SettingsPage();
 
-    if (pageId == 'clicker') {
-      key = GlobalKey();
-      page = KeyedSubtree(key: key, child: const ClickerPage());
-    } else if (plugins.any((p) => p.manifest.id == pageId)) {
-      final plugin = plugins.firstWhere((p) => p.manifest.id == pageId);
-      final cached = _pluginPageCache[pageId];
-      if (cached == null) {
-        key = GlobalKey();
-        final widget = KeyedSubtree(key: key, child: Builder(builder: plugin.buildPage));
-        _pluginPageCache[pageId] = (widget: widget, key: key);
-        _lazyPages[pageId] = (widget: widget, key: key);
-        return widget;
-      }
-      _lazyPages[pageId] = cached;
-      return cached.widget;
-    } else if (pageId == 'plugin_center') {
-      key = GlobalKey();
-      page = KeyedSubtree(key: key, child: const PluginPage());
-    } else {
-      key = GlobalKey();
-      page = KeyedSubtree(key: key, child: const SettingsPage());
+    final cached = _pluginPageCache[pageId];
+    if (cached != null) return cached;
+
+    final reg = PluginHost.instance.page(pageId);
+    if (reg != null) {
+      final widget = Builder(builder: reg.builder);
+      _pluginPageCache[pageId] = widget;
+      return widget;
     }
 
-    final entry = (widget: page, key: key);
-    _lazyPages[pageId] = entry;
-    return page;
+    // 插件未激活 — 触发按需激活并显示占位
+    _ensurePageActivated(pageId);
+    return const Center(child: ProgressRing());
   }
 
   static const _platformChannel = MethodChannel('com.clicker.pro/platform');
@@ -109,31 +147,32 @@ class HomeScreenState extends State<HomeScreen> with WindowListener {
     windowManager.addListener(this);
     _initSystemTray();
     _checkMaximized();
-    // Rebuild nav when plugins change
-    PluginRegistry.instance.addListener(_onPluginsChanged);
+    // 插件状态/扩展点变化时重建导航
+    PluginManager.instance.addListener(_onPluginStateChanged);
+    PluginHost.instance.addListener(_onPluginStateChanged);
   }
 
   @override
   void dispose() {
     _pluginPageCache.clear();
-    PluginRegistry.instance.removeListener(_onPluginsChanged);
+    PluginManager.instance.removeListener(_onPluginStateChanged);
+    PluginHost.instance.removeListener(_onPluginStateChanged);
     windowManager.removeListener(this);
     super.dispose();
   }
 
-  void _onPluginsChanged() {
-    if (mounted) {
-      final enabledIds = PluginRegistry.instance.enabledPlugins.map((p) => p.manifest.id).toSet();
-      _pluginPageCache.removeWhere((id, _) => !enabledIds.contains(id));
-      _lazyPages.removeWhere((id, _) => id != 'clicker' && id != 'plugin_center' && id != 'settings' && !enabledIds.contains(id));
-      if (!enabledIds.contains(_currentPageId) &&
-          _currentPageId != 'clicker' &&
-          _currentPageId != 'plugin_center' &&
-          _currentPageId != 'settings') {
-        _currentPageId = 'clicker';
-      }
-      setState(() {});
+  void _onPluginStateChanged() {
+    if (!mounted) return;
+    final validIds = _navItems().map((i) => i.pageId).toSet();
+    // 插件停用后移除其页面缓存
+    _pluginPageCache.removeWhere((id, _) => !validIds.contains(id));
+    if (!validIds.contains(_currentPageId) &&
+        _currentPageId != 'clicker' &&
+        _currentPageId != 'plugin_center' &&
+        _currentPageId != 'settings') {
+      _currentPageId = 'clicker';
     }
+    setState(() {});
   }
 
   void _checkMaximized() {
@@ -182,6 +221,8 @@ class HomeScreenState extends State<HomeScreen> with WindowListener {
     state.stopMacro();
     state.cancelRecording();
     state.platformInput.stopListening();
+    // 通知插件应用退出并释放全部资源
+    unawaited(PluginManager.instance.shutdown());
     // Use native PostQuitMessage for instant exit.
     // windowManager.destroy() uses PostQuitMessage(0) which is correct,
     // but we also need to destroy the window immediately.
@@ -254,32 +295,28 @@ class HomeScreenState extends State<HomeScreen> with WindowListener {
       return FloatingWindow(onSwitchToMain: _switchToMain);
     }
 
-    final plugins = _navPlugins;
+    final navItems = _navItems();
     final appState = context.watch<AppState>();
 
-    _getOrCreatePage(_currentPageId);
-
-    final currentIndex = _pageIdToIndex(_currentPageId);
+    final currentIndex = _pageIdToIndex(_currentPageId, navItems);
 
     // Build all pages in order for IndexedStack
-    final allPageIds = <String>['clicker'];
-    for (final p in plugins) {
-      allPageIds.add(p.manifest.id);
-    }
-    allPageIds.add('plugin_center');
-    allPageIds.add('settings');
+    final allPageIds = <String>[
+      'clicker',
+      for (final item in navItems) item.pageId,
+      'plugin_center',
+      'settings',
+    ];
 
-    final pages = allPageIds.map((id) {
-      _getOrCreatePage(id);
-      return _lazyPages[id]?.widget ?? const SizedBox.shrink();
-    }).toList();
+    final pages =
+        allPageIds.map(_buildPageContent).toList();
 
     return DragToResizeArea(
       resizeEdgeSize: 6,
       child: Column(children: [
         _GlassTitleBar(isDark: isDark, isMaximized: _isMaximized, onFloatingMode: _switchToFloating, animations: appState.uiAnimations),
         Expanded(child: Row(children: [
-          _buildSidebar(isDark, plugins, currentIndex),
+          _buildSidebar(isDark, navItems, currentIndex),
           // Page content — IndexedStack keeps all pages alive (no dispose on switch)
           Expanded(child: ColoredBox(
             color: FluentTheme.of(context).scaffoldBackgroundColor,
@@ -293,7 +330,7 @@ class HomeScreenState extends State<HomeScreen> with WindowListener {
     );
   }
 
-  Widget _buildSidebar(bool isDark, List<ClickerPlugin> plugins, int selectedIndex) {
+  Widget _buildSidebar(bool isDark, List<_NavItem> navItems, int selectedIndex) {
     final accent = FluentTheme.of(context).accentColor;
     const compactWidth = 50.0;
     final bgColor = isDark ? const Color(0xFF16162A) : const Color(0xFFF2F2FA);
@@ -301,12 +338,12 @@ class HomeScreenState extends State<HomeScreen> with WindowListener {
     // Build all sidebar items
     final items = <_SidebarItem>[
       const _SidebarItem(icon: FluentIcons.touch, label: '连点', index: 0),
-      // Plugin items (index 1..pluginCount)
-      for (int i = 0; i < plugins.length; i++)
-        _SidebarItem(icon: plugins[i].manifest.icon, label: plugins[i].manifest.name, index: i + 1),
+      // Plugin nav items (index 1..n)
+      for (int i = 0; i < navItems.length; i++)
+        _SidebarItem(icon: navItems[i].icon, label: navItems[i].label, index: i + 1),
       // Footer items
-      _SidebarItem(icon: FluentIcons.puzzle, label: '插件中心', index: plugins.length + 1),
-      _SidebarItem(icon: FluentIcons.settings, label: '设置', index: plugins.length + 2),
+      _SidebarItem(icon: FluentIcons.puzzle, label: '插件中心', index: navItems.length + 1),
+      _SidebarItem(icon: FluentIcons.settings, label: '设置', index: navItems.length + 2),
     ];
 
     return Container(
@@ -326,16 +363,16 @@ class HomeScreenState extends State<HomeScreen> with WindowListener {
         Expanded(child: ListView.builder(
           padding: EdgeInsets.zero,
           itemCount: items.length - 2, // exclude footer items
-          itemBuilder: (ctx, i) => _buildSidebarItem(items[i], selectedIndex, accent, isDark),
+          itemBuilder: (ctx, i) => _buildSidebarItem(items[i], navItems, selectedIndex, accent, isDark),
         )),
         // Footer items (plugin center + settings)
-        ...List.generate(2, (i) => _buildSidebarItem(items[items.length - 2 + i], selectedIndex, accent, isDark)),
+        ...List.generate(2, (i) => _buildSidebarItem(items[items.length - 2 + i], navItems, selectedIndex, accent, isDark)),
         const SizedBox(height: 8),
       ]),
     );
   }
 
-  Widget _buildSidebarItem(_SidebarItem item, int selectedIndex, AccentColor accent, bool isDark) {
+  Widget _buildSidebarItem(_SidebarItem item, List<_NavItem> navItems, int selectedIndex, AccentColor accent, bool isDark) {
     final selected = item.index == selectedIndex;
     final selectedBg = accent.withValues(alpha: 0.15);
     final state = context.watch<AppState>();
@@ -350,7 +387,7 @@ class HomeScreenState extends State<HomeScreen> with WindowListener {
         accent: accent,
         isDark: isDark,
         animations: animations,
-        onTap: () => setState(() => _currentPageId = _indexToPageId(item.index)),
+        onTap: () => _selectPage(_indexToPageId(item.index, navItems)),
       ),
     );
   }
