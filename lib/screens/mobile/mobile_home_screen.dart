@@ -7,6 +7,7 @@ import '../../services/mobile_app_state.dart';
 import 'mobile_clicker_page.dart';
 import 'mobile_macro_page.dart';
 import 'mobile_hold_trigger_page.dart';
+import 'mobile_vision_page.dart';
 import 'mobile_settings_page.dart';
 
 class MobileHomeScreen extends StatefulWidget {
@@ -23,6 +24,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
     MobileClickerPage(),
     MobileMacroPage(),
     MobileHoldTriggerPage(),
+    MobileVisionPage(),
     MobileSettingsPage(),
   ];
 
@@ -58,6 +60,11 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
             icon: Icon(Icons.back_hand_outlined, color: isDark ? Colors.grey : Colors.grey),
             selectedIcon: Icon(Icons.back_hand, color: accent),
             label: '长按',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.center_focus_weak_outlined, color: isDark ? Colors.grey : Colors.grey),
+            selectedIcon: Icon(Icons.center_focus_strong, color: accent),
+            label: '识别',
           ),
           NavigationDestination(
             icon: Icon(Icons.settings_outlined, color: isDark ? Colors.grey : Colors.grey),

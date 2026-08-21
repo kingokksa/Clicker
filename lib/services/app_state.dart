@@ -338,7 +338,7 @@ class AppState extends ChangeNotifier {
         moveCursor: (x, y) => _platformInput.mouseMove(x, y),
         scroll: (dx, dy) => _platformInput.mouseScroll(dx: dx, dy: dy),
         captureScreen: (x, y, w, h) =>
-            VisionService().captureScreenRect(x, y, w, h),
+            VisionService.instance.captureScreenRect(x, y, w, h),
         showNotification: (title, message) {
           debugPrint('[plugin-notification] $title: $message');
         },
@@ -604,6 +604,9 @@ class AppState extends ChangeNotifier {
     hotkeyConfig: _hotkeyConfig,
     themeMode: _themeMode,
     alwaysOnTop: _alwaysOnTop,
+    holdTriggerKeys: _holdTriggerKeys,
+    accentColorValue: _accentColor.toARGB32(),
+    uiAnimations: _uiAnimations,
   );
 
   Future<ImportResult> importConfig() async {
@@ -619,8 +622,16 @@ class AppState extends ChangeNotifier {
       }
       if (result.themeMode != null) _themeMode = result.themeMode!;
       if (result.alwaysOnTop != null) _alwaysOnTop = result.alwaysOnTop!;
+      if (result.accentColorValue != null) {
+        _accentColor = Color(result.accentColorValue!);
+      }
+      if (result.uiAnimations != null) _uiAnimations = result.uiAnimations!;
       _macros = await _storage.loadAllMacros();
       _profiles = _storage.listProfiles();
+      if (result.holdTriggerKeys != null) {
+        _holdTriggerKeys = result.holdTriggerKeys!;
+        _registerHoldTriggerKeys();
+      }
       notifyListeners();
     }
     return result;

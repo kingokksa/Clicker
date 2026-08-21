@@ -549,6 +549,9 @@ class MobileAppState extends ChangeNotifier {
         hotkeyConfig: _hotkeyConfig,
         themeMode: _themeMode,
         alwaysOnTop: false,
+        holdTriggerKeys: _holdTriggerKeys,
+        accentColorValue: _accentColor.toARGB32(),
+        uiAnimations: _uiAnimations,
       );
 
   Future<ImportResult> importConfig() async {
@@ -563,6 +566,13 @@ class MobileAppState extends ChangeNotifier {
         _hotkeyService.updateConfig(_hotkeyConfig);
       }
       if (result.themeMode != null) _themeMode = result.themeMode!;
+      if (result.accentColorValue != null) {
+        _accentColor = Color(result.accentColorValue!);
+      }
+      if (result.uiAnimations != null) _uiAnimations = result.uiAnimations!;
+      if (result.holdTriggerKeys != null) {
+        _holdTriggerKeys = result.holdTriggerKeys!;
+      }
       _macros = await _storage.loadAllMacros();
       _profiles = _storage.listProfiles();
       notifyListeners();

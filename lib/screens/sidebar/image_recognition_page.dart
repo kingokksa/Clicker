@@ -131,7 +131,7 @@ class ImageRecognitionPage extends StatefulWidget {
 class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
   int _selectedTab = 0;
   final ScreenMonitorService _monitor = ScreenMonitorService();
-  final VisionService _vision = VisionService();
+  final VisionService _vision = VisionService.instance;
 
   int _checkIntervalMs = 500;
 
