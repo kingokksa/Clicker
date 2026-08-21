@@ -823,9 +823,7 @@ class _ClickerPageState extends State<ClickerPage> {
   Widget _buildStatusBar(AppState state, FluentThemeData theme) {
     final isKeyboard = state.clickerConfig.clickMode == ClickMode.keyboard;
     final showStats = state.clickerConfig.statsEnabled;
-    final cps = state.clickService.averageCps;
-    final elapsed = state.clickService.elapsedDuration;
-    final elapsedStr = elapsed != null
+    String fmtElapsed(Duration? elapsed) => elapsed != null
         ? (elapsed.inHours > 0 ? '${elapsed.inHours}h ${elapsed.inMinutes % 60}m' : (elapsed.inMinutes > 0 ? '${elapsed.inMinutes}m ${elapsed.inSeconds % 60}s' : '${elapsed.inSeconds}s'))
         : '';
     return ExcludeSemantics(
@@ -833,19 +831,23 @@ class _ClickerPageState extends State<ClickerPage> {
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(color: const Color(0xFF00E676).withValues(alpha: 0.08), borderRadius: BorderRadius.circular(8),
         border: Border.all(color: const Color(0xFF00E676).withValues(alpha: 0.3))),
-      child: Row(children: [
-        const Icon(FluentIcons.circle_fill, size: 8, color: Color(0xFF00E676)),
-        const SizedBox(width: 8),
-        Text('运行中 · ${isKeyboard ? "已按键" : "已点击"} ${state.clickCount} 次', style: const TextStyle(color: Color(0xFF00E676), fontSize: 13)),
-        if (showStats) ...[
-          const SizedBox(width: 12),
-          Text('${cps.toStringAsFixed(1)} CPS', style: TextStyle(color: const Color(0xFF00E676).withValues(alpha: 0.8), fontSize: 12)),
+      // 计数/CPS/耗时走独立 notifier 精准刷新，避免全页重建
+      child: ValueListenableBuilder<int>(
+        valueListenable: state.clickCountNotifier,
+        builder: (_, count, __) => Row(children: [
+          const Icon(FluentIcons.circle_fill, size: 8, color: Color(0xFF00E676)),
           const SizedBox(width: 8),
-          Text(elapsedStr, style: TextStyle(color: const Color(0xFF00E676).withValues(alpha: 0.7), fontSize: 12)),
-        ],
-        const Spacer(),
-        Text('${state.clickerConfig.intervalMs}ms/次', style: TextStyle(color: const Color(0xFF00E676).withValues(alpha: 0.7), fontSize: 12)),
-      ]),
+          Text('运行中 · ${isKeyboard ? "已按键" : "已点击"} $count 次', style: const TextStyle(color: Color(0xFF00E676), fontSize: 13)),
+          if (showStats) ...[
+            const SizedBox(width: 12),
+            Text('${state.clickService.averageCps.toStringAsFixed(1)} CPS', style: TextStyle(color: const Color(0xFF00E676).withValues(alpha: 0.8), fontSize: 12)),
+            const SizedBox(width: 8),
+            Text(fmtElapsed(state.clickService.elapsedDuration), style: TextStyle(color: const Color(0xFF00E676).withValues(alpha: 0.7), fontSize: 12)),
+          ],
+          const Spacer(),
+          Text('${state.clickerConfig.intervalMs}ms/次', style: TextStyle(color: const Color(0xFF00E676).withValues(alpha: 0.7), fontSize: 12)),
+        ]),
+      ),
     ));
   }
 }

@@ -14,7 +14,6 @@ dependencies:
   # UI
   fluent_ui: ^4.8.6
   flutter_acrylic: ^1.1.3
-  google_fonts: ^6.2.1
 
   # State management
   provider: ^6.1.1

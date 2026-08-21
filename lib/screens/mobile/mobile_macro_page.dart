@@ -459,25 +459,20 @@ class _MobileMacroEditorState extends State<_MobileMacroEditor> {
     }
   }
 
-  IconData _eventIcon(MacroEventType type) {
-    switch (type) {
-      case MacroEventType.mouseDown:
-      case MacroEventType.mouseUp:
-      case MacroEventType.click:
-        return Icons.mouse;
-      case MacroEventType.keyPress:
-      case MacroEventType.keyRelease:
-        return Icons.keyboard;
-      case MacroEventType.scroll:
-        return Icons.swap_vert;
-      case MacroEventType.wait:
-        return Icons.timer;
-      case MacroEventType.drag:
-        return Icons.open_with;
-      case MacroEventType.swipe:
-        return Icons.swipe;
-    }
-  }
+  // 顶层 const 映射 — 保证 icon tree-shaking 能静态分析（字体只打包用到的图标）
+  static const Map<MacroEventType, IconData> _eventIcons = {
+    MacroEventType.mouseDown: Icons.mouse,
+    MacroEventType.mouseUp: Icons.mouse,
+    MacroEventType.click: Icons.mouse,
+    MacroEventType.keyPress: Icons.keyboard,
+    MacroEventType.keyRelease: Icons.keyboard,
+    MacroEventType.scroll: Icons.swap_vert,
+    MacroEventType.wait: Icons.timer,
+    MacroEventType.drag: Icons.open_with,
+    MacroEventType.swipe: Icons.swipe,
+  };
+
+  IconData _eventIcon(MacroEventType type) => _eventIcons[type] ?? Icons.mouse;
 
   // ─── Add Event ────────────────────────────────────────────
 

@@ -64,6 +64,11 @@ class AppState extends ChangeNotifier {
   String _macroError = '';
   bool _isInitialized = false;
 
+  /// 高频点击计数走独立 notifier — 不触发全页 notifyListeners。
+  /// 连点运行时计数每 500ms 刷新，若走全局广播会让所有 watch
+  /// AppState 的页面（IndexedStack 内全部页面）无差别重建。
+  final ValueNotifier<int> clickCountNotifier = ValueNotifier<int>(0);
+
   // Macro list
   List<MacroModel> _macros = [];
   List<String> _profiles = [];
@@ -208,9 +213,13 @@ class AppState extends ChangeNotifier {
 
       // Wire callbacks
       _clickService.onStatusChanged = (status, count) {
+        final statusChanged = _clickerStatus != status;
         _clickerStatus = status;
         _clickCount = count;
-        notifyListeners();
+        // 高频计数只推 notifier（ValueListenableBuilder 精准刷新），
+        // 仅状态切换（idle⇄running）才全局广播
+        clickCountNotifier.value = count;
+        if (statusChanged) notifyListeners();
       };
 
       // Native fast clicker stop callback

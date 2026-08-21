@@ -47,6 +47,9 @@ class HomeScreenState extends State<HomeScreen> with WindowListener {
   final Map<String, Widget> _pluginPageCache = {};
   /// 按需激活防重入
   final Set<String> _activatingPages = {};
+  /// 导航条目缓存 — 仅在插件列表变化（启用/停用/安装）时重算，
+  /// 避免每次 build 遍历全部插件 manifest
+  List<_NavItem>? _navItemsCache;
 
   /// Navigate to a specific page by ID (e.g., 'macro', 'hold_trigger', 'settings')
   void navigateTo(String pageId) {
@@ -54,8 +57,9 @@ class HomeScreenState extends State<HomeScreen> with WindowListener {
   }
 
   /// 导航条目：已启用插件 manifest 声明的页面（静态，无需激活插件）。
-  /// 点击页面时才触发插件按需激活（onPage 事件）。
+  /// 点击页面时才触发插件按需激活（onPage 事件）。结果缓存。
   List<_NavItem> _navItems() {
+    if (_navItemsCache != null) return _navItemsCache!;
     final pm = PluginManager.instance;
     final items = <_NavItem>[];
     for (final desc in pm.plugins) {
@@ -78,6 +82,7 @@ class HomeScreenState extends State<HomeScreen> with WindowListener {
     }
     items.sort((a, b) =>
         (orders[a.pageId] ?? 100).compareTo(orders[b.pageId] ?? 100));
+    _navItemsCache = items;
     return items;
   }
 
@@ -163,6 +168,7 @@ class HomeScreenState extends State<HomeScreen> with WindowListener {
 
   void _onPluginStateChanged() {
     if (!mounted) return;
+    _navItemsCache = null;  // 插件列表/状态变化 — 导航缓存失效
     final validIds = _navItems().map((i) => i.pageId).toSet();
     // 插件停用后移除其页面缓存
     _pluginPageCache.removeWhere((id, _) => !validIds.contains(id));
@@ -296,7 +302,10 @@ class HomeScreenState extends State<HomeScreen> with WindowListener {
     }
 
     final navItems = _navItems();
-    final appState = context.watch<AppState>();
+    // 细粒度订阅：只监听本组件实际用到的字段（动画开关）。
+    // 此前 watch 整个 AppState — 连点计数每 500ms 刷新会触发整页
+    // （含 IndexedStack 所有页面）无差别重建，是 UI 卡顿主因之一。
+    final uiAnimations = context.select<AppState, bool>((s) => s.uiAnimations);
 
     final currentIndex = _pageIdToIndex(_currentPageId, navItems);
 
@@ -314,7 +323,7 @@ class HomeScreenState extends State<HomeScreen> with WindowListener {
     return DragToResizeArea(
       resizeEdgeSize: 6,
       child: Column(children: [
-        _GlassTitleBar(isDark: isDark, isMaximized: _isMaximized, onFloatingMode: _switchToFloating, animations: appState.uiAnimations),
+        _GlassTitleBar(isDark: isDark, isMaximized: _isMaximized, onFloatingMode: _switchToFloating, animations: uiAnimations),
         Expanded(child: Row(children: [
           _buildSidebar(isDark, navItems, currentIndex),
           // Page content — IndexedStack keeps all pages alive (no dispose on switch)
