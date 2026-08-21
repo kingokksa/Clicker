@@ -22,7 +22,15 @@ class MobileClickerPage extends StatelessWidget {
     final floatingVisible = state.isFloatingPanelVisible;
 
     return Scaffold(
+      appBar: AppBar(
+        title: const Text('连点'),
+        centerTitle: true,
+        backgroundColor: isDark ? const Color(0xFF1A1A2E) : accent.withValues(alpha: 0.1),
+        foregroundColor: isDark ? Colors.white : accent,
+        elevation: 0,
+      ),
       body: SafeArea(
+        top: false,
         child: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         children: [

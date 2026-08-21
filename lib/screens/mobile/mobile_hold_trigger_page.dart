@@ -21,6 +21,9 @@ class MobileHoldTriggerPage extends StatelessWidget {
       appBar: AppBar(
         title: const Text('按住触发'),
         centerTitle: true,
+        backgroundColor: isDark ? const Color(0xFF1A1A2E) : accent.withValues(alpha: 0.1),
+        foregroundColor: isDark ? Colors.white : accent,
+        elevation: 0,
       ),
       body: keys.isEmpty
           ? Center(
