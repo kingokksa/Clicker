@@ -336,7 +336,7 @@ class MobileAppState extends ChangeNotifier {
         'intervalMs': _clickerConfig.intervalMs.round(),
         'repeatMode': _clickerConfig.repeatMode.name,
         'repeatCount': _clickerConfig.repeatCount,
-        'themeColor': _accentColor.value,
+        'themeColor': _accentColor.toARGB32(),
       });
     } catch (_) {}
   }

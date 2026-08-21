@@ -9,8 +9,6 @@ import '../models/hotkey_config.dart';
 import '../models/macro_model.dart';
 import 'platform/platform_input.dart';
 import 'platform/windows_input.dart';
-import 'platform/linux_input.dart';
-import 'platform/android_input.dart';
 
 class HotkeyService {
   final PlatformInput _input;

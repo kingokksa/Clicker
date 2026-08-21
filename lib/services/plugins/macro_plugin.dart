@@ -1,29 +1,39 @@
-/// Macro plugin — macro recording and playback
+/// Macro plugin — 宏录制与回放
 library;
 
-import 'package:fluent_ui/fluent_ui.dart';
-import '../plugin_system.dart';
+import '../plugin/plugin_api.dart';
+import '../plugin/plugin_manifest.dart';
 import '../../screens/macro/macro_page.dart';
 
-class MacroPlugin extends ClickerPlugin {
+class MacroPlugin extends Plugin {
   @override
-  final manifest = const ClickerPluginManifest(
+  final PluginManifest manifest = const PluginManifest(
     id: 'macro',
     name: '宏录制与回放',
     version: '1.0.0',
     author: 'Clicker',
-    icon: FluentIcons.record2,
-    category: PluginCategory.automation,
-    source: PluginSource.builtin,
+    description: '录制鼠标键盘操作并按需回放，支持循环与条件',
+    category: 'automation',
     platforms: ['windows', 'linux', 'macos'],
+    runtime: PluginRuntime.dart,
+    permissions: [PluginPermission.input, PluginPermission.storage],
+    activationEvents: ['manual'],
+    contributions: PluginContributions(pages: [
+      PageContribution(id: 'macro', title: '宏', icon: 'record2', order: 20),
+    ]),
+    icon: 'record2',
   );
 
   @override
-  Future<void> onInitialize() async {}
+  Future<void> onActivate(PluginContext context) async {
+    context.registerPage(
+      const PageContribution(id: 'macro', title: '宏', icon: 'record2', order: 20),
+      (context) => const MacroPage(),
+    );
+  }
 
   @override
-  Future<void> onDispose() async {}
-
-  @override
-  Widget onCreatePage(BuildContext context) => const MacroPage();
+  Future<void> onDeactivate() async {
+    // MacroService 由 AppState 持有，这里无需清理
+  }
 }

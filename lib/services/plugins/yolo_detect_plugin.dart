@@ -9,7 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:archive/archive.dart';
 import '../vision_plugin.dart';
 import '../plugins/ai_tracker_plugin.dart';
-import '../plugin_registry.dart';
+import '../plugin/plugin_manager.dart';
 import '../app_paths.dart';
 import 'package:http/http.dart' as http;
 
@@ -37,9 +37,19 @@ class YoloDetectPlugin extends VisionPlugin {
       return false;
     }
 
-    final aiPlugin = _getAiTrackerPlugin();
+    // AI 跟踪器是本插件的依赖 — 按需激活（即需即用联动）
+    final pm = PluginManager.instance;
+    if (!pm.isEnabled('ai_tracker')) {
+      await pm.enablePlugin('ai_tracker');
+    }
+    var aiDesc = pm.byId('ai_tracker');
+    if (aiDesc != null && !aiDesc.isActive) {
+      await pm.activatePlugin('ai_tracker');
+      aiDesc = pm.byId('ai_tracker');
+    }
+    final aiPlugin = aiDesc?.dartInstance as AiTrackerPlugin?;
     if (aiPlugin == null) {
-      debugPrint('[YoloDetectPlugin] AiTrackerPlugin未注册到PluginRegistry');
+      debugPrint('[YoloDetectPlugin] AiTrackerPlugin 未安装或激活失败');
       _available = false;
       return false;
     }
@@ -368,9 +378,7 @@ class YoloDetectPlugin extends VisionPlugin {
   }
 
   AiTrackerPlugin? _getAiTrackerPlugin() {
-    final registry = PluginRegistry.instance;
-    final plugin = registry.getPlugin('ai_tracker');
-    if (plugin is AiTrackerPlugin) return plugin;
-    return null;
+    final desc = PluginManager.instance.byId('ai_tracker');
+    return desc?.dartInstance as AiTrackerPlugin?;
   }
 }
