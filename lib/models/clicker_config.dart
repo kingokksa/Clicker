@@ -518,7 +518,7 @@ class ClickerConfig {
       positionMode: positionMode ?? this.positionMode,
       fixedX: fixedX ?? this.fixedX,
       fixedY: fixedY ?? this.fixedY,
-      intervalMs: (intervalMs ?? this.intervalMs).clamp(10.0, double.infinity),
+      intervalMs: (intervalMs ?? this.intervalMs).clamp(1.0, double.infinity),
       repeatMode: repeatMode ?? this.repeatMode,
       repeatCount: repeatCount ?? this.repeatCount,
       durationSeconds: durationSeconds ?? this.durationSeconds,

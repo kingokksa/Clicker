@@ -268,7 +268,7 @@ class ClickService {
         : (_config.mouseButton == MouseButton.scrollDown ? 6 : 0)))));
     int targetCount = _targetCount > 0 ? _targetCount : -1;
     int intervalUs = (_config.intervalMs * 1000).round();
-    if (intervalUs < 10000) intervalUs = 10000;
+    if (intervalUs < 1000) intervalUs = 1000;
 
     try {
       final bgMode = _config.backgroundExecutionEnabled;
