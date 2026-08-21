@@ -376,8 +376,8 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener, Si
                         const SizedBox(width: 4),
                         Expanded(
                           child: _SimpleSlider(
-                            value: config.intervalMs.toDouble().clamp(10.0, 5000.0),
-                            min: 10.0, max: 5000.0,
+                            value: config.intervalMs.toDouble().clamp(1.0, 5000.0),
+                            min: 1.0, max: 5000.0,
                             accent: accent,
                             onChanged: (v) => state.setClickerConfig(config.copyWith(intervalMs: v)),
                           ),

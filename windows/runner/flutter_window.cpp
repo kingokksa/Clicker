@@ -136,7 +136,7 @@ static struct {
   volatile bool running = false;
   volatile bool stop_requested = false;
   volatile uint64_t generation = 0;
-  int interval_ms = 10;
+  int interval_us = 10000;   // 点击间隔（微秒）— 高精度调度
   int x = -1;
   int y = -1;
   int button = 0;
@@ -156,6 +156,8 @@ static struct {
   int dart_generation = 0;
 } g_clicker;
 
+// 停止事件 — 唤醒睡眠中的点击线程，让 stop 立即生效（毫秒级以内）
+static HANDLE g_clicker_stop_event = nullptr;
 static volatile UINT g_clicker_stopped_msg = 0;
 static volatile UINT g_perform_click_msg = 0;
 static volatile UINT g_findimage_result_msg = 0;
@@ -2505,7 +2507,7 @@ bool FlutterWindow::OnCreate() {
             {flutter::EncodableValue("click_count"), flutter::EncodableValue(g_clicker.click_count)},
             {flutter::EncodableValue("generation"), flutter::EncodableValue(static_cast<int>(g_clicker.generation))},
             {flutter::EncodableValue("thread_alive"), flutter::EncodableValue(clicker_thread_ ? 1 : 0)},
-            {flutter::EncodableValue("interval_ms"), flutter::EncodableValue(g_clicker.interval_ms)},
+            {flutter::EncodableValue("interval_ms"), flutter::EncodableValue(g_clicker.interval_us / 1000.0)},
             {flutter::EncodableValue("x"), flutter::EncodableValue(g_clicker.x)},
             {flutter::EncodableValue("y"), flutter::EncodableValue(g_clicker.y)},
             {flutter::EncodableValue("button"), flutter::EncodableValue(g_clicker.button)},
@@ -3250,7 +3252,11 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   if (clicker_stopped_msg_ != 0 && message == clicker_stopped_msg_) {
-    if (platform_channel_) {
+    // wparam = 发出退出消息的线程的 generation。
+    // 只有当前代线程退出才通知 Dart —— 防止「停止后立即重启」时
+    // 旧线程的退出消息带新代数误杀新会话（UI 显示停止但新线程还在点）。
+    uint64_t threadGen = (uint64_t)wparam;
+    if (threadGen == g_clicker.generation && platform_channel_) {
       platform_channel_->InvokeMethod("onFastClickerStopped",
         std::make_unique<flutter::EncodableValue>(flutter::EncodableMap{
           {flutter::EncodableValue("count"), flutter::EncodableValue(g_clicker.click_count)},
@@ -3287,8 +3293,20 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   if (g_perform_click_msg != 0 && message == g_perform_click_msg) {
-    if (!g_clicker.running) return 0;
     int click_type = (int)(wparam >> 16);
+    // hold 模式的 press/release 必须无条件执行 ——
+    // release 若被 running 守卫丢弃，按键会永远卡住不松开
+    if (click_type == 3) {
+      BYTE vk = (BYTE)(wparam & 0xFF);
+      keybd_event(vk, 0, 0, 0);
+      return 0;
+    }
+    if (click_type == 4) {
+      BYTE vk = (BYTE)(wparam & 0xFF);
+      keybd_event(vk, 0, KEYEVENTF_KEYUP, 0);
+      return 0;
+    }
+    if (!g_clicker.running) return 0;
     if (click_type == 0) {
       DWORD flags_down = (DWORD)(wparam & 0xFFFF);
       DWORD flags_up = (DWORD)lparam;
@@ -3306,12 +3324,6 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
       }
       for (int i = 0; i < n; i++) keybd_event(vks[i], 0, 0, 0);
       for (int i = 0; i < n; i++) keybd_event(vks[i], 0, KEYEVENTF_KEYUP, 0);
-    } else if (click_type == 3) {
-      BYTE vk = (BYTE)(wparam & 0xFF);
-      keybd_event(vk, 0, 0, 0);
-    } else if (click_type == 4) {
-      BYTE vk = (BYTE)(wparam & 0xFF);
-      keybd_event(vk, 0, KEYEVENTF_KEYUP, 0);
     }
     return 0;
   }
@@ -3510,32 +3522,21 @@ void FlutterWindow::ShowTrayMenu() {
 // Note: g_clicker struct is defined earlier in the file (before MessageHandler).
 
 static void SendOneClick() {
+  // 前台输入直接在本线程调用 mouse_event/keybd_event（线程安全 API）。
+  // 不再 PostMessage 到 UI 线程 —— 旧路径受 Flutter 消息循环吞吐限制，
+  // UI 繁忙时点击延迟/丢失。
   if (g_clicker.is_keyboard) {
     if (g_clicker.key_action_mode == 0) {
-      if (g_clicker.self_hwnd && g_perform_click_msg) {
-        WPARAM wp = (WPARAM)((1 << 16) | g_clicker.key_vk);
-        PostMessage(g_clicker.self_hwnd, g_perform_click_msg, wp, 0);
-      } else {
-        keybd_event(static_cast<BYTE>(g_clicker.key_vk), 0, 0, 0);
-        keybd_event(static_cast<BYTE>(g_clicker.key_vk), 0, KEYEVENTF_KEYUP, 0);
-      }
+      keybd_event(static_cast<BYTE>(g_clicker.key_vk), 0, 0, 0);
+      keybd_event(static_cast<BYTE>(g_clicker.key_vk), 0, KEYEVENTF_KEYUP, 0);
     } else if (g_clicker.key_action_mode == 2) {
       int n = g_clicker.combo_key_count;
       if (n > 8) n = 8;
-      if (g_clicker.self_hwnd && g_perform_click_msg) {
-        WPARAM wp = (WPARAM)((2 << 16) | n);
-        LPARAM lp = 0;
-        for (int i = 0; i < n && i < 8; i++) {
-          lp |= ((LPARAM)(g_clicker.combo_keys[i] & 0xFF) << (i * 8));
-        }
-        PostMessage(g_clicker.self_hwnd, g_perform_click_msg, wp, lp);
-      } else {
-        for (int i = 0; i < n; i++) {
-          keybd_event(static_cast<BYTE>(g_clicker.combo_keys[i]), 0, 0, 0);
-        }
-        for (int i = 0; i < n; i++) {
-          keybd_event(static_cast<BYTE>(g_clicker.combo_keys[i]), 0, KEYEVENTF_KEYUP, 0);
-        }
+      for (int i = 0; i < n; i++) {
+        keybd_event(static_cast<BYTE>(g_clicker.combo_keys[i]), 0, 0, 0);
+      }
+      for (int i = 0; i < n; i++) {
+        keybd_event(static_cast<BYTE>(g_clicker.combo_keys[i]), 0, KEYEVENTF_KEYUP, 0);
       }
     }
     g_clicker.click_count++;
@@ -3590,13 +3591,8 @@ static void SendOneClick() {
     else if (g_clicker.button == 3) { flags_down = MOUSEEVENTF_XDOWN; flags_up = MOUSEEVENTF_XUP; mouse_data = XBUTTON1; }
     else if (g_clicker.button == 4) { flags_down = MOUSEEVENTF_XDOWN; flags_up = MOUSEEVENTF_XUP; mouse_data = XBUTTON2; }
 
-    if (g_clicker.self_hwnd && g_perform_click_msg) {
-      WPARAM wp2 = (WPARAM)((0 << 16) | (flags_down & 0xFFFF));
-      PostMessage(g_clicker.self_hwnd, g_perform_click_msg, wp2, (LPARAM)flags_up);
-    } else {
-      mouse_event(flags_down, 0, 0, mouse_data, 0);
-      mouse_event(flags_up, 0, 0, mouse_data, 0);
-    }
+    mouse_event(flags_down, 0, 0, mouse_data, 0);
+    mouse_event(flags_up, 0, 0, mouse_data, 0);
   }
 
   g_clicker.click_count++;
@@ -3614,49 +3610,70 @@ static DWORD WINAPI ClickerThreadFunc(LPVOID param) {
   // Without this, Sleep(1) actually sleeps ~15ms.
   timeBeginPeriod(1);
 
-  int sleep_ms = g_clicker.interval_ms;
-  if (sleep_ms < 1) sleep_ms = 1;
+  // 高精度等待：waitable timer（100ns 单位，Win10 1803+ 高分辨率模式）。
+  // 同时监听 stop 事件 —— stop 请求在微秒级唤醒线程，不再等睡满间隔。
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
+  HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr,
+      CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+  if (!timer) {
+    timer = CreateWaitableTimerExW(nullptr, nullptr, 0, TIMER_ALL_ACCESS);
+  }
+
+  // 等待一个点击间隔。返回 false 表示被 stop 事件打断（应立即退出）。
+  auto waitInterval = [&]() -> bool {
+    if (timer && g_clicker_stop_event) {
+      LARGE_INTEGER due;
+      due.QuadPart = -(LONGLONG)g_clicker.interval_us * 10;  // 100ns 单位，负值 = 相对
+      SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE);
+      HANDLE handles[2] = { timer, g_clicker_stop_event };
+      DWORD wr = WaitForMultipleObjects(2, handles, FALSE, INFINITE);
+      return wr != (WAIT_OBJECT_0 + 1);
+    }
+    // 回退路径：分段 Sleep（2ms 一段），每段检查 stop
+    int64_t remain = g_clicker.interval_us;
+    while (remain > 0) {
+      if (g_clicker.stop_requested) return false;
+      int64_t chunk = remain > 2000 ? 2000 : remain;
+      Sleep(static_cast<DWORD>((chunk + 999) / 1000));
+      remain -= chunk;
+    }
+    return !g_clicker.stop_requested;
+  };
 
   // Keyboard hold mode: press key once, wait for stop, then release
   if (g_clicker.is_keyboard && g_clicker.key_action_mode == 1) {
-    if (g_clicker.self_hwnd && g_perform_click_msg) {
-      WPARAM wp = (WPARAM)((3 << 16) | g_clicker.key_vk);
-      PostMessage(g_clicker.self_hwnd, g_perform_click_msg, wp, 0);
-    } else {
-      keybd_event(static_cast<BYTE>(g_clicker.key_vk), 0, 0, 0);
-    }
+    keybd_event(static_cast<BYTE>(g_clicker.key_vk), 0, 0, 0);
     g_clicker.click_count++;
 
     while (IsCurrentGeneration(my_generation) && !g_clicker.stop_requested) {
-      Sleep(sleep_ms);
+      if (!waitInterval()) break;
     }
 
-    if (g_clicker.self_hwnd && g_perform_click_msg) {
-      WPARAM wp = (WPARAM)((4 << 16) | g_clicker.key_vk);
-      PostMessage(g_clicker.self_hwnd, g_perform_click_msg, wp, 0);
-    } else {
-      keybd_event(static_cast<BYTE>(g_clicker.key_vk), 0, KEYEVENTF_KEYUP, 0);
-    }
+    keybd_event(static_cast<BYTE>(g_clicker.key_vk), 0, KEYEVENTF_KEYUP, 0);
   } else {
     // Normal repeat/combo/mouse mode
-    int loop_count = 0;
     while (IsCurrentGeneration(my_generation) && !g_clicker.stop_requested) {
       if (g_clicker.target_count > 0 && g_clicker.click_count >= g_clicker.target_count) {
         g_clicker.stop_requested = true;
         break;
       }
       SendOneClick();
-      loop_count++;
-      Sleep(sleep_ms);
+      if (!waitInterval()) break;
     }
   }
 
+  if (timer) CloseHandle(timer);
   timeEndPeriod(1);
 
   g_clicker.running = false;
 
+  // 退出通知带线程自己的 generation —— UI 线程只认当前代，
+  // 防止「停止后立即重启」时旧线程的退出消息误杀新会话。
   if (IsCurrentGeneration(my_generation) && g_clicker.self_hwnd && g_clicker_stopped_msg) {
-    PostMessage(g_clicker.self_hwnd, g_clicker_stopped_msg, 0, 0);
+    PostMessage(g_clicker.self_hwnd, g_clicker_stopped_msg,
+                (WPARAM)my_generation, 0);
   }
 
   return 0;
@@ -3666,22 +3683,30 @@ void FlutterWindow::StartFastClicker(int intervalUs, int x, int y, int button, i
     bool bgMode, HWND targetHwnd, int clientX, int clientY,
     bool isKeyboard, int keyVk, int keyActionMode,
     const std::vector<int>& comboKeys) {
+  if (!g_clicker_stop_event) {
+    g_clicker_stop_event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  }
+
   g_clicker.generation++;
   g_clicker.stop_requested = true;
   g_clicker.running = false;
+  // 唤醒睡眠中的老线程（waitable timer 等待被事件打断）
+  if (g_clicker_stop_event) SetEvent(g_clicker_stop_event);
 
   if (clicker_thread_) {
-    WaitForSingleObject(clicker_thread_, 100);
+    // 老线程已被 stop 事件唤醒，通常微秒级退出；上限 2s 兜底
+    WaitForSingleObject(clicker_thread_, 2000);
     CloseHandle(clicker_thread_);
     clicker_thread_ = nullptr;
   }
+  if (g_clicker_stop_event) ResetEvent(g_clicker_stop_event);
 
   // Set up new clicker state
-  // Enforce minimum 10ms interval
-  int interval_ms = intervalUs / 1000;
-  if (interval_ms < 10) interval_ms = 10;
+  // 间隔以微秒精度保留；下限 1ms（更快的物理间隔对 SendInput 无意义）
+  int interval_us = intervalUs;
+  if (interval_us < 1000) interval_us = 1000;
 
-  g_clicker.interval_ms = interval_ms;
+  g_clicker.interval_us = interval_us;
   g_clicker.x = x;
   g_clicker.y = y;
   g_clicker.button = button;
@@ -3721,4 +3746,6 @@ void FlutterWindow::StopFastClicker() {
   g_clicker.stop_requested = true;
   g_clicker.running = false;
   clicker_running_ = false;
+  // 立即唤醒睡眠中的点击线程 —— stop 毫秒级生效
+  if (g_clicker_stop_event) SetEvent(g_clicker_stop_event);
 }

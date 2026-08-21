@@ -651,7 +651,7 @@ class _ClickerPageState extends State<ClickerPage> {
       Row(children: [
         Text(label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
         const SizedBox(width: 12),
-        ...<double>[10, 50, 100, 500, 1000].map((v) => Padding(padding: const EdgeInsets.only(left: 4),
+        ...<double>[1, 10, 50, 100, 500, 1000].map((v) => Padding(padding: const EdgeInsets.only(left: 4),
           child: _selectChip(
             v >= 1000 ? '${(v / 1000).toStringAsFixed(0)}s' : '${v.toInt()}ms',
             (ms - v).abs() < 0.005,
@@ -660,13 +660,13 @@ class _ClickerPageState extends State<ClickerPage> {
       const SizedBox(height: 4),
       Row(children: [
         Expanded(child: Slider(
-          value: ms.clamp(10, 300000),
-          min: 10, max: 300000,
+          value: ms.clamp(1, 300000),
+          min: 1, max: 300000,
           onChanged: (v) => state.setClickerConfig(config.copyWith(intervalMs: v.roundToDouble())),
         )),
       ]),
       Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Text('10ms', style: TextStyle(fontSize: 11, color: theme.brightness == Brightness.dark ? const Color(0xFF707090) : const Color(0xFF9A9AAA))),
+        Text('1ms', style: TextStyle(fontSize: 11, color: theme.brightness == Brightness.dark ? const Color(0xFF707090) : const Color(0xFF9A9AAA))),
         Text('5min', style: TextStyle(fontSize: 11, color: theme.brightness == Brightness.dark ? const Color(0xFF707090) : const Color(0xFF9A9AAA))),
       ]),
       const SizedBox(height: 6),
@@ -1080,7 +1080,7 @@ class _DebouncedIntervalTextBoxState extends State<_DebouncedIntervalTextBox> {
 
   void _commitValue() {
     final p = double.tryParse(_controller.text);
-    if (p != null && p >= 10) {
+    if (p != null && p >= 1) {
       _controller.text = _formatValue(p);
       if (p != widget.value) widget.onChanged(p);
     } else {
