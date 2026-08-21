@@ -50,6 +50,10 @@ class MainActivity : FlutterActivity() {
     private var isRecording = false
     private var recordStartTime = 0L
 
+    // 视觉连点（找图即点）— 后台线程循环，原生驱动，不依赖 Flutter 引擎存活
+    @Volatile private var visionClickerRunning = false
+    private var visionClickerThread: Thread? = null
+
     companion object {
         const val REQUEST_MEDIA_PROJECTION = 1001
         var instance: MainActivity? = null
@@ -107,6 +111,7 @@ class MainActivity : FlutterActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        stopVisionClicker()
         stopScreenCapture()
         instance = null
     }
@@ -215,6 +220,13 @@ class MainActivity : FlutterActivity() {
             }
             "findImage" -> {
                 findImage(args, result)
+            }
+            "startVisionClicker" -> {
+                startVisionClicker(args, result)
+            }
+            "stopVisionClicker" -> {
+                stopVisionClicker()
+                result.success(true)
             }
             "ocrRegion" -> {
                 ocrRegion(args, result)
@@ -989,182 +1001,291 @@ class MainActivity : FlutterActivity() {
 
         Thread {
             try {
-                val regionPixels = IntArray(regionW * regionH)
-                regionBitmap.getPixels(regionPixels, 0, regionW, 0, 0, regionW, regionH)
-
-                val tplPixels = IntArray(tplW * tplH)
-                for (i in 0 until tplW * tplH) {
-                    val idx = i * 4
-                    val b = tplBytes[idx].toInt() and 0xFF
-                    val g = tplBytes[idx + 1].toInt() and 0xFF
-                    val r = tplBytes[idx + 2].toInt() and 0xFF
-                    tplPixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-                }
-
-                var tplMeanR = 0.0
-                var tplMeanG = 0.0
-                var tplMeanB = 0.0
-                for (i in tplPixels.indices) {
-                    val px = tplPixels[i]
-                    tplMeanR += (px shr 16 and 0xFF)
-                    tplMeanG += (px shr 8 and 0xFF)
-                    tplMeanB += (px and 0xFF)
-                }
-                val tplN = tplPixels.size.toDouble()
-                tplMeanR /= tplN
-                tplMeanG /= tplN
-                tplMeanB /= tplN
-
-                var tplVarSum = 0.0
-                for (i in tplPixels.indices) {
-                    val px = tplPixels[i]
-                    val dr = (px shr 16 and 0xFF) - tplMeanR
-                    val dg = (px shr 8 and 0xFF) - tplMeanG
-                    val db = (px and 0xFF) - tplMeanB
-                    tplVarSum += dr * dr + dg * dg + db * db
-                }
-                val tplStdDev = Math.sqrt(tplVarSum / (tplN * 3))
-                if (tplStdDev < 1.0) {
-                    runOnUiThread { result.success(emptyList<Map<String, Any>>()) }
-                    return@Thread
-                }
-
-                val coarseStep = maxOf(2, minOf(tplW, tplH) / 8)
-                val searchW = regionW - tplW
-                val searchH = regionH - tplH
-
-                data class Candidate(val sx: Int, val sy: Int, val score: Double)
-
-                val candidates = mutableListOf<Candidate>()
-                for (sy in 0..searchH step coarseStep) {
-                    for (sx in 0..searchW step coarseStep) {
-                        var nccNum = 0.0
-                        var regVarSum = 0.0
-                        var regMeanR = 0.0
-                        var regMeanG = 0.0
-                        var regMeanB = 0.0
-
-                        for (ty in 0 until tplH step 2) {
-                            for (tx in 0 until tplW step 2) {
-                                val rIdx = (sy + ty) * regionW + (sx + tx)
-                                val rpx = regionPixels[rIdx]
-                                regMeanR += (rpx shr 16 and 0xFF)
-                                regMeanG += (rpx shr 8 and 0xFF)
-                                regMeanB += (rpx and 0xFF)
-                            }
-                        }
-                        val sampleN = ((tplH + 1) / 2) * ((tplW + 1) / 2).toDouble()
-                        regMeanR /= sampleN
-                        regMeanG /= sampleN
-                        regMeanB /= sampleN
-
-                        for (ty in 0 until tplH step 2) {
-                            for (tx in 0 until tplW step 2) {
-                                val rIdx = (sy + ty) * regionW + (sx + tx)
-                                val rpx = regionPixels[rIdx]
-                                val tpx = tplPixels[ty * tplW + tx]
-
-                                val rdR = (rpx shr 16 and 0xFF) - regMeanR
-                                val rdG = (rpx shr 8 and 0xFF) - regMeanG
-                                val rdB = (rpx and 0xFF) - regMeanB
-                                val tdR = (tpx shr 16 and 0xFF) - tplMeanR
-                                val tdG = (tpx shr 8 and 0xFF) - tplMeanG
-                                val tdB = (tpx and 0xFF) - tplMeanB
-                                nccNum += rdR * tdR + rdG * tdG + rdB * tdB
-                                regVarSum += rdR * rdR + rdG * rdG + rdB * rdB
-                            }
-                        }
-
-                        val regStdDev = Math.sqrt(regVarSum / (sampleN * 3))
-                        val ncc = if (regStdDev > 0.5) nccNum / (sampleN * 3 * tplStdDev * regStdDev) else 0.0
-                        val clampedNcc = ncc.coerceIn(0.0, 1.0)
-
-                        if (clampedNcc >= threshold - 0.15) {
-                            candidates.add(Candidate(sx, sy, clampedNcc))
-                        }
-                    }
-                }
-
-                candidates.sortByDescending { it.score }
-                val topCandidates = candidates.take(20)
-
-                var bestScore = -1.0
-                var bestX = -1
-                var bestY = -1
-
-                val fineRadius = coarseStep
-                for (cand in topCandidates) {
-                    for (dy in -fineRadius..fineRadius) {
-                        for (dx in -fineRadius..fineRadius) {
-                            val sx = cand.sx + dx
-                            val sy = cand.sy + dy
-                            if (sx < 0 || sy < 0 || sx > searchW || sy > searchH) continue
-
-                            var nccNum = 0.0
-                            var regVarSum = 0.0
-                            var regMeanR = 0.0
-                            var regMeanG = 0.0
-                            var regMeanB = 0.0
-
-                            for (ty in 0 until tplH) {
-                                for (tx in 0 until tplW) {
-                                    val rIdx = (sy + ty) * regionW + (sx + tx)
-                                    val rpx = regionPixels[rIdx]
-                                    regMeanR += (rpx shr 16 and 0xFF)
-                                    regMeanG += (rpx shr 8 and 0xFF)
-                                    regMeanB += (rpx and 0xFF)
-                                }
-                            }
-                            regMeanR /= tplN
-                            regMeanG /= tplN
-                            regMeanB /= tplN
-
-                            for (ty in 0 until tplH) {
-                                for (tx in 0 until tplW) {
-                                    val rIdx = (sy + ty) * regionW + (sx + tx)
-                                    val rpx = regionPixels[rIdx]
-                                    val tpx = tplPixels[ty * tplW + tx]
-
-                                    val rdR = (rpx shr 16 and 0xFF) - regMeanR
-                                    val rdG = (rpx shr 8 and 0xFF) - regMeanG
-                                    val rdB = (rpx and 0xFF) - regMeanB
-                                    val tdR = (tpx shr 16 and 0xFF) - tplMeanR
-                                    val tdG = (tpx shr 8 and 0xFF) - tplMeanG
-                                    val tdB = (tpx and 0xFF) - tplMeanB
-                                    nccNum += rdR * tdR + rdG * tdG + rdB * tdB
-                                    regVarSum += rdR * rdR + rdG * rdG + rdB * rdB
-                                }
-                            }
-
-                            val regStdDev = Math.sqrt(regVarSum / (tplN * 3))
-                            val ncc = if (regStdDev > 0.5) nccNum / (tplN * 3 * tplStdDev * regStdDev) else 0.0
-                            val clampedNcc = ncc.coerceIn(0.0, 1.0)
-
-                            if (clampedNcc >= threshold && clampedNcc > bestScore) {
-                                bestScore = clampedNcc
-                                bestX = regionX + sx
-                                bestY = regionY + sy
-                            }
-                        }
-                    }
-                }
+                val tplPixels = buildTplPixels(tplBytes, tplW, tplH)
+                val match = nccMatch(regionBitmap, tplPixels, tplW, tplH, threshold)
 
                 val matches = mutableListOf<Map<String, Any>>()
-                if (bestX >= 0 && bestY >= 0) {
+                if (match != null) {
                     matches.add(mapOf(
-                        "x" to bestX,
-                        "y" to bestY,
+                        "x" to regionX + match.first,
+                        "y" to regionY + match.second,
                         "width" to tplW,
                         "height" to tplH,
-                        "score" to bestScore
+                        "score" to match.third
                     ))
                 }
-
                 runOnUiThread { result.success(matches) }
             } catch (e: Exception) {
                 runOnUiThread { result.error("FIND_FAILED", e.message, null) }
             }
         }.start()
+    }
+
+    /// BGRA 字节 → ARGB Int 像素数组
+    private fun buildTplPixels(tplBytes: ByteArray, tplW: Int, tplH: Int): IntArray {
+        val tplPixels = IntArray(tplW * tplH)
+        for (i in 0 until tplW * tplH) {
+            val idx = i * 4
+            val b = tplBytes[idx].toInt() and 0xFF
+            val g = tplBytes[idx + 1].toInt() and 0xFF
+            val r = tplBytes[idx + 2].toInt() and 0xFF
+            tplPixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+        }
+        return tplPixels
+    }
+
+    /// NCC 模板匹配（粗筛 + 精搜）。返回区域相对坐标 (x, y, score)，未找到返回 null。
+    private fun nccMatch(
+        region: Bitmap, tplPixels: IntArray, tplW: Int, tplH: Int, threshold: Double
+    ): Triple<Int, Int, Double>? {
+        val regionW = region.width
+        val regionH = region.height
+        if (regionW < tplW || regionH < tplH) return null
+
+        val regionPixels = IntArray(regionW * regionH)
+        region.getPixels(regionPixels, 0, regionW, 0, 0, regionW, regionH)
+
+        var tplMeanR = 0.0
+        var tplMeanG = 0.0
+        var tplMeanB = 0.0
+        for (i in tplPixels.indices) {
+            val px = tplPixels[i]
+            tplMeanR += (px shr 16 and 0xFF)
+            tplMeanG += (px shr 8 and 0xFF)
+            tplMeanB += (px and 0xFF)
+        }
+        val tplN = tplPixels.size.toDouble()
+        tplMeanR /= tplN
+        tplMeanG /= tplN
+        tplMeanB /= tplN
+
+        var tplVarSum = 0.0
+        for (i in tplPixels.indices) {
+            val px = tplPixels[i]
+            val dr = (px shr 16 and 0xFF) - tplMeanR
+            val dg = (px shr 8 and 0xFF) - tplMeanG
+            val db = (px and 0xFF) - tplMeanB
+            tplVarSum += dr * dr + dg * dg + db * db
+        }
+        val tplStdDev = Math.sqrt(tplVarSum / (tplN * 3))
+        if (tplStdDev < 1.0) return null
+
+        val coarseStep = maxOf(2, minOf(tplW, tplH) / 8)
+        val searchW = regionW - tplW
+        val searchH = regionH - tplH
+
+        data class Candidate(val sx: Int, val sy: Int, val score: Double)
+
+        val candidates = mutableListOf<Candidate>()
+        for (sy in 0..searchH step coarseStep) {
+            for (sx in 0..searchW step coarseStep) {
+                var nccNum = 0.0
+                var regVarSum = 0.0
+                var regMeanR = 0.0
+                var regMeanG = 0.0
+                var regMeanB = 0.0
+
+                for (ty in 0 until tplH step 2) {
+                    for (tx in 0 until tplW step 2) {
+                        val rIdx = (sy + ty) * regionW + (sx + tx)
+                        val rpx = regionPixels[rIdx]
+                        regMeanR += (rpx shr 16 and 0xFF)
+                        regMeanG += (rpx shr 8 and 0xFF)
+                        regMeanB += (rpx and 0xFF)
+                    }
+                }
+                val sampleN = ((tplH + 1) / 2) * ((tplW + 1) / 2).toDouble()
+                regMeanR /= sampleN
+                regMeanG /= sampleN
+                regMeanB /= sampleN
+
+                for (ty in 0 until tplH step 2) {
+                    for (tx in 0 until tplW step 2) {
+                        val rIdx = (sy + ty) * regionW + (sx + tx)
+                        val rpx = regionPixels[rIdx]
+                        val tpx = tplPixels[ty * tplW + tx]
+
+                        val rdR = (rpx shr 16 and 0xFF) - regMeanR
+                        val rdG = (rpx shr 8 and 0xFF) - regMeanG
+                        val rdB = (rpx and 0xFF) - regMeanB
+                        val tdR = (tpx shr 16 and 0xFF) - tplMeanR
+                        val tdG = (tpx shr 8 and 0xFF) - tplMeanG
+                        val tdB = (tpx and 0xFF) - tplMeanB
+                        nccNum += rdR * tdR + rdG * tdG + rdB * tdB
+                        regVarSum += rdR * rdR + rdG * rdG + rdB * rdB
+                    }
+                }
+
+                val regStdDev = Math.sqrt(regVarSum / (sampleN * 3))
+                val ncc = if (regStdDev > 0.5) nccNum / (sampleN * 3 * tplStdDev * regStdDev) else 0.0
+                val clampedNcc = ncc.coerceIn(0.0, 1.0)
+
+                if (clampedNcc >= threshold - 0.15) {
+                    candidates.add(Candidate(sx, sy, clampedNcc))
+                }
+            }
+        }
+
+        candidates.sortByDescending { it.score }
+        val topCandidates = candidates.take(20)
+
+        var bestScore = -1.0
+        var bestX = -1
+        var bestY = -1
+
+        val fineRadius = coarseStep
+        for (cand in topCandidates) {
+            for (dy in -fineRadius..fineRadius) {
+                for (dx in -fineRadius..fineRadius) {
+                    val sx = cand.sx + dx
+                    val sy = cand.sy + dy
+                    if (sx < 0 || sy < 0 || sx > searchW || sy > searchH) continue
+
+                    var nccNum = 0.0
+                    var regVarSum = 0.0
+                    var regMeanR = 0.0
+                    var regMeanG = 0.0
+                    var regMeanB = 0.0
+
+                    for (ty in 0 until tplH) {
+                        for (tx in 0 until tplW) {
+                            val rIdx = (sy + ty) * regionW + (sx + tx)
+                            val rpx = regionPixels[rIdx]
+                            regMeanR += (rpx shr 16 and 0xFF)
+                            regMeanG += (rpx shr 8 and 0xFF)
+                            regMeanB += (rpx and 0xFF)
+                        }
+                    }
+                    regMeanR /= tplN
+                    regMeanG /= tplN
+                    regMeanB /= tplN
+
+                    for (ty in 0 until tplH) {
+                        for (tx in 0 until tplW) {
+                            val rIdx = (sy + ty) * regionW + (sx + tx)
+                            val rpx = regionPixels[rIdx]
+                            val tpx = tplPixels[ty * tplW + tx]
+
+                            val rdR = (rpx shr 16 and 0xFF) - regMeanR
+                            val rdG = (rpx shr 8 and 0xFF) - regMeanG
+                            val rdB = (rpx and 0xFF) - regMeanB
+                            val tdR = (tpx shr 16 and 0xFF) - tplMeanR
+                            val tdG = (tpx shr 8 and 0xFF) - tplMeanG
+                            val tdB = (tpx and 0xFF) - tplMeanB
+                            nccNum += rdR * tdR + rdG * tdG + rdB * tdB
+                            regVarSum += rdR * rdR + rdG * rdG + rdB * rdB
+                        }
+                    }
+
+                    val regStdDev = Math.sqrt(regVarSum / (tplN * 3))
+                    val ncc = if (regStdDev > 0.5) nccNum / (tplN * 3 * tplStdDev * regStdDev) else 0.0
+                    val clampedNcc = ncc.coerceIn(0.0, 1.0)
+
+                    if (clampedNcc >= threshold && clampedNcc > bestScore) {
+                        bestScore = clampedNcc
+                        bestX = sx
+                        bestY = sy
+                    }
+                }
+            }
+        }
+
+        return if (bestX >= 0 && bestY >= 0) Triple(bestX, bestY, bestScore) else null
+    }
+
+    // ─── 视觉连点（找图即点）─────────────────────────────────
+    // 原生线程循环：截屏 → NCC 匹配 → 命中即点中心 → 休眠。
+    // 纯原生驱动：Flutter 引擎休眠（用户切到目标应用）也不中断。
+
+    private fun startVisionClicker(args: Any?, result: MethodChannel.Result) {
+        if (mediaProjection == null) {
+            result.error("NO_PROJECTION", "Screen capture not initialized", null)
+            return
+        }
+
+        val argList = args as? List<Any>
+        if (argList == null || argList.size < 5) {
+            result.error("INVALID_ARGS", "Expected [tplBytes, tplW, tplH, threshold, intervalMs]", null)
+            return
+        }
+
+        val tplBytes = argList[0] as? ByteArray ?: byteArrayOf()
+        val tplW = (argList[1] as? Number)?.toInt() ?: 0
+        val tplH = (argList[2] as? Number)?.toInt() ?: 0
+        val threshold = (argList[3] as? Number)?.toDouble() ?: 0.85
+        val intervalMs = (argList[4] as? Number)?.toLong() ?: 500L
+
+        if (tplW <= 0 || tplH <= 0 || tplBytes.size < tplW * tplH * 4) {
+            result.error("INVALID_ARGS", "Invalid template", null)
+            return
+        }
+
+        stopVisionClicker()
+        visionClickerRunning = true
+        ClickerAccessibilityService.emergencyStopped = false
+
+        val tplPixels = buildTplPixels(tplBytes, tplW, tplH)
+
+        visionClickerThread = Thread {
+            var count = 0
+            val mainHandler = Handler(Looper.getMainLooper())
+            while (visionClickerRunning && !ClickerAccessibilityService.emergencyStopped) {
+                try {
+                    val region = captureRegionBitmap(0, 0, screenWidth, screenHeight)
+                    val match = if (region != null)
+                        nccMatch(region, tplPixels, tplW, tplH, threshold) else null
+
+                    if (match != null) {
+                        val tapX = match.first + tplW / 2
+                        val tapY = match.second + tplH / 2
+                        count++
+                        mainHandler.post { dispatchTap(tapX.toFloat(), tapY.toFloat()) }
+                        invokeToDart("onVisionClickerTick", mapOf("count" to count))
+                        Thread.sleep(intervalMs)
+                    } else {
+                        Thread.sleep(200)
+                    }
+                } catch (_: InterruptedException) {
+                    break
+                } catch (_: Exception) {
+                    try { Thread.sleep(200) } catch (_: InterruptedException) { break }
+                }
+            }
+            visionClickerRunning = false
+            invokeToDart("onVisionClickerStopped", null)
+        }.apply {
+            name = "VisionClicker"
+            start()
+        }
+        result.success(true)
+    }
+
+    private fun stopVisionClicker() {
+        visionClickerRunning = false
+        visionClickerThread?.interrupt()
+        visionClickerThread = null
+    }
+
+    /// 轻量点击手势（视觉连点用）
+    private fun dispatchTap(x: Float, y: Float) {
+        val service = ClickerAccessibilityService.instance ?: return
+        if (ClickerAccessibilityService.gesturePaused ||
+            ClickerAccessibilityService.emergencyStopped) return
+        try {
+            val path = Path()
+            path.moveTo(x, y)
+            val stroke = GestureDescription.StrokeDescription(path, 0, 50)
+            val gesture = GestureDescription.Builder().addStroke(stroke).build()
+            service.dispatchGesture(gesture, null, null)
+        } catch (_: Exception) {}
+    }
+
+    private fun invokeToDart(method: String, args: Any?) {
+        try {
+            flutterEngine?.dartExecutor?.binaryMessenger?.let {
+                MethodChannel(it, PLATFORM_CHANNEL).invokeMethod(method, args)
+            }
+        } catch (_: Exception) {}
     }
 
     @TargetApi(Build.VERSION_CODES.LOLLIPOP)

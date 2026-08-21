@@ -10,6 +10,9 @@ import 'vision_plugin.dart';
 import 'vision_plugin_manager.dart';
 
 class VisionService {
+  VisionService._();
+  static final VisionService instance = VisionService._();
+
   static const _channel = MethodChannel('com.clicker.pro/platform');
 
   final VisionPluginManager _pluginManager = VisionPluginManager.instance;
@@ -244,6 +247,40 @@ class VisionService {
       return null;
     }
     return null;
+  }
+
+  // ─── Vision Clicker ───────────────────────────────────────
+
+  /// Start the native vision clicker loop (find template → tap).
+  /// The loop runs on a native thread and keeps working after the
+  /// Flutter UI is backgrounded. Requires screen capture to be
+  /// authorized (call [findImage] once first to trigger the grant).
+  Future<bool> startVisionClicker({
+    required TemplateData template,
+    double threshold = 0.85,
+    int intervalMs = 500,
+  }) async {
+    try {
+      final result = await _channel.invokeMethod<bool>('startVisionClicker', [
+        template.pixels.toList(),
+        template.width,
+        template.height,
+        threshold,
+        intervalMs,
+      ]);
+      return result ?? false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  /// Stop the native vision clicker loop.
+  Future<void> stopVisionClicker() async {
+    try {
+      await _channel.invokeMethod<bool>('stopVisionClicker');
+    } on PlatformException {
+      // Ignore — channel may already be torn down.
+    }
   }
 
   // ─── Screen Info ──────────────────────────────────────────

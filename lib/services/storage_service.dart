@@ -220,19 +220,27 @@ class StorageService {
   // ─── Import / Export ──────────────────────────────────────
 
   /// Export all configuration as a JSON string.
+  /// v2：加入长按键、主题色、动画设置 — 桌面/移动端通用的全量备份格式。
   Future<String> exportConfig({
     required ClickerConfig clickerConfig,
     required HotkeyConfig hotkeyConfig,
     required String themeMode,
     required bool alwaysOnTop,
+    List<HoldTriggerKey>? holdTriggerKeys,
+    int? accentColorValue,
+    bool? uiAnimations,
   }) async {
     final macros = await loadAllMacros();
     final data = {
-      'version': 1,
+      'version': 2,
       'clickerConfig': clickerConfig.toJson(),
       'hotkeyConfig': hotkeyConfig.toJson(),
       'themeMode': themeMode,
       'alwaysOnTop': alwaysOnTop,
+      if (accentColorValue != null) 'accentColor': accentColorValue,
+      if (uiAnimations != null) 'uiAnimations': uiAnimations,
+      if (holdTriggerKeys != null)
+        'holdTriggerKeys': holdTriggerKeys.map((k) => k.toJson()).toList(),
       'macros': macros.map((m) => m.toJson()).toList(),
       'profiles': {
         'list': listProfiles(),
@@ -251,6 +259,9 @@ class StorageService {
     required HotkeyConfig hotkeyConfig,
     required String themeMode,
     required bool alwaysOnTop,
+    List<HoldTriggerKey>? holdTriggerKeys,
+    int? accentColorValue,
+    bool? uiAnimations,
   }) async {
     try {
       final json = await exportConfig(
@@ -258,6 +269,9 @@ class StorageService {
         hotkeyConfig: hotkeyConfig,
         themeMode: themeMode,
         alwaysOnTop: alwaysOnTop,
+        holdTriggerKeys: holdTriggerKeys,
+        accentColorValue: accentColorValue,
+        uiAnimations: uiAnimations,
       );
       final path = await FilePicker.platform.saveFile(
         dialogTitle: '导出配置',
@@ -280,12 +294,16 @@ class StorageService {
       final hotkeyConfig = HotkeyConfig.fromJson(data['hotkeyConfig'] as Map<String, dynamic>);
       final themeMode = data['themeMode'] as String? ?? 'dark';
       final alwaysOnTop = data['alwaysOnTop'] as bool? ?? true;
+      final accentColorValue = data['accentColor'] as int?;
+      final uiAnimations = data['uiAnimations'] as bool?;
 
       // Save configs
       await saveClickerConfig(clickerConfig);
       await saveHotkeyConfig(hotkeyConfig);
       await setThemeMode(themeMode);
       await setAlwaysOnTop(alwaysOnTop);
+      if (accentColorValue != null) await setAccentColorValue(accentColorValue);
+      if (uiAnimations != null) await setUiAnimations(uiAnimations);
 
       // Import macros
       if (data['macros'] != null) {
@@ -307,12 +325,24 @@ class StorageService {
         }
       }
 
+      // Import hold trigger keys (v2)
+      List<HoldTriggerKey>? holdTriggerKeys;
+      if (data['holdTriggerKeys'] != null) {
+        holdTriggerKeys = (data['holdTriggerKeys'] as List)
+            .map((k) => HoldTriggerKey.fromJson(k as Map<String, dynamic>))
+            .toList();
+        await saveHoldTriggerKeys(holdTriggerKeys);
+      }
+
       return ImportResult(
         success: true,
         clickerConfig: clickerConfig,
         hotkeyConfig: hotkeyConfig,
         themeMode: themeMode,
         alwaysOnTop: alwaysOnTop,
+        accentColorValue: accentColorValue,
+        uiAnimations: uiAnimations,
+        holdTriggerKeys: holdTriggerKeys,
       );
     } catch (e) {
       return ImportResult(success: false, error: e.toString());
@@ -347,6 +377,9 @@ class ImportResult {
   final HotkeyConfig? hotkeyConfig;
   final String? themeMode;
   final bool? alwaysOnTop;
+  final int? accentColorValue;
+  final bool? uiAnimations;
+  final List<HoldTriggerKey>? holdTriggerKeys;
 
   const ImportResult({
     required this.success,
@@ -355,5 +388,8 @@ class ImportResult {
     this.hotkeyConfig,
     this.themeMode,
     this.alwaysOnTop,
+    this.accentColorValue,
+    this.uiAnimations,
+    this.holdTriggerKeys,
   });
 }
