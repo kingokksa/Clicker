@@ -271,10 +271,14 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener, Si
                       )),
                       if (isRunning) ...[
                         const SizedBox(width: 4),
-                        Text('${state.clickCount}', style: TextStyle(
-                          fontSize: 9, fontWeight: FontWeight.w600, color: accent,
-                          fontFamily: 'Segoe UI Variable, Segoe UI, Microsoft YaHei UI',
-                        )),
+                        // 计数走独立 notifier 精准刷新
+                        ValueListenableBuilder<int>(
+                          valueListenable: state.clickCountNotifier,
+                          builder: (_, count, __) => Text('$count', style: TextStyle(
+                            fontSize: 9, fontWeight: FontWeight.w600, color: accent,
+                            fontFamily: 'Segoe UI Variable, Segoe UI, Microsoft YaHei UI',
+                          )),
+                        ),
                       ],
                       const Spacer(),
                       _titleBtn(

@@ -2,7 +2,8 @@
 /// Uses MouseRegion for smooth hover tracking, Listener for click.
 library;
 
-import 'package:flutter/material.dart';
+import 'package:fluent_ui/fluent_ui.dart';
+import 'package:flutter/material.dart' hide Colors, Icon, Tooltip;
 import 'package:flutter/services.dart';
 
 class PositionPickerOverlay extends StatefulWidget {
@@ -79,7 +80,7 @@ class _PositionPickerOverlayState extends State<PositionPickerOverlay> {
           onTap: _onTap,
           child: Stack(
             children: [
-              Container(color: Colors.black54),
+              Container(color: Colors.black.withValues(alpha: 0.54)),
 
               // Crosshair
               Positioned.fill(
@@ -105,7 +106,7 @@ class _PositionPickerOverlayState extends State<PositionPickerOverlay> {
                       boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 12)],
                     ),
                     child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(Icons.crop_free, color: theme.colorScheme.primary, size: 18),
+                      Icon(FluentIcons.focus_view, color: theme.colorScheme.primary, size: 18),
                       const SizedBox(width: 8),
                       Text('点击选取位置 · Esc 取消', style: TextStyle(
                         color: theme.colorScheme.onSurface, fontSize: 15, fontWeight: FontWeight.w500,

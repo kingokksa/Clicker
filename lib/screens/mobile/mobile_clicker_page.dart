@@ -138,17 +138,19 @@ class MobileClickerPage extends StatelessWidget {
 
   // ─── Touch Action Selector ────────────────────────────────
 
+  // const 列表保证 icon tree-shaking 生效（record 类型可能使常量求值器放弃）
+  static const List<(TouchAction, String, IconData)> _touchActions = [
+    (TouchAction.tap, '点击', Icons.touch_app),
+    (TouchAction.longPress, '长按', Icons.back_hand),
+    (TouchAction.drag, '拖动', Icons.open_with),
+    (TouchAction.swipe, '滑动', Icons.swipe),
+  ];
+
   Widget _touchActionSelector(MobileAppState state, ClickerConfig config,
       Color accent, bool isDark) {
-    final actions = {
-      TouchAction.tap: ('点击', Icons.touch_app),
-      TouchAction.longPress: ('长按', Icons.back_hand),
-      TouchAction.drag: ('拖动', Icons.open_with),
-      TouchAction.swipe: ('滑动', Icons.swipe),
-    };
-    return Wrap(spacing: 8, runSpacing: 6, children: actions.entries.map((e) =>
-      _actionChip(e.value.$1, e.value.$2, config.touchAction == e.key, accent, isDark,
-          () => state.setClickerConfig(config.copyWith(touchAction: e.key))),
+    return Wrap(spacing: 8, runSpacing: 6, children: _touchActions.map((e) =>
+      _actionChip(e.$2, e.$3, config.touchAction == e.$1, accent, isDark,
+          () => state.setClickerConfig(config.copyWith(touchAction: e.$1))),
     ).toList());
   }
 

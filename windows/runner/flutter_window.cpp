@@ -2757,11 +2757,12 @@ bool FlutterWindow::OnCreate() {
           int w = static_cast<int>(920 * scale);
           int h = static_cast<int>(720 * scale);
 
-          // Center on screen
-          int screenW = GetSystemMetrics(SM_CXSCREEN);
-          int screenH = GetSystemMetrics(SM_CYSCREEN);
-          int x = (screenW - w) / 2;
-          int y = (screenH - h) / 2;
+          // Center on the monitor the window is currently on
+          HMONITOR mon = MonitorFromWindow(hw, MONITOR_DEFAULTTONEAREST);
+          MONITORINFO mi = { sizeof(mi) };
+          GetMonitorInfoW(mon, &mi);
+          int x = mi.rcWork.left + (mi.rcWork.right - mi.rcWork.left - w) / 2;
+          int y = mi.rcWork.top + (mi.rcWork.bottom - mi.rcWork.top - h) / 2;
 
           // Remove topmost first, then reposition and optionally re-apply
           SetWindowPos(hw, HWND_NOTOPMOST, x, y, w, h, SWP_NOACTIVATE | SWP_FRAMECHANGED);
