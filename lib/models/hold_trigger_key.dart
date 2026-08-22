@@ -8,6 +8,8 @@ enum HoldTriggerAction {
   mouseClick,   // mouse click (left/right/middle)
   keyRepeat,    // repeat a key press
   keyCombo,     // key combination
+  touchTap,     // single tap (mobile)
+  touchLongPress, // long press (mobile)
 }
 
 enum HoldTriggerType {

@@ -39,6 +39,16 @@ class VisionService {
     try {
       final result = await _channel.invokeMethod<dynamic>('captureScreenRect', [x, y, w, h]);
       if (result == null) return null;
+      // Native side may return true to indicate media projection was just initialized
+      if (result == true) {
+        // Retry once after projection is ready
+        await Future.delayed(const Duration(milliseconds: 300));
+        final retry = await _channel.invokeMethod<dynamic>('captureScreenRect', [x, y, w, h]);
+        if (retry == null) return null;
+        if (retry is Uint8List) return retry;
+        if (retry is List) return Uint8List.fromList(retry.cast<int>());
+        return null;
+      }
       if (result is Uint8List) return result;
       if (result is List) return Uint8List.fromList(result.cast<int>());
       return null;

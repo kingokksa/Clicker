@@ -14,6 +14,7 @@ Thumbs.db
 
 # Build outputs (ephemeral only, not generated CMake files)
 windows/flutter/ephemeral/
+linux/flutter/ephemeral/
 android/.gradle/
 android/app/build/
 android/local.properties
@@ -21,6 +22,9 @@ android/local.properties
 # User data
 profiles/config.json
 macros/*.json
+
+# Dev tool config
+.omo/
 
 # Misc
 *.pyc

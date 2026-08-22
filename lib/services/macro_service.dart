@@ -496,33 +496,55 @@ class MacroService {
   }
 
   Future<void> _executeEvent(MacroEvent event) async {
+    final isMobile = Platform.isAndroid || Platform.isIOS;
     switch (event.type) {
       case MacroEventType.mouseDown:
         final btn = event.button ?? 'left';
-        _heldPlaybackMouseButtons.add(btn);
-        await _input.mouseDown(
-          x: event.x ?? -1,
-          y: event.y ?? -1,
-          button: btn,
-        );
+        if (isMobile && btn == 'longPress') {
+          await _input.touchLongPress(
+            x: event.x ?? -1,
+            y: event.y ?? -1,
+            durationMs: event.holdMs > 0 ? event.holdMs : 1000,
+          );
+        } else {
+          _heldPlaybackMouseButtons.add(btn);
+          await _input.mouseDown(
+            x: event.x ?? -1,
+            y: event.y ?? -1,
+            button: btn,
+          );
+        }
         break;
 
       case MacroEventType.mouseUp:
         final btn = event.button ?? 'left';
-        _heldPlaybackMouseButtons.remove(btn);
-        await _input.mouseUp(
-          x: event.x ?? -1,
-          y: event.y ?? -1,
-          button: btn,
-        );
+        if (isMobile && btn == 'longPress') {
+          // longPress is handled as a single gesture, no separate up needed
+        } else {
+          _heldPlaybackMouseButtons.remove(btn);
+          await _input.mouseUp(
+            x: event.x ?? -1,
+            y: event.y ?? -1,
+            button: btn,
+          );
+        }
         break;
 
       case MacroEventType.click:
-        await _input.mouseClick(
-          x: event.x ?? -1,
-          y: event.y ?? -1,
-          button: event.button ?? 'left',
-        );
+        final btn = event.button ?? 'left';
+        if (isMobile && btn == 'longPress') {
+          await _input.touchLongPress(
+            x: event.x ?? -1,
+            y: event.y ?? -1,
+            durationMs: event.holdMs > 0 ? event.holdMs : 1000,
+          );
+        } else {
+          await _input.mouseClick(
+            x: event.x ?? -1,
+            y: event.y ?? -1,
+            button: btn,
+          );
+        }
         break;
 
       case MacroEventType.keyPress:

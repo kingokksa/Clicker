@@ -22,10 +22,10 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
 
   static const _pages = <Widget>[
     MobileClickerPage(),
-    MobileMacroPage(),
-    MobileHoldTriggerPage(),
-    MobileVisionPage(),
-    MobileSettingsPage(),
+    const MobileMacroPage(),
+    const MobileHoldTriggerPage(),
+    const MobileVisionPage(),
+    const MobileSettingsPage(),
   ];
 
   @override

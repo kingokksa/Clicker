@@ -711,10 +711,13 @@ class AppState extends ChangeNotifier {
 
     final configs = enabledKeys.map((k) {
       // action: 0=mouseClick, 1=keyRepeat, 2=keyCombo
+      // touch actions fall back to mouse click on desktop
       int action;
       dynamic actionParam;
       switch (k.action) {
         case HoldTriggerAction.mouseClick:
+        case HoldTriggerAction.touchTap:
+        case HoldTriggerAction.touchLongPress:
           action = 0;
           int mb = 0;
           if (k.mouseButton == 'right') {

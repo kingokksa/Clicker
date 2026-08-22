@@ -428,6 +428,7 @@ class FloatingControlPanel(private val context: Context) {
             // Any touch on the dismiss overlay closes the panel
             if (event.action == MotionEvent.ACTION_DOWN) {
                 collapse()
+                sendToFlutter("onFloatingResume")
                 true
             } else false
         }
@@ -512,9 +513,21 @@ class FloatingControlPanel(private val context: Context) {
         val spacer = View(context)
         val spacerLp = LinearLayout.LayoutParams(0, 1, 1f)
 
+        val closeBtn = TextView(context).apply {
+            text = "✕"
+            setTextColor(0xFF8888AA.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+            setPadding((4 * dp).toInt(), 0, (4 * dp).toInt(), 0)
+            setOnClickListener {
+                collapse()
+                sendToFlutter("onFloatingResume")
+            }
+        }
+
         header.addView(dragHandle)
         header.addView(title)
         header.addView(spacer, spacerLp)
+        header.addView(closeBtn)
         container.addView(header)
 
         // Divider
