@@ -1,6 +1,8 @@
 /// Mobile macro page — Material Design macro recording, playback, and editing.
 library;
 
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../services/mobile_app_state.dart';
@@ -432,6 +434,33 @@ class _MobileMacroEditorState extends State<_MobileMacroEditor> {
   }
 
   String _eventLabel(MacroEvent e) {
+    if (Platform.isAndroid || Platform.isIOS) {
+      final actionLabel = e.button == 'longPress' ? '长按' : '单击';
+      switch (e.type) {
+        case MacroEventType.mouseDown:
+          return '$actionLabel按下 (${e.x}, ${e.y})';
+        case MacroEventType.mouseUp:
+          return '$actionLabel释放 (${e.x}, ${e.y})';
+        case MacroEventType.click:
+          return '$actionLabel (${e.x}, ${e.y})';
+        case MacroEventType.keyPress:
+          return '按下 ${e.key ?? "?"}';
+        case MacroEventType.keyRelease:
+          return '释放 ${e.key ?? "?"}';
+        case MacroEventType.scroll:
+          final dir = (e.scrollDy ?? 0) > 0 ? '上' : '下';
+          return '滚轮$dir';
+        case MacroEventType.wait:
+          final ms = e.timestampMs;
+          if (ms >= 60000) return '等待 ${(ms / 60000).toStringAsFixed(1)} 分钟';
+          if (ms >= 1000) return '等待 ${(ms / 1000).toStringAsFixed(1)} 秒';
+          return '等待 $ms 毫秒';
+        case MacroEventType.drag:
+          return '拖拽 (${e.x},${e.y}) → (${e.endX},${e.endY})';
+        case MacroEventType.swipe:
+          return '滑动 (${e.x},${e.y}) → (${e.endX},${e.endY})';
+      }
+    }
     String btnLabel(String? btn) => btn == 'right' ? '右键' : (btn == 'middle' ? '中键' : (btn == 'x1' ? '侧键1' : (btn == 'x2' ? '侧键2' : '左键')));
     switch (e.type) {
       case MacroEventType.mouseDown:
@@ -461,9 +490,9 @@ class _MobileMacroEditorState extends State<_MobileMacroEditor> {
 
   // 顶层 const 映射 — 保证 icon tree-shaking 能静态分析（字体只打包用到的图标）
   static const Map<MacroEventType, IconData> _eventIcons = {
-    MacroEventType.mouseDown: Icons.mouse,
-    MacroEventType.mouseUp: Icons.mouse,
-    MacroEventType.click: Icons.mouse,
+    MacroEventType.mouseDown: Icons.touch_app,
+    MacroEventType.mouseUp: Icons.touch_app,
+    MacroEventType.click: Icons.touch_app,
     MacroEventType.keyPress: Icons.keyboard,
     MacroEventType.keyRelease: Icons.keyboard,
     MacroEventType.scroll: Icons.swap_vert,
@@ -478,7 +507,7 @@ class _MobileMacroEditorState extends State<_MobileMacroEditor> {
 
   void _addEvent(bool isDark, Color accent) {
     String actionType = 'click';
-    String clickButton = 'left';
+    String clickButton = 'tap';
     String? keyName;
     int waitMs = 500;
     double scrollDy = 3.0;
@@ -501,13 +530,18 @@ class _MobileMacroEditorState extends State<_MobileMacroEditor> {
               const SizedBox(height: 12),
 
               if (actionType == 'click') ...[
-                const Text('按钮:', style: TextStyle(fontSize: 12)),
+                const Text('动作:', style: TextStyle(fontSize: 12)),
                 const SizedBox(height: 4),
-                Wrap(spacing: 6, children: ['left', 'right', 'middle'].map((btn) {
-                  final label = btn == 'left' ? '左键' : (btn == 'right' ? '右键' : '中键');
-                  return _dialogChip(label, clickButton == btn, accent,
-                      () => setDialogState(() => clickButton = btn));
-                }).toList()),
+                Wrap(spacing: 6, children: [
+                  if (Platform.isAndroid || Platform.isIOS) ...[
+                    _dialogChip('单击', clickButton == 'tap', accent, () => setDialogState(() => clickButton = 'tap')),
+                    _dialogChip('长按', clickButton == 'longPress', accent, () => setDialogState(() => clickButton = 'longPress')),
+                  ] else ...[
+                    _dialogChip('左键', clickButton == 'left', accent, () => setDialogState(() => clickButton = 'left')),
+                    _dialogChip('右键', clickButton == 'right', accent, () => setDialogState(() => clickButton = 'right')),
+                    _dialogChip('中键', clickButton == 'middle', accent, () => setDialogState(() => clickButton = 'middle')),
+                  ]
+                ]),
               ],
 
               if (actionType == 'keyPress') ...[
@@ -577,32 +611,73 @@ class _MobileMacroEditorState extends State<_MobileMacroEditor> {
     final e = _events[index];
     final holdCtrl = TextEditingController(text: e.holdMs.toString());
     final waitCtrl = TextEditingController(text: e.waitMs.toString());
+    final xCtrl = TextEditingController(text: (e.x ?? -1).toString());
+    final yCtrl = TextEditingController(text: (e.y ?? -1).toString());
+    final endXCtrl = TextEditingController(text: (e.endX ?? -1).toString());
+    final endYCtrl = TextEditingController(text: (e.endY ?? -1).toString());
 
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text('编辑事件 - ${_eventLabel(e)}'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          Row(children: [
-            const Text('按住(ms):', style: TextStyle(fontSize: 12)),
-            const SizedBox(width: 8),
-            SizedBox(width: 80, child: TextField(controller: holdCtrl, keyboardType: TextInputType.number)),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Row(children: [
+              const Text('按住(ms):', style: TextStyle(fontSize: 12)),
+              const SizedBox(width: 8),
+              SizedBox(width: 80, child: TextField(controller: holdCtrl, keyboardType: TextInputType.number)),
+            ]),
+            const SizedBox(height: 8),
+            Row(children: [
+              const Text('等待(ms):', style: TextStyle(fontSize: 12)),
+              const SizedBox(width: 8),
+              SizedBox(width: 80, child: TextField(controller: waitCtrl, keyboardType: TextInputType.number)),
+            ]),
+            if (e.x != null || e.y != null) ...[
+              const SizedBox(height: 8),
+              Row(children: [
+                const Text('X:', style: TextStyle(fontSize: 12)),
+                const SizedBox(width: 8),
+                SizedBox(width: 80, child: TextField(controller: xCtrl, keyboardType: TextInputType.number)),
+                const SizedBox(width: 12),
+                const Text('Y:', style: TextStyle(fontSize: 12)),
+                const SizedBox(width: 8),
+                SizedBox(width: 80, child: TextField(controller: yCtrl, keyboardType: TextInputType.number)),
+              ]),
+            ],
+            if (e.endX != null || e.endY != null) ...[
+              const SizedBox(height: 8),
+              Row(children: [
+                const Text('终点X:', style: TextStyle(fontSize: 12)),
+                const SizedBox(width: 8),
+                SizedBox(width: 80, child: TextField(controller: endXCtrl, keyboardType: TextInputType.number)),
+                const SizedBox(width: 12),
+                const Text('终点Y:', style: TextStyle(fontSize: 12)),
+                const SizedBox(width: 8),
+                SizedBox(width: 80, child: TextField(controller: endYCtrl, keyboardType: TextInputType.number)),
+              ]),
+            ],
           ]),
-          const SizedBox(height: 8),
-          Row(children: [
-            const Text('等待(ms):', style: TextStyle(fontSize: 12)),
-            const SizedBox(width: 8),
-            SizedBox(width: 80, child: TextField(controller: waitCtrl, keyboardType: TextInputType.number)),
-          ]),
-        ]),
+        ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
           TextButton(
             onPressed: () {
               final newHoldMs = int.tryParse(holdCtrl.text) ?? e.holdMs;
               final newWaitMs = int.tryParse(waitCtrl.text) ?? e.waitMs;
+              final newX = int.tryParse(xCtrl.text);
+              final newY = int.tryParse(yCtrl.text);
+              final newEndX = int.tryParse(endXCtrl.text);
+              final newEndY = int.tryParse(endYCtrl.text);
               setState(() {
-                _events[index] = e.copyWith(holdMs: newHoldMs, waitMs: newWaitMs);
+                _events[index] = e.copyWith(
+                  holdMs: newHoldMs,
+                  waitMs: newWaitMs,
+                  x: newX,
+                  y: newY,
+                  endX: newEndX,
+                  endY: newEndY,
+                );
               });
               Navigator.pop(ctx);
             },

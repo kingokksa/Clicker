@@ -9,8 +9,15 @@ import '../../models/clicker_config.dart';
 import '../../services/screen_overlay_service.dart';
 import '../../widgets/debounced_number_field.dart';
 
-class MobileClickerPage extends StatelessWidget {
+class MobileClickerPage extends StatefulWidget {
   const MobileClickerPage({super.key});
+
+  @override
+  State<MobileClickerPage> createState() => _MobileClickerPageState();
+}
+
+class _MobileClickerPageState extends State<MobileClickerPage> {
+  String _lastHandledError = '';
 
   @override
   Widget build(BuildContext context) {
@@ -20,6 +27,17 @@ class MobileClickerPage extends StatelessWidget {
     final accent = state.accentColor;
     final isRunning = state.isClickerRunning;
     final floatingVisible = state.isFloatingPanelVisible;
+
+    // Show permission dialog when accessibility error first appears
+    final currentError = state.clickError;
+    if (currentError.contains('无障碍服务未开启') && 
+        currentError != _lastHandledError) {
+      _lastHandledError = currentError;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _showAccessibilityDialog(state);
+      });
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -34,6 +52,9 @@ class MobileClickerPage extends StatelessWidget {
         child: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         children: [
+          // ─── Click Error ───────────────────────────────────
+          if (state.clickError.isNotEmpty)
+            Padding(padding: const EdgeInsets.only(bottom: 12), child: _buildErrorCard(state)),
           // ─── Big Start/Stop Button ─────────────────────────
           _buildBigButton(state, isRunning, accent),
           const SizedBox(height: 16),
@@ -110,18 +131,74 @@ class MobileClickerPage extends StatelessWidget {
   // ─── Big Button ───────────────────────────────────────────
 
   Widget _buildBigButton(MobileAppState state, bool isRunning, Color accent) {
+    // Allow stopping even if autoClickEnabled is false (user may have started via floating panel)
+    final canStart = state.clickerConfig.autoClickEnabled;
     return SizedBox(
       width: double.infinity,
       height: 80,
       child: FilledButton(
         onPressed: () => state.toggleClicker(),
         style: FilledButton.styleFrom(
-          backgroundColor: isRunning ? Colors.red : accent,
+          backgroundColor: isRunning ? Colors.red : (canStart ? accent : Colors.grey),
           foregroundColor: Colors.white,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           textStyle: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
         ),
-        child: Text(isRunning ? '停止' : '开始'),
+        child: Text(isRunning ? '停止' : (canStart ? '开始' : '已禁用')),
+      ),
+    );
+  }
+
+  Widget _buildErrorCard(MobileAppState state) {
+    final isDark = state.themeMode == 'dark';
+    final error = state.clickError;
+    return Card(
+      color: isDark ? const Color(0xFF3A1A1A) : const Color(0xFFFFEBEE),
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Row(children: [
+          Icon(Icons.error_outline, color: Colors.red, size: 20),
+          const SizedBox(width: 10),
+          Expanded(child: Text(error, style: TextStyle(color: Colors.red, fontSize: 13))),
+          IconButton(icon: const Icon(Icons.close, size: 16, color: Colors.red), onPressed: () => state.clearClickError(), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
+        ]),
+      ),
+    );
+  }
+
+  Future<void> _showAccessibilityDialog(MobileAppState state) async {
+    if (!mounted) return;
+    final isDark = state.themeMode == 'dark';
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        icon: Icon(Icons.security_outlined, color: Theme.of(context).colorScheme.primary, size: 32),
+        title: const Text('需要无障碍权限'),
+        content: Text(
+          '为了能够模拟点击和按键，需要在系统设置中开启 Clicker 的无障碍服务。\n\n'
+          '点击下方按钮前往设置页开启，开启后返回即可开始使用。',
+          style: TextStyle(fontSize: 14, height: 1.5, color: isDark ? Colors.white70 : Colors.black87),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              state.clearClickError();
+              _lastHandledError = '';
+              Navigator.pop(ctx);
+            },
+            child: const Text('稍后再说'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await state.platformInput.invokeMethod('openAccessibilitySettings');
+            },
+            child: const Text('前往设置'),
+          ),
+        ],
       ),
     );
   }

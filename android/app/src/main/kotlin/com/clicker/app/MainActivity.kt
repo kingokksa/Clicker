@@ -23,6 +23,8 @@ import android.os.Looper
 import android.provider.Settings
 import android.util.DisplayMetrics
 import android.view.Gravity
+import android.graphics.Canvas
+import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -57,6 +59,42 @@ class MainActivity : FlutterActivity() {
     companion object {
         const val REQUEST_MEDIA_PROJECTION = 1001
         var instance: MainActivity? = null
+    }
+
+    // Crosshair overlay view for coordinate pick/area select
+    private class CrosshairView(context: Context) : View(context) {
+        var crossX = 0f
+        var crossY = 0f
+        private val paint = android.graphics.Paint().apply {
+            color = 0xFFFFEB3B.toInt()
+            strokeWidth = 2f
+            isAntiAlias = true
+            style = android.graphics.Paint.Style.STROKE
+        }
+        private val textPaint = android.graphics.Paint().apply {
+            color = android.graphics.Color.WHITE
+            textSize = 36f
+            isAntiAlias = true
+            style = android.graphics.Paint.Style.FILL
+            setShadowLayer(4f, 1f, 1f, android.graphics.Color.BLACK)
+        }
+
+        fun updatePosition(x: Int, y: Int) {
+            this.crossX = x.toFloat()
+            this.crossY = y.toFloat()
+            invalidate()
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            // Horizontal line
+            canvas.drawLine(0f, crossY, width.toFloat(), crossY, paint)
+            // Vertical line
+            canvas.drawLine(crossX, 0f, crossX, height.toFloat(), paint)
+            // Coordinate text
+            val text = "(${crossX.toInt()}, ${crossY.toInt()})"
+            canvas.drawText(text, crossX + 20, crossY - 20, textPaint)
+        }
     }
 
     fun getFlutterMessenger(): io.flutter.plugin.common.BinaryMessenger? {
@@ -825,15 +863,27 @@ class MainActivity : FlutterActivity() {
 
         cancelBtn.setOnClickListener { removeOverlay() }
 
+        val crosshair = CrosshairView(this)
+        container.addView(crosshair, android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+
         container.setOnTouchListener { _, event ->
             when (event.action) {
-                android.view.MotionEvent.ACTION_DOWN -> true
+                android.view.MotionEvent.ACTION_DOWN,
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    crosshair.updatePosition(event.rawX.toInt(), event.rawY.toInt())
+                    true
+                }
                 android.view.MotionEvent.ACTION_UP -> {
+                    crosshair.updatePosition(event.rawX.toInt(), event.rawY.toInt())
                     callback(event.rawX.toInt(), event.rawY.toInt())
                     removeOverlay()
+                    true
                 }
+                else -> true
             }
-            true
         }
 
         windowManager.addView(container, params)
@@ -903,6 +953,19 @@ class MainActivity : FlutterActivity() {
 
         cancelBtn.setOnClickListener { removeOverlay() }
 
+        val crosshair = CrosshairView(this)
+        container.addView(crosshair, android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+
+        // Selection rectangle view
+        val rectView = android.view.View(this).apply {
+            setBackgroundColor(0x33FFFFFF.toInt())
+        }
+        container.addView(rectView, android.widget.FrameLayout.LayoutParams(0, 0))
+        val rectViewLp = rectView.layoutParams as android.widget.FrameLayout.LayoutParams
+
         var startX = 0
         var startY = 0
         container.setOnTouchListener { _, event ->
@@ -910,6 +973,28 @@ class MainActivity : FlutterActivity() {
                 android.view.MotionEvent.ACTION_DOWN -> {
                     startX = event.rawX.toInt()
                     startY = event.rawY.toInt()
+                    crosshair.updatePosition(startX, startY)
+                    rectViewLp.leftMargin = startX
+                    rectViewLp.topMargin = startY
+                    rectViewLp.width = 0
+                    rectViewLp.height = 0
+                    rectView.layoutParams = rectViewLp
+                    true
+                }
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    val curX = event.rawX.toInt()
+                    val curY = event.rawY.toInt()
+                    crosshair.updatePosition(curX, curY)
+                    val left = minOf(startX, curX)
+                    val top = minOf(startY, curY)
+                    val right = maxOf(startX, curX)
+                    val bottom = maxOf(startY, curY)
+                    rectViewLp.leftMargin = left
+                    rectViewLp.topMargin = top
+                    rectViewLp.width = right - left
+                    rectViewLp.height = bottom - top
+                    rectView.layoutParams = rectViewLp
+                    true
                 }
                 android.view.MotionEvent.ACTION_UP -> {
                     val endX = event.rawX.toInt()
@@ -988,7 +1073,12 @@ class MainActivity : FlutterActivity() {
         val tplH = (argList[6] as? Number)?.toInt() ?: 0
         val threshold = (argList[7] as? Number)?.toDouble() ?: 0.8
 
-        if (tplW <= 0 || tplH <= 0 || tplBytes.size < tplW * tplH * 4) {
+        if (tplW <= 0 || tplH <= 0 || tplBytes.size < tplW * tplH * 4 || tplW * tplH <= 0) {
+            result.success(emptyList<Map<String, Any>>())
+            return
+        }
+
+        if (regionW <= 0 || regionH <= 0) {
             result.success(emptyList<Map<String, Any>>())
             return
         }
@@ -1015,8 +1105,10 @@ class MainActivity : FlutterActivity() {
                     ))
                 }
                 runOnUiThread { result.success(matches) }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 runOnUiThread { result.error("FIND_FAILED", e.message, null) }
+            } finally {
+                try { regionBitmap.recycle() } catch (_: Exception) {}
             }
         }.start()
     }

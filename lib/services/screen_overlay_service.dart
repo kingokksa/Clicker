@@ -1,6 +1,7 @@
 library;
 
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'package:flutter/services.dart';
 import 'system_tray_service.dart';
 
@@ -68,6 +69,13 @@ class ScreenOverlayService {
   }
 
   Future<(int, int, int, int)?> startAreaSelect() async {
+    if (Platform.isAndroid || Platform.isIOS) {
+      final hasPermission = await _checkOverlayPermission();
+      if (!hasPermission) {
+        await _requestOverlayPermission();
+        return null;
+      }
+    }
     _areaSelectCompleter = Completer<(int, int, int, int)>();
     _overlayActive = true;
     _ensureHandler();
@@ -86,6 +94,13 @@ class ScreenOverlayService {
   }
 
   Future<(int, int)?> startPick() async {
+    if (Platform.isAndroid || Platform.isIOS) {
+      final hasPermission = await _checkOverlayPermission();
+      if (!hasPermission) {
+        await _requestOverlayPermission();
+        return null;
+      }
+    }
     _pickCompleter = Completer<(int, int)>();
     _overlayActive = true;
     _ensureHandler();
@@ -101,6 +116,21 @@ class ScreenOverlayService {
       _pickCompleter = null;
       return null;
     }
+  }
+
+  Future<bool> _checkOverlayPermission() async {
+    try {
+      final result = await _channel.invokeMethod<bool>('checkOverlayPermission');
+      return result ?? false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  Future<void> _requestOverlayPermission() async {
+    try {
+      await _channel.invokeMethod('requestOverlayPermission');
+    } on PlatformException {}
   }
 
   Future<(int, int)?> startWindowPick(int hwnd) async {

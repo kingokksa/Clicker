@@ -2,6 +2,8 @@
 /// Adapted from desktop HoldTriggerPage for touch-based interaction.
 library;
 
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../services/mobile_app_state.dart';
@@ -65,11 +67,12 @@ class MobileHoldTriggerPage extends StatelessWidget {
 
   void _showAddDialog(BuildContext context, MobileAppState state,
       bool isDark, Color accent) {
+    final isMobile = Platform.isAndroid || Platform.isIOS;
     final key = HoldTriggerKey(
-      triggerKey: '长按',
+      triggerKey: isMobile ? '长按屏幕' : '长按',
       triggerType: HoldTriggerType.mouse,
-      action: HoldTriggerAction.mouseClick,
-      mouseButton: 'left',
+      action: isMobile ? HoldTriggerAction.touchTap : HoldTriggerAction.mouseClick,
+      mouseButton: isMobile ? 'tap' : 'left',
       intervalMs: 50,
     );
     _showEditDialog(context, state, key, isDark, accent, isNew: true);
@@ -81,6 +84,7 @@ class MobileHoldTriggerPage extends StatelessWidget {
     var mouseButton = key.mouseButton;
     var keyToRepeat = key.keyToRepeat;
     var intervalMs = key.intervalMs;
+    final isMobile = Platform.isAndroid || Platform.isIOS;
 
     showDialog(
       context: context,
@@ -95,8 +99,14 @@ class MobileHoldTriggerPage extends StatelessWidget {
               _buildChipGroup<HoldTriggerAction>(
                 selected: action,
                 options: [
-                  (HoldTriggerAction.mouseClick, '鼠标点击'),
-                  (HoldTriggerAction.keyRepeat, '按键重复'),
+                  if (isMobile) ...[
+                    (HoldTriggerAction.touchTap, '单击'),
+                    (HoldTriggerAction.touchLongPress, '长按'),
+                  ] else ...[
+                    (HoldTriggerAction.mouseClick, '鼠标点击'),
+                    (HoldTriggerAction.keyRepeat, '按键重复'),
+                  ],
+                  if (!isMobile) (HoldTriggerAction.keyCombo, '组合键'),
                 ],
                 accent: accent,
                 onSelect: (v) => setDialogState(() => action = v),
@@ -214,12 +224,16 @@ class _TriggerCard extends StatelessWidget {
   String get _actionLabel {
     switch (triggerKey.action) {
       case HoldTriggerAction.mouseClick:
-        const btnNames = {'left': '左键', 'right': '右键', 'middle': '中键'};
+        final btnNames = {'left': '左键', 'right': '右键', 'middle': '中键'};
         return '点击${btnNames[triggerKey.mouseButton] ?? triggerKey.mouseButton}';
       case HoldTriggerAction.keyRepeat:
         return '重复 ${triggerKey.keyToRepeat}';
       case HoldTriggerAction.keyCombo:
         return '组合键 ${triggerKey.comboKeys.join("+")}';
+      case HoldTriggerAction.touchTap:
+        return '单击';
+      case HoldTriggerAction.touchLongPress:
+        return '长按';
     }
   }
 

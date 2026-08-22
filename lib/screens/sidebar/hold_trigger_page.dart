@@ -78,8 +78,10 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
     String actionDesc;
     switch (key.action) {
       case HoldTriggerAction.mouseClick:
+      case HoldTriggerAction.touchTap:
+      case HoldTriggerAction.touchLongPress:
         final btn = key.mouseButton == 'right' ? '右键' : (key.mouseButton == 'middle' ? '中键' : '左键');
-        actionDesc = '鼠标$btn点击';
+        actionDesc = key.action == HoldTriggerAction.touchLongPress ? '长按' : (key.action == HoldTriggerAction.touchTap ? '单击' : '鼠标$btn点击');
         break;
       case HoldTriggerAction.keyRepeat:
         actionDesc = '按键 ${_displayName(key.keyToRepeat)}';
@@ -641,6 +643,10 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
         return '按键重复';
       case HoldTriggerAction.keyCombo:
         return '组合键';
+      case HoldTriggerAction.touchTap:
+        return '单击';
+      case HoldTriggerAction.touchLongPress:
+        return '长按';
     }
   }
 }

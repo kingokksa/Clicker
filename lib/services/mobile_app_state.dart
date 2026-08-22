@@ -55,6 +55,7 @@ class MobileAppState extends ChangeNotifier {
   int _playbackEventIndex = 0;
   int _playbackTotalEvents = 0;
   String _macroError = '';
+  String _clickError = '';
   bool _isInitialized = false;
 
   // Macro list
@@ -78,6 +79,7 @@ class MobileAppState extends ChangeNotifier {
   int get playbackEventIndex => _playbackEventIndex;
   int get playbackTotalEvents => _playbackTotalEvents;
   String get macroError => _macroError;
+  String get clickError => _clickError;
   bool get isInitialized => _isInitialized;
   List<MacroModel> get macros => List.unmodifiable(_macros);
   List<String> get profiles => List.unmodifiable(_profiles);
@@ -96,6 +98,11 @@ class MobileAppState extends ChangeNotifier {
 
   void clearMacroError() {
     _macroError = '';
+    notifyListeners();
+  }
+
+  void clearClickError() {
+    _clickError = '';
     notifyListeners();
   }
 
@@ -183,6 +190,17 @@ class MobileAppState extends ChangeNotifier {
         _clickCount = count;
         _updateFloatingPanel();
         notifyListeners();
+      };
+
+      _clickService.onError = (message) {
+        _clickError = message;
+        notifyListeners();
+        Future.delayed(const Duration(seconds: 5), () {
+          if (_clickError == message) {
+            _clickError = '';
+            notifyListeners();
+          }
+        });
       };
 
       _platformInput.onFastClickerStopped = (count, generation) {
@@ -278,6 +296,8 @@ class MobileAppState extends ChangeNotifier {
   void toggleClicker() {
     if (!_clickerConfig.autoClickEnabled && !_clickService.isRunning) return;
     _clickService.toggle();
+    // Ensure floating panel UI updates even if status didn't change
+    _updateFloatingPanel();
   }
 
   void stopClicker() => _clickService.stop();
