@@ -14,7 +14,9 @@ pluginManagement {
         maven { url 'https://maven.aliyun.com/repository/central' }
         maven { url 'https://maven.aliyun.com/repository/gradle-plugin' }
         google()
-        mavenCentral()
+        // Maven Central (repo.maven.apache.org) intermittently returns HTTP 403 to
+        // CI runners. Use the repo1.maven.org CDN host as the central mirror.
+        maven { url 'https://repo1.maven.org/maven2' }
         gradlePluginPortal()
     }
 }
@@ -31,7 +33,7 @@ dependencyResolutionManagement {
         maven { url 'https://maven.aliyun.com/repository/google' }
         maven { url 'https://maven.aliyun.com/repository/central' }
         google()
-        mavenCentral()
+        maven { url 'https://repo1.maven.org/maven2' }
     }
 }
 
