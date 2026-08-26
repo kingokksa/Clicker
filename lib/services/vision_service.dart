@@ -269,6 +269,8 @@ class VisionService {
     required TemplateData template,
     double threshold = 0.85,
     int intervalMs = 500,
+    int maxCount = 0, // 0 = unlimited
+    int maxDurationMs = 0, // 0 = unlimited
   }) async {
     try {
       final result = await _channel.invokeMethod<bool>('startVisionClicker', [
@@ -277,7 +279,29 @@ class VisionService {
         template.height,
         threshold,
         intervalMs,
+        maxCount,
+        maxDurationMs,
       ]);
+      return result ?? false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  /// Check whether the native MediaProjection (screen capture) is ready.
+  Future<bool> isScreenCaptureAvailable() async {
+    try {
+      final result = await _channel.invokeMethod<bool>('isScreenCaptureAvailable');
+      return result ?? false;
+    } on PlatformException {
+      return false;
+    }
+  }
+
+  /// Request screen capture permission (shows the system dialog).
+  Future<bool> requestScreenCapture() async {
+    try {
+      final result = await _channel.invokeMethod<bool>('requestScreenCapture');
       return result ?? false;
     } on PlatformException {
       return false;

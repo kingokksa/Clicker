@@ -10,6 +10,7 @@ import '../models/clicker_config.dart';
 import '../models/macro_model.dart';
 import 'platform/platform_input.dart';
 import 'platform/windows_input.dart';
+import 'platform/android_input.dart';
 import 'plugin/plugin_manager.dart';
 
 /// Play a system sound via Win32 MessageBeep
@@ -76,6 +77,9 @@ class MacroService {
   void Function(int eventCount)? onRecordingUpdate;
   void Function(int eventIndex, int totalEvents)? onPlaybackProgress;
   void Function(String message)? onError;
+  /// Requested when the user taps the native floating stop button while
+  /// recording on Android. The app layer wires this to its own save flow.
+  Future<void> Function()? onRecordingStopRequest;
 
   /// Callback to get current clicker config (for background mode fallback target)
   ClickerConfig? Function()? getConfig;
@@ -124,6 +128,50 @@ class MacroService {
         onStatusChanged?.call(_status);
         onError?.call('录制初始化失败，请检查权限');
       }
+    } else if (_input is AndroidInput) {
+      final andInput = _input;
+      andInput.onRecordEvent = _handleAndroidRecordEvent;
+      andInput.onStopRecordingRequested = () {
+        onRecordingStopRequest?.call();
+      };
+      await andInput.startRecording();
+    }
+  }
+
+  /// Handle touch gestures captured by the native Android recording overlay.
+  void _handleAndroidRecordEvent(Map<String, dynamic> data) {
+    if (_status != MacroStatus.recording) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final time = now - _recordStartMs;
+    final type = data['type'] as String?;
+    switch (type) {
+      case 'click':
+        _addEvent(MacroEventType.click, time,
+            button: 'left', x: data['x'] as int?, y: data['y'] as int?);
+        break;
+      case 'longPress':
+        _recordingBuffer.add(MacroEvent(
+          type: MacroEventType.click,
+          timestampMs: time,
+          button: 'longPress',
+          x: data['x'] as int?,
+          y: data['y'] as int?,
+          holdMs: (data['durationMs'] as int?) ?? 1000,
+        ));
+        onRecordingUpdate?.call(_recordingBuffer.length);
+        break;
+      case 'drag':
+        _recordingBuffer.add(MacroEvent(
+          type: MacroEventType.drag,
+          timestampMs: time,
+          x: data['startX'] as int?,
+          y: data['startY'] as int?,
+          endX: data['endX'] as int?,
+          endY: data['endY'] as int?,
+          durationMs: (data['durationMs'] as int?) ?? 300,
+        ));
+        onRecordingUpdate?.call(_recordingBuffer.length);
+        break;
     }
   }
 
@@ -284,6 +332,10 @@ class MacroService {
       winInput.onRecordEvent = null;
       winInput.onRecordingCancelled = null;
       winInput.stopJournalRecording();
+    } else if (_input is AndroidInput) {
+      final andInput = _input;
+      andInput.onRecordEvent = null;
+      andInput.stopRecording();
     }
 
     // Remove trailing events that were likely from clicking the stop button
@@ -355,6 +407,12 @@ class MacroService {
         winInput.onRecordingCancelled = null;
         winInput.stopJournalRecording();
       }
+    } else if (_input is AndroidInput) {
+      final andInput = _input;
+      if (andInput.onRecordEvent != null) {
+        andInput.onRecordEvent = null;
+        andInput.stopRecording();
+      }
     }
 
     _status = MacroStatus.idle;
@@ -378,6 +436,10 @@ class MacroService {
       winInput.onRecordEvent = null;
       winInput.onRecordingCancelled = null;
       winInput.stopJournalRecording();
+    } else if (_input is AndroidInput) {
+      final andInput = _input;
+      andInput.onRecordEvent = null;
+      andInput.stopRecording();
     }
 
     _status = MacroStatus.idle;
@@ -438,9 +500,11 @@ class MacroService {
     final macro = _currentMacro!;
     final events = macro.events;
     final speedMultiplier = 1.0 / macro.speed;
+    // repeatCount == 0 means infinite; loop until status changes.
+    final totalRepeats = macro.repeatCount == 0 ? null : macro.repeatCount;
 
     for (_currentRepeat = 0;
-        _currentRepeat < (macro.repeatCount == 0 ? 1 : macro.repeatCount);
+        totalRepeats == null || _currentRepeat < totalRepeats;
         _currentRepeat++) {
       if (_status != MacroStatus.playing) break;
 

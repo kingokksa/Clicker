@@ -3,6 +3,7 @@
 /// only notifies the parent on submit or focus loss (not on every keystroke).
 library;
 
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -31,6 +32,7 @@ class DebouncedNumberField extends StatefulWidget {
 class _DebouncedNumberFieldState extends State<DebouncedNumberField> {
   late TextEditingController _controller;
   late FocusNode _focusNode;
+  Timer? _commitDebounce;
 
   @override
   void initState() {
@@ -56,7 +58,17 @@ class _DebouncedNumberFieldState extends State<DebouncedNumberField> {
     }
   }
 
+  void _onTyping(String _) {
+    // Commit a short while after the user stops typing, so the value is
+    // written back to the parent config even if the user never blurs the field
+    // (e.g. taps the Start button straight after entering the last coordinate).
+    _commitDebounce?.cancel();
+    _commitDebounce = Timer(const Duration(milliseconds: 600), _commitValue);
+  }
+
   void _commitValue() {
+    _commitDebounce?.cancel();
+    _commitDebounce = null;
     final val = int.tryParse(_controller.text);
     if (val != null) {
       final clamped = val.clamp(widget.min, widget.max);
@@ -71,6 +83,7 @@ class _DebouncedNumberFieldState extends State<DebouncedNumberField> {
 
   @override
   void dispose() {
+    _commitDebounce?.cancel();
     _focusNode.removeListener(_onFocusChange);
     _focusNode.dispose();
     _controller.dispose();
@@ -89,6 +102,7 @@ class _DebouncedNumberFieldState extends State<DebouncedNumberField> {
       ),
       keyboardType: TextInputType.number,
       inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+      onChanged: _onTyping,
       onSubmitted: (_) => _commitValue(),
     );
   }

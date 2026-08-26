@@ -234,6 +234,15 @@ class MobileAppState extends ChangeNotifier {
         });
       };
 
+      // Native floating stop button during Android recording.
+      _macroService.onRecordingStopRequest = () async {
+        if (_macroService.recordingEvents.isNotEmpty) {
+          await stopRecording(name: '录制的宏');
+        } else {
+          cancelRecording();
+        }
+      };
+
       // Hotkey actions (volume keys on mobile)
       _hotkeyService.onStartStopClicker = () {
         _clickService.toggle();
@@ -461,6 +470,14 @@ class MobileAppState extends ChangeNotifier {
 
   Future<void> stopRecording({String name = '录制的宏'}) async {
     final macro = _macroService.stopRecording(name: name);
+    // Don't silently save an empty recording (e.g. on Android where capture
+    // wasn't wired up). Surface a clear message instead.
+    if (macro.events.isEmpty) {
+      _macroError = '未捕获到任何操作，宏未保存';
+      notifyListeners();
+      return;
+    }
+    _macroError = '';
     await _storage.saveMacro(macro);
     _macros.insert(0, macro);
     notifyListeners();
@@ -469,6 +486,12 @@ class MobileAppState extends ChangeNotifier {
   void cancelRecording() => _macroService.cancelRecording();
 
   Future<void> playMacro(MacroModel macro) async {
+    if (macro.events.isEmpty) {
+      _macroError = '该宏没有任何操作，无法播放';
+      notifyListeners();
+      return;
+    }
+    _macroError = '';
     await _macroService.playMacro(macro);
   }
 

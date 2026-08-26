@@ -19,13 +19,14 @@ class MobileHomeScreen extends StatefulWidget {
 
 class _MobileHomeScreenState extends State<MobileHomeScreen> {
   int _currentIndex = 0;
+  final _visionKey = GlobalKey<MobileVisionPageState>();
 
-  static const _pages = <Widget>[
+  late final List<Widget> _pages = <Widget>[
     MobileClickerPage(),
-    const MobileMacroPage(),
-    const MobileHoldTriggerPage(),
-    const MobileVisionPage(),
-    const MobileSettingsPage(),
+    MobileMacroPage(),
+    MobileHoldTriggerPage(),
+    MobileVisionPage(key: _visionKey),
+    MobileSettingsPage(),
   ];
 
   @override
@@ -41,7 +42,12 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
-        onDestinationSelected: (i) => setState(() => _currentIndex = i),
+        onDestinationSelected: (i) {
+          setState(() => _currentIndex = i);
+          // Re-check the accessibility service each time the 识别 (vision) tab is
+          // selected, so toggling it in Settings is reflected without an app restart.
+          if (i == 3) _visionKey.currentState?.checkAccessibility();
+        },
         backgroundColor: isDark ? const Color(0xFF1A1A2E) : Colors.white,
         indicatorColor: accent.withValues(alpha: 0.2),
         labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,

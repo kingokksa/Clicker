@@ -3,7 +3,6 @@
 /// 视觉连点由原生线程驱动：切到其他应用后仍持续工作。
 library;
 
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -19,10 +18,10 @@ class MobileVisionPage extends StatefulWidget {
   const MobileVisionPage({super.key});
 
   @override
-  State<MobileVisionPage> createState() => _MobileVisionPageState();
+  State<MobileVisionPage> createState() => MobileVisionPageState();
 }
 
-class _MobileVisionPageState extends State<MobileVisionPage> {
+class MobileVisionPageState extends State<MobileVisionPage> {
   final _channel = MethodChannelProxy();
 
   List<VisionTemplate> _templates = [];
@@ -30,6 +29,7 @@ class _MobileVisionPageState extends State<MobileVisionPage> {
   bool _visionRunning = false;
   int _visionCount = 0;
   int _intervalMs = 500;
+  int _maxCount = 0; // 0 = unlimited
   bool _accessibilityOk = true;
   bool _testing = false;
   String? _ocrText;
@@ -39,7 +39,7 @@ class _MobileVisionPageState extends State<MobileVisionPage> {
   void initState() {
     super.initState();
     _loadTemplates();
-    _checkAccessibility();
+    checkAccessibility();
     _channel.register(_onNativeCall);
   }
 
@@ -62,7 +62,7 @@ class _MobileVisionPageState extends State<MobileVisionPage> {
     }
   }
 
-  Future<void> _checkAccessibility() async {
+  Future<void> checkAccessibility() async {
     final state = context.read<MobileAppState>();
     final input = state.platformInput;
     if (input is AndroidInput) {
@@ -236,6 +236,24 @@ class _MobileVisionPageState extends State<MobileVisionPage> {
               )),
               Text('$_intervalMs ms', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
                   color: isDark ? Colors.white70 : Colors.black87)),
+            ]),
+            const SizedBox(height: 10),
+            // 最多点击次数 (0 = 无限)
+            Row(children: [
+              Text('最多点击', style: TextStyle(fontSize: 13, color: isDark ? Colors.white70 : Colors.black87)),
+              const Spacer(),
+              DropdownButton<int>(
+                value: _maxCount,
+                isDense: true,
+                underline: const SizedBox(),
+                dropdownColor: isDark ? const Color(0xFF2A2A3E) : Colors.white,
+                items: [0, 50, 100, 200, 500, 1000].map((n) => DropdownMenuItem(
+                  value: n,
+                  child: Text(n == 0 ? '无限' : '$n 次',
+                      style: TextStyle(fontSize: 13, color: isDark ? Colors.white : Colors.black87)),
+                )).toList(),
+                onChanged: (v) => setState(() => _maxCount = v ?? 0),
+              ),
             ]),
           ],
           const SizedBox(height: 10),
@@ -454,10 +472,21 @@ class _MobileVisionPageState extends State<MobileVisionPage> {
         return;
       }
     }
+    // 截屏授权检查 — 主动请求，不再依赖"测试查找"触发
+    if (!await VisionService.instance.isScreenCaptureAvailable()) {
+      final granted = await VisionService.instance.requestScreenCapture();
+      if (!granted) {
+        _toast('请先授权屏幕录制权限');
+        return;
+      }
+      // Wait for the foreground service to initialise MediaProjection
+      await Future.delayed(const Duration(milliseconds: 800));
+    }
     final ok = await VisionService.instance.startVisionClicker(
       template: TemplateData(pixels: t.pixels, width: t.width, height: t.height),
       threshold: t.threshold,
       intervalMs: _intervalMs,
+      maxCount: _maxCount,
     );
     if (ok) {
       setState(() {
