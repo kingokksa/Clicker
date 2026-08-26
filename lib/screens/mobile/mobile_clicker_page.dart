@@ -30,7 +30,7 @@ class _MobileClickerPageState extends State<MobileClickerPage> {
 
     // Show permission dialog when accessibility error first appears
     final currentError = state.clickError;
-    if (currentError.contains('无障碍服务未开启') && 
+    if (currentError.contains('无障碍服务未开启') &&
         currentError != _lastHandledError) {
       _lastHandledError = currentError;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -159,9 +159,9 @@ class _MobileClickerPageState extends State<MobileClickerPage> {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         child: Row(children: [
-          Icon(Icons.error_outline, color: Colors.red, size: 20),
+          const Icon(Icons.error_outline, color: Colors.red, size: 20),
           const SizedBox(width: 10),
-          Expanded(child: Text(error, style: TextStyle(color: Colors.red, fontSize: 13))),
+          Expanded(child: Text(error, style: const TextStyle(color: Colors.red, fontSize: 13))),
           IconButton(icon: const Icon(Icons.close, size: 16, color: Colors.red), onPressed: () => state.clearClickError(), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
         ]),
       ),
