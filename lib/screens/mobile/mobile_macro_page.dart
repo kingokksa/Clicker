@@ -589,7 +589,7 @@ class _MobileMacroEditorState extends State<_MobileMacroEditor> {
                     event = MacroEvent(type: MacroEventType.scroll, timestampMs: baseTime, scrollDx: 0, scrollDy: scrollDy);
                     break;
                   case 'wait':
-                    event = MacroEvent(type: MacroEventType.wait, timestampMs: waitMs);
+                    event = MacroEvent(type: MacroEventType.wait, timestampMs: baseTime, waitMs: waitMs);
                     break;
                   default:
                     event = MacroEvent(type: MacroEventType.click, timestampMs: baseTime, button: clickButton);

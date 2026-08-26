@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.annotation.TargetApi
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -41,8 +42,7 @@ class MainActivity : FlutterActivity() {
     private val HOTKEY_CHANNEL = "clicker/hotkeys"
     private val RECORD_CHANNEL = "com.clicker.pro/record"
 
-    private var mediaProjection: MediaProjection? = null
-    private var virtualDisplay: VirtualDisplay? = null
+        private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
     private var screenDensity: Int = 0
     private var screenWidth: Int = 0
@@ -51,6 +51,10 @@ class MainActivity : FlutterActivity() {
     private var overlayView: android.view.View? = null
     private var isRecording = false
     private var recordStartTime = 0L
+    private var recordingOverlayView: RecordingTouchView? = null
+    private var recordingStopButton: View? = null
+    private var recordingPassThroughButton: View? = null
+    private var isPassThrough = false
 
     // 视觉连点（找图即点）— 后台线程循环，原生驱动，不依赖 Flutter 引擎存活
     @Volatile private var visionClickerRunning = false
@@ -158,14 +162,25 @@ class MainActivity : FlutterActivity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (requestCode == REQUEST_MEDIA_PROJECTION) {
             if (resultCode == Activity.RESULT_OK && data != null) {
-                val mgr = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                mediaProjection = mgr.getMediaProjection(resultCode, data)
-                setupVirtualDisplay()
-                projectionResult?.success(true)
+                // Android 14+ requires MediaProjection to be obtained from a
+                // foreground service with FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION.
+                ScreenCaptureService.start(this, resultCode, data)
+                // Wait for the service to initialise the MediaProjection, then
+                // set up the virtual display used for screen capture.
+                Handler(Looper.getMainLooper()).postDelayed({
+                    if (ScreenCaptureService.mediaProjection != null) {
+                        setupVirtualDisplay()
+                        projectionResult?.success(true)
+                    } else {
+                        projectionResult?.error("SERVICE_FAILED",
+                            "Screen capture service failed to start", null)
+                    }
+                    projectionResult = null
+                }, 500)
             } else {
                 projectionResult?.error("PROJECTION_DENIED", "User denied screen capture permission", null)
+                projectionResult = null
             }
-            projectionResult = null
         } else {
             super.onActivityResult(requestCode, resultCode, data)
         }
@@ -266,11 +281,29 @@ class MainActivity : FlutterActivity() {
                 stopVisionClicker()
                 result.success(true)
             }
+            "isScreenCaptureAvailable" -> {
+                result.success(ScreenCaptureService.mediaProjection != null)
+            }
+            "requestScreenCapture" -> {
+                if (ScreenCaptureService.mediaProjection == null) {
+                    requestScreenCapture(result)
+                } else {
+                    result.success(true)
+                }
+            }
             "ocrRegion" -> {
                 ocrRegion(args, result)
             }
             "checkOcrAvailable" -> {
-                result.success(mapOf("available" to true))
+                // Probe whether the ML Kit Chinese text recognizer is actually
+                // bundled (it is only a dependency of the "full" flavor), so the
+                // lite flavor reports OCR as unavailable instead of claiming support.
+                val available = try {
+                    Class.forName("com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions") != null
+                } catch (_: Throwable) {
+                    false
+                }
+                result.success(mapOf("available" to available))
             }
             "getForegroundWindowTitle" -> {
                 result.success("")
@@ -347,8 +380,11 @@ class MainActivity : FlutterActivity() {
     private fun isAccessibilityServiceEnabled(): Boolean {
         // Check if ClickerAccessibilityService is running
         if (ClickerAccessibilityService.instance != null) return true
-        // Fallback: check system settings
-        val serviceName = "$packageName/.ClickerAccessibilityService"
+        // Fallback: check system settings. Use the service's fully-qualified
+        // component name (e.g. "com.clicker.app/com.clicker.app.ClickerAccessibilityService")
+        // which is exactly the format Settings.Secure stores, so the contains() matches.
+        val component = ComponentName(this, ClickerAccessibilityService::class.java)
+        val serviceName = component.flattenToString()
         val enabledServices = Settings.Secure.getString(
             contentResolver,
             Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
@@ -370,13 +406,146 @@ class MainActivity : FlutterActivity() {
             "startRecording" -> {
                 isRecording = true
                 recordStartTime = System.currentTimeMillis()
+                startTouchRecording()
                 result.success(true)
             }
             "stopRecording" -> {
                 isRecording = false
+                stopTouchRecording()
                 result.success(null)
             }
             else -> result.notImplemented()
+        }
+    }
+
+    private fun startTouchRecording() {
+        if (recordingOverlayView != null) return
+        val overlayManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY else
+            WindowManager.LayoutParams.TYPE_PHONE
+        val params = WindowManager.LayoutParams(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            type,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT)
+        params.gravity = Gravity.TOP or Gravity.START
+        val view = RecordingTouchView(this) { event ->
+            flutterEngine?.dartExecutor?.binaryMessenger?.let {
+                MethodChannel(it, RECORD_CHANNEL).invokeMethod("onRecordEvent", event)
+            }
+        }
+        try {
+            overlayManager.addView(view, params)
+            recordingOverlayView = view
+            addRecordingStopButton(overlayManager, type)
+        } catch (e: Exception) {
+            android.util.Log.e("Clicker", "start recording overlay failed: ${e.message}")
+        }
+    }
+
+    // A small floating stop button on top of the recording overlay, so the user
+    // can stop recording without the full-screen overlay swallowing the tap.
+    private fun addRecordingStopButton(overlayManager: WindowManager, type: Int) {
+        if (recordingStopButton != null) return
+        val density = resources.displayMetrics.density
+
+        // Stop button
+        val stopBtn = android.widget.TextView(this).apply {
+            text = "\u25A0 \u505C\u6B62" // ■ 停止
+            setTextColor(android.graphics.Color.WHITE)
+            setBackgroundColor(0xCCE53935.toInt())
+            textSize = 14f
+            setPadding(24, 16, 24, 16)
+            gravity = android.view.Gravity.CENTER
+            isClickable = true
+            setOnClickListener {
+                stopTouchRecording()
+                flutterEngine?.dartExecutor?.binaryMessenger?.let {
+                    MethodChannel(it, RECORD_CHANNEL).invokeMethod("stopRecordingRequested", null)
+                }
+            }
+        }
+        val stopParams = WindowManager.LayoutParams(
+            (200 * density).toInt(),
+            (96 * density).toInt(),
+            type,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT)
+        stopParams.gravity = Gravity.TOP or Gravity.END
+        stopParams.x = (16 * density).toInt()
+        stopParams.y = (80 * density).toInt()
+
+        // Pass-through toggle button — lets the user temporarily interact with
+        // the app below the recording overlay.
+        val ptBtn = android.widget.TextView(this).apply {
+            text = "\u25C9 \u7A7F\u900F" // ◉ 穿透
+            setTextColor(android.graphics.Color.WHITE)
+            setBackgroundColor(0xCC455A64.toInt())
+            textSize = 12f
+            setPadding(16, 10, 16, 10)
+            gravity = android.view.Gravity.CENTER
+            isClickable = true
+            setOnClickListener {
+                isPassThrough = !isPassThrough
+                setRecordingPassThrough(isPassThrough)
+                text = if (isPassThrough) "\u25CB \u7A7F\u900F" else "\u25C9 \u7A7F\u900F"
+                // ◌ 穿透 when active, ◉ 穿透 when disabled
+            }
+        }
+        val ptParams = WindowManager.LayoutParams(
+            (160 * density).toInt(),
+            (80 * density).toInt(),
+            type,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT)
+        ptParams.gravity = Gravity.TOP or Gravity.END
+        ptParams.x = (16 * density).toInt()
+        ptParams.y = (200 * density).toInt()  // below the stop button
+
+        try {
+            overlayManager.addView(stopBtn, stopParams)
+            recordingStopButton = stopBtn
+            overlayManager.addView(ptBtn, ptParams)
+            recordingPassThroughButton = ptBtn
+        } catch (e: Exception) {
+            android.util.Log.e("Clicker", "add recording buttons failed: ${e.message}")
+        }
+    }
+
+    private fun setRecordingPassThrough(enabled: Boolean) {
+        val view = recordingOverlayView ?: return
+        try {
+            val overlayManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            val params = view.layoutParams as WindowManager.LayoutParams
+            if (enabled) {
+                params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            } else {
+                params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+            }
+            overlayManager.updateViewLayout(view, params)
+            recordingOverlayView?.setTouchable(!enabled)
+        } catch (e: Exception) {
+            android.util.Log.e("Clicker", "setRecordingPassThrough failed: ${e.message}")
+        }
+    }
+
+    private fun stopTouchRecording() {
+        val overlayManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        recordingOverlayView?.let {
+            recordingOverlayView = null
+            try { overlayManager.removeView(it) } catch (_: Exception) {}
+        }
+        recordingStopButton?.let {
+            recordingStopButton = null
+            try { overlayManager.removeView(it) } catch (_: Exception) {}
+        }
+        recordingPassThroughButton?.let {
+            recordingPassThroughButton = null
+            try { overlayManager.removeView(it) } catch (_: Exception) {}
         }
     }
 
@@ -405,56 +574,67 @@ class MainActivity : FlutterActivity() {
             return
         }
 
+        // Clamp all coordinates to valid screen bounds so out-of-range
+        // points (e.g. stale fixed coordinates) don't silently fail.
+        val w = if (screenWidth > 0) screenWidth.toFloat() else 1080f
+        val h = if (screenHeight > 0) screenHeight.toFloat() else 2400f
+        val cx = x.coerceIn(0f, w)
+        val cy = y.coerceIn(0f, h)
+        val csx = startX.coerceIn(0f, w)
+        val csy = startY.coerceIn(0f, h)
+        val cex = endX.coerceIn(0f, w)
+        val cey = endY.coerceIn(0f, h)
+
         when (action) {
             "click" -> {
-                android.util.Log.d("Clicker", "dispatchGesture click at ($x, $y)")
+                android.util.Log.d("Clicker", "dispatchGesture click at ($cx, $cy)")
                 val path = Path()
-                path.moveTo(x, y)
+                path.moveTo(cx, cy)
                 // 50ms is sufficient for a click and won't block user input
                 // Longer durations (200ms+) block touch when interval < duration
                 val stroke = GestureDescription.StrokeDescription(path, 0, 50)
                 val gesture = GestureDescription.Builder().addStroke(stroke).build()
                 val dispatched = service.dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
                     override fun onCompleted(gestureDescription: GestureDescription?) {
-                        android.util.Log.d("Clicker", "click gesture completed at ($x, $y)")
+                        android.util.Log.d("Clicker", "click gesture completed at ($cx, $cy)")
                     }
                     override fun onCancelled(gestureDescription: GestureDescription?) {
-                        android.util.Log.e("Clicker", "click gesture CANCELLED at ($x, $y)")
+                        android.util.Log.e("Clicker", "click gesture CANCELLED at ($cx, $cy)")
                     }
                 }, null)
                 android.util.Log.d("Clicker", "dispatchGesture call returned: $dispatched")
             }
             "down" -> {
                 val path = Path()
-                path.moveTo(x, y)
+                path.moveTo(cx, cy)
                 val stroke = GestureDescription.StrokeDescription(path, 0, 500)
                 val gesture = GestureDescription.Builder().addStroke(stroke).build()
                 service.dispatchGesture(gesture, null, null)
             }
             "up" -> {
                 val path = Path()
-                path.moveTo(x, y)
+                path.moveTo(cx, cy)
                 val stroke = GestureDescription.StrokeDescription(path, 0, 10)
                 val gesture = GestureDescription.Builder().addStroke(stroke).build()
                 service.dispatchGesture(gesture, null, null)
             }
             "longPress" -> {
                 val path = Path()
-                path.moveTo(x, y)
+                path.moveTo(cx, cy)
                 val stroke = GestureDescription.StrokeDescription(path, 0, durationMs.toLong())
                 val gesture = GestureDescription.Builder().addStroke(stroke).build()
                 service.dispatchGesture(gesture, null, null)
             }
             "drag", "swipe" -> {
                 val path = Path()
-                path.moveTo(startX, startY)
+                path.moveTo(csx, csy)
                 // Create intermediate points for smooth gesture
                 val steps = (durationMs / 16f).coerceIn(2f, 60f).toInt()
                 for (i in 1..steps) {
                     val t = i.toFloat() / steps
-                    val cx = startX + (endX - startX) * t
-                    val cy = startY + (endY - startY) * t
-                    path.lineTo(cx, cy)
+                    val ix = csx + (cex - csx) * t
+                    val iy = csy + (cey - csy) * t
+                    path.lineTo(ix, iy)
                 }
                 val stroke = GestureDescription.StrokeDescription(path, 0, durationMs.toLong())
                 val gesture = GestureDescription.Builder().addStroke(stroke).build()
@@ -498,7 +678,7 @@ class MainActivity : FlutterActivity() {
 
     @TargetApi(Build.VERSION_CODES.LOLLIPOP)
     private fun captureScreenRect(args: Any?, result: MethodChannel.Result) {
-        if (mediaProjection == null) {
+        if (ScreenCaptureService.mediaProjection == null) {
             requestScreenCapture(result)
             return
         }
@@ -535,7 +715,7 @@ class MainActivity : FlutterActivity() {
             imageReader = ImageReader.newInstance(screenWidth, screenHeight, PixelFormat.RGBA_8888, 2)
         }
 
-        virtualDisplay = mediaProjection?.createVirtualDisplay(
+        virtualDisplay = ScreenCaptureService.mediaProjection?.createVirtualDisplay(
             "ClickerScreenCapture",
             screenWidth, screenHeight, screenDensity,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
@@ -546,24 +726,10 @@ class MainActivity : FlutterActivity() {
     @TargetApi(Build.VERSION_CODES.LOLLIPOP)
     private fun captureAndReturn(x: Int, y: Int, w: Int, h: Int, result: MethodChannel.Result) {
         try {
-            val image: Image? = imageReader?.acquireLatestImage()
-            if (image == null) {
+            val bitmap = acquireScreenBitmap() ?: run {
                 result.error("CAPTURE_FAILED", "No image available from VirtualDisplay", null)
                 return
             }
-
-            val planes = image.planes
-            val buffer: ByteBuffer = planes[0].buffer
-            val pixelStride = planes[0].pixelStride
-            val rowStride = planes[0].rowStride
-            val rowPadding = rowStride - pixelStride * screenWidth
-
-            val bitmap = Bitmap.createBitmap(
-                screenWidth + rowPadding / pixelStride, screenHeight,
-                Bitmap.Config.ARGB_8888
-            )
-            bitmap.copyPixelsFromBuffer(buffer)
-            image.close()
 
             val clampedX = x.coerceAtLeast(0).coerceAtMost(screenWidth - 1)
             val clampedY = y.coerceAtLeast(0).coerceAtMost(screenHeight - 1)
@@ -596,6 +762,28 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    /** Acquire the latest frame from the VirtualDisplay as a full-screen Bitmap. */
+    private fun acquireScreenBitmap(): Bitmap? {
+        val image = imageReader?.acquireLatestImage() ?: return null
+        try {
+            val planes = image.planes
+            val buffer: ByteBuffer = planes[0].buffer
+            val pixelStride = planes[0].pixelStride
+            val rowStride = planes[0].rowStride
+            val rowPadding = rowStride - pixelStride * screenWidth
+            val bitmap = Bitmap.createBitmap(
+                screenWidth + rowPadding / pixelStride, screenHeight,
+                Bitmap.Config.ARGB_8888
+            )
+            bitmap.copyPixelsFromBuffer(buffer)
+            return bitmap
+        } catch (e: Exception) {
+            return null
+        } finally {
+            image.close()
+        }
+    }
+
     @TargetApi(Build.VERSION_CODES.LOLLIPOP)
     private fun saveScreenshot(args: Any?, result: MethodChannel.Result) {
         val argList = args as? List<Any>
@@ -610,30 +798,16 @@ class MainActivity : FlutterActivity() {
         val h = (argList[3] as? Number)?.toInt() ?: screenHeight
         val path = argList[4] as? String ?: ""
 
-        if (mediaProjection == null) {
+        if (ScreenCaptureService.mediaProjection == null) {
             result.error("NO_PROJECTION", "Screen capture not initialized", null)
             return
         }
 
         try {
-            val image: Image? = imageReader?.acquireLatestImage()
-            if (image == null) {
+            val bitmap = acquireScreenBitmap() ?: run {
                 result.error("CAPTURE_FAILED", "No image available", null)
                 return
             }
-
-            val planes = image.planes
-            val buffer: ByteBuffer = planes[0].buffer
-            val pixelStride = planes[0].pixelStride
-            val rowStride = planes[0].rowStride
-            val rowPadding = rowStride - pixelStride * screenWidth
-
-            val bitmap = Bitmap.createBitmap(
-                screenWidth + rowPadding / pixelStride, screenHeight,
-                Bitmap.Config.ARGB_8888
-            )
-            bitmap.copyPixelsFromBuffer(buffer)
-            image.close()
 
             val cropped = Bitmap.createBitmap(bitmap,
                 x.coerceAtLeast(0).coerceAtMost(screenWidth - 1),
@@ -1017,27 +1191,14 @@ class MainActivity : FlutterActivity() {
         virtualDisplay = null
         imageReader?.close()
         imageReader = null
-        mediaProjection?.stop()
-        mediaProjection = null
+        ScreenCaptureService.mediaProjection?.stop()
+        ScreenCaptureService.mediaProjection = null
     }
 
     @TargetApi(Build.VERSION_CODES.LOLLIPOP)
     private fun captureRegionBitmap(x: Int, y: Int, w: Int, h: Int): Bitmap? {
-        val image = imageReader?.acquireLatestImage() ?: return null
+        val fullBitmap = acquireScreenBitmap() ?: return null
         try {
-            val planes = image.planes
-            val buffer: ByteBuffer = planes[0].buffer
-            val pixelStride = planes[0].pixelStride
-            val rowStride = planes[0].rowStride
-            val rowPadding = rowStride - pixelStride * screenWidth
-
-            val fullBitmap = Bitmap.createBitmap(
-                screenWidth + rowPadding / pixelStride, screenHeight,
-                Bitmap.Config.ARGB_8888
-            )
-            fullBitmap.copyPixelsFromBuffer(buffer)
-            image.close()
-
             val cx = x.coerceAtLeast(0).coerceAtMost(screenWidth - 1)
             val cy = y.coerceAtLeast(0).coerceAtMost(screenHeight - 1)
             val cw = w.coerceAtMost(screenWidth - cx)
@@ -1046,14 +1207,13 @@ class MainActivity : FlutterActivity() {
 
             return Bitmap.createBitmap(fullBitmap, cx, cy, cw, ch)
         } catch (e: Exception) {
-            image.close()
             return null
         }
     }
 
     @TargetApi(Build.VERSION_CODES.LOLLIPOP)
     private fun findImage(args: Any?, result: MethodChannel.Result) {
-        if (mediaProjection == null) {
+        if (ScreenCaptureService.mediaProjection == null) {
             result.error("NO_PROJECTION", "Screen capture not initialized", null)
             return
         }
@@ -1290,7 +1450,7 @@ class MainActivity : FlutterActivity() {
     // 纯原生驱动：Flutter 引擎休眠（用户切到目标应用）也不中断。
 
     private fun startVisionClicker(args: Any?, result: MethodChannel.Result) {
-        if (mediaProjection == null) {
+        if (ScreenCaptureService.mediaProjection == null) {
             result.error("NO_PROJECTION", "Screen capture not initialized", null)
             return
         }
@@ -1306,6 +1466,10 @@ class MainActivity : FlutterActivity() {
         val tplH = (argList[2] as? Number)?.toInt() ?: 0
         val threshold = (argList[3] as? Number)?.toDouble() ?: 0.85
         val intervalMs = (argList[4] as? Number)?.toLong() ?: 500L
+        // Optional limits (0 = unlimited). Keeps the vision clicker from running forever.
+        val maxCount = (argList.getOrNull(5) as? Number)?.toLong() ?: 0L
+        val maxDurationMs = (argList.getOrNull(6) as? Number)?.toLong() ?: 0L
+        val clickStartTime = System.currentTimeMillis()
 
         if (tplW <= 0 || tplH <= 0 || tplBytes.size < tplW * tplH * 4) {
             result.error("INVALID_ARGS", "Invalid template", null)
@@ -1322,6 +1486,10 @@ class MainActivity : FlutterActivity() {
             var count = 0
             val mainHandler = Handler(Looper.getMainLooper())
             while (visionClickerRunning && !ClickerAccessibilityService.emergencyStopped) {
+                // Enforce optional limits (count / duration).
+                if (maxCount > 0 && count >= maxCount) break
+                if (maxDurationMs > 0 &&
+                    (System.currentTimeMillis() - clickStartTime) > maxDurationMs) break
                 try {
                     val region = captureRegionBitmap(0, 0, screenWidth, screenHeight)
                     val match = if (region != null)
@@ -1363,13 +1531,22 @@ class MainActivity : FlutterActivity() {
         val service = ClickerAccessibilityService.instance ?: return
         if (ClickerAccessibilityService.gesturePaused ||
             ClickerAccessibilityService.emergencyStopped) return
+        val w = if (screenWidth > 0) screenWidth.toFloat() else 1080f
+        val h = if (screenHeight > 0) screenHeight.toFloat() else 2400f
+        val tx = x.coerceIn(0f, w)
+        val ty = y.coerceIn(0f, h)
         try {
             val path = Path()
-            path.moveTo(x, y)
+            path.moveTo(tx, ty)
             val stroke = GestureDescription.StrokeDescription(path, 0, 50)
             val gesture = GestureDescription.Builder().addStroke(stroke).build()
-            service.dispatchGesture(gesture, null, null)
-        } catch (_: Exception) {}
+            val dispatched = service.dispatchGesture(gesture, null, null)
+            if (!dispatched) {
+                android.util.Log.w("Clicker", "dispatchTap FAILED at ($tx, $ty) — accessibility service cannot dispatch")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("Clicker", "dispatchTap error at ($tx, $ty): ${e.message}")
+        }
     }
 
     private fun invokeToDart(method: String, args: Any?) {
@@ -1382,7 +1559,7 @@ class MainActivity : FlutterActivity() {
 
     @TargetApi(Build.VERSION_CODES.LOLLIPOP)
     private fun ocrRegion(args: Any?, result: MethodChannel.Result) {
-        if (mediaProjection == null) {
+        if (ScreenCaptureService.mediaProjection == null) {
             result.error("NO_PROJECTION", "Screen capture not initialized", null)
             return
         }

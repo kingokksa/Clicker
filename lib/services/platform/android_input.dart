@@ -8,11 +8,44 @@ import 'platform_input.dart';
 class AndroidInput extends PlatformInput {
   static const _inputChannel = MethodChannel('clicker/input');
   static const _platformChannel = MethodChannel('com.clicker.pro/platform');
+  static const _recordChannel = MethodChannel('com.clicker.pro/record');
 
   final StreamController<String> _keyController =
       StreamController<String>.broadcast();
 
   bool _listening = false;
+
+  /// Receives touch-gesture events captured by the native recording overlay
+  /// while a macro is being recorded. Maps to MacroService's record handler.
+  void Function(Map<String, dynamic> event)? onRecordEvent;
+
+  /// Called when the user taps the native floating stop button during recording.
+  void Function()? onStopRecordingRequested;
+
+  /// Start capturing touch gestures via the native recording overlay.
+  Future<void> startRecording() async {
+    _recordChannel.setMethodCallHandler((call) async {
+      if (call.method == 'onRecordEvent') {
+        final args = call.arguments as Map?;
+        if (args != null) {
+          onRecordEvent?.call(args.cast<String, dynamic>());
+        }
+      } else if (call.method == 'stopRecordingRequested') {
+        onStopRecordingRequested?.call();
+      }
+    });
+    try {
+      await _recordChannel.invokeMethod('startRecording');
+    } catch (_) {}
+  }
+
+  /// Stop capturing touch gestures and remove the recording overlay.
+  Future<void> stopRecording() async {
+    _recordChannel.setMethodCallHandler(null);
+    try {
+      await _recordChannel.invokeMethod('stopRecording');
+    } catch (_) {}
+  }
 
   /// Check if accessibility service is enabled
   Future<bool> isAccessibilityServiceEnabled() async {
