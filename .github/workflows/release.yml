@@ -51,10 +51,23 @@ jobs:
         run: flutter pub get
 
       - name: Build APK (full)
-        run: flutter build apk --release --flavor full
+        run: |
+          for i in 1 2 3; do
+            flutter build apk --release --flavor full && break
+            echo "Full build attempt $i failed (Maven Central 403 is often transient); retrying..."
+            sleep 15
+          done
+          # Fail hard if all attempts failed
+          test -f build/app/outputs/flutter-apk/app-full-release.apk
 
       - name: Build APK (lite)
-        run: flutter build apk --release --flavor lite
+        run: |
+          for i in 1 2 3; do
+            flutter build apk --release --flavor lite && break
+            echo "Lite build attempt $i failed (Maven Central 403 is often transient); retrying..."
+            sleep 15
+          done
+          test -f build/app/outputs/flutter-apk/app-lite-release.apk
 
       - name: Rename APKs
         run: |
