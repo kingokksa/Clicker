@@ -210,9 +210,12 @@ del "$zipPath" 2>nul
 echo Starting application...
 start "" "$exePath"
 
-:: Self-delete via a new cmd process to avoid "batch file cannot be found" error
-cmd /c "timeout /t 2 /nobreak >nul & del "%~f0""
-exit
+:: Schedule self-delete in a detached window so the updater console exits
+:: immediately. Doing it synchronously would block this batch (keeping the
+:: updater window alive for 2s) AND deleting the running .bat would make
+:: cmd fail with "The batch file cannot be found." when reading the next line.
+start "" /min cmd /c "timeout /t 2 /nobreak >nul & del \"%~f0\""
+exit /b
 ''';
       await File(scriptPath).writeAsString(script);
 
