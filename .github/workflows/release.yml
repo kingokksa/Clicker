@@ -98,7 +98,11 @@ jobs:
           path: artifacts/
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2.3.2
-        with:
-          generate_release_notes: true
-          files: artifacts/Clicker-*
+        run: |
+          tag="${{ github.ref_name }}"
+          # 先清理同 tag 可能残留的 release（删除 tag 时可能留下 draft/哑 release），
+          # 避免重复创建；用 gh CLI 直接创建，失败会显式退出（不再是静默 success）。
+          gh release delete "$tag" --yes 2>/dev/null || true
+          gh release create "$tag" artifacts/Clicker-* --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
