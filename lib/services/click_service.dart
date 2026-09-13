@@ -217,8 +217,17 @@ class ClickService {
 
     final baseUs = (_config.intervalMs * 1000).round();
 
-    // Native fast clicker is only available on Windows
-    if (baseUs <= 50000 && Platform.isWindows) {
+    // Native fast clicker is only available on Windows.
+    // When random delay/offset is enabled, fall back to the Dart timer
+    // path — the native thread runs fixed-interval screenshots of the
+    // config and applies neither random delay nor random offset, so those
+    // features would silently do nothing in native fast mode.
+    final wantsRandom = _config.randomDelayMinMs > 0 ||
+        _config.randomDelayMaxMs > 0 ||
+        _config.randomOffsetEnabled;
+    final useNative = baseUs <= 50000 && Platform.isWindows && !wantsRandom;
+
+    if (useNative) {
       _log('using native fast clicker (base=${baseUs}us)');
       _startNativeFastClicker();
       return;
