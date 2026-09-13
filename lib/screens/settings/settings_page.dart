@@ -444,7 +444,13 @@ class _SettingsPageState extends State<SettingsPage> {
           const Spacer(),
           ToggleSwitch(
             checked: config.smartDelayEnabled,
-            onChanged: (v) => state.setClickerConfig(config.copyWith(smartDelayEnabled: v)),
+            onChanged: (v) => state.setClickerConfig(config.copyWith(
+              smartDelayEnabled: v,
+              // Seed the visible range fields with defaults so the toggle
+              // alone actually enables a ms-range random delay.
+              randomDelayMinMs: (v && config.randomDelayMinMs <= 0) ? 10 : config.randomDelayMinMs,
+              randomDelayMaxMs: (v && config.randomDelayMaxMs <= 0) ? 50 : config.randomDelayMaxMs,
+            )),
           ),
         ]),
         if (config.smartDelayEnabled) Padding(
