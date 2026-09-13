@@ -357,17 +357,17 @@ class ClickService {
 
   int _getDelayUs() {
     final baseUs = (_config.intervalMs * 1000).round();
+    var delay = baseUs;
 
     // Smart delay: add human-like random variation
     if (_config.smartDelayEnabled) {
       final variation = (baseUs * 0.3).round();
-      return baseUs + _random.nextInt(variation * 2 + 1) - variation;
+      delay += _random.nextInt(variation * 2 + 1) - variation;
     }
-
     // Human-like mode: more pronounced variation with optional random pauses
-    if (_config.humanLikeEnabled) {
+    else if (_config.humanLikeEnabled) {
       final variation = (baseUs * 0.4).round();
-      var delay = baseUs + _random.nextInt(variation * 2 + 1) - variation;
+      delay += _random.nextInt(variation * 2 + 1) - variation;
 
       // Random pause (advanced feature)
       if (_config.humanLikeRandomPause && _random.nextInt(100) < _config.humanLikePauseChance) {
@@ -378,16 +378,16 @@ class ClickService {
         // Legacy: occasional pause without config
         delay += baseUs + _random.nextInt(baseUs * 2);
       }
-
-      return delay;
     }
 
+    // User-configured random delay range ALWAYS applies on top, so it is not
+    // silently skipped when smart delay / human-like mode is also enabled.
     if (_config.randomDelayMinMs > 0 && _config.randomDelayMaxMs > 0) {
       final randomExtraMs = _config.randomDelayMinMs +
           _random.nextInt(_config.randomDelayMaxMs - _config.randomDelayMinMs + 1);
-      return baseUs + randomExtraMs * 1000;
+      delay += randomExtraMs * 1000;
     }
-    return baseUs;
+    return delay;
   }
 
   Future<void> _performAction() async {
@@ -442,6 +442,7 @@ class ClickService {
 
     // Apply random offset to point actions (tap/longPress only).
     if (_config.randomOffsetEnabled &&
+        x >= 0 && y >= 0 &&
         (_config.touchAction == TouchAction.tap ||
             _config.touchAction == TouchAction.longPress)) {
       final offsetMin = _config.randomOffsetMinPx;
@@ -487,6 +488,20 @@ class ClickService {
             _config.positionMode == PositionMode.pick
         ? _config.fixedY
         : -1;
+
+    // In current-position mode with random offset enabled, resolve the real
+    // cursor position first so the offset can jitter around it. Without this,
+    // offset was silently skipped (x/y stay -1) in the default position mode.
+    if (x < 0 && y < 0 && _config.randomOffsetEnabled && Platform.isWindows) {
+      try {
+        final pos =
+            await _platformChannel.invokeMethod<Map>('getCursorPosition');
+        x = pos?['x'] as int? ?? -1;
+        y = pos?['y'] as int? ?? -1;
+      } catch (_) {
+        // Keep -1 → click at current position without offset (legacy behavior)
+      }
+    }
 
     // Apply random offset if enabled
     if (x >= 0 && y >= 0 && _config.randomOffsetEnabled) {
