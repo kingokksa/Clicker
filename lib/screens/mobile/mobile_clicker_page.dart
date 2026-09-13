@@ -86,6 +86,19 @@ class _MobileClickerPageState extends State<MobileClickerPage> {
           _intervalSlider(state, config, accent, isDark),
           const SizedBox(height: 12),
 
+          // ─── Random Offset (tap/longPress only) ────────────
+          if (config.touchAction == TouchAction.tap ||
+              config.touchAction == TouchAction.longPress) ...[
+            _sectionTitle('随机偏移', isDark),
+            _randomOffsetCard(state, config, accent, isDark),
+            const SizedBox(height: 12),
+          ],
+
+          // ─── Random Delay ──────────────────────────────────
+          _sectionTitle('随机延迟', isDark),
+          _randomDelayCard(state, config, accent, isDark),
+          const SizedBox(height: 12),
+
           // ─── Repeat ────────────────────────────────────────
           _sectionTitle('重复模式', isDark),
           _repeatModeSelector(state, config, accent, isDark),
@@ -544,6 +557,149 @@ class _MobileClickerPageState extends State<MobileClickerPage> {
       ].map((p) => _chip(p.$1, config.intervalMs == p.$2, accent, isDark,
           () => state.setClickerConfig(config.copyWith(intervalMs: p.$2)))).toList()),
     ]);
+  }
+
+  // ─── Random Offset ─────────────────────────────────────────
+
+  Widget _randomOffsetCard(MobileAppState state, ClickerConfig config,
+      Color accent, bool isDark) {
+    return Card(
+      color: isDark ? const Color(0xFF22223A) : Colors.white,
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(children: [
+          Row(children: [
+            Icon(Icons.my_location_outlined, color: accent, size: 18),
+            const SizedBox(width: 8),
+            Expanded(child: Text('点击位置随机变动',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
+                    color: isDark ? Colors.white70 : Colors.black87))),
+            Switch(
+              value: config.randomOffsetEnabled,
+              activeColor: accent,
+              onChanged: (v) => state.setClickerConfig(
+                  config.copyWith(randomOffsetEnabled: v)),
+            ),
+          ]),
+          if (config.randomOffsetEnabled) ...[
+            const Divider(height: 20),
+            Row(children: [
+              Text('偏移范围', style: TextStyle(fontSize: 13,
+                  color: isDark ? Colors.white70 : Colors.black87)),
+              const SizedBox(width: 12),
+              Expanded(child: SizedBox(
+                width: 90,
+                child: DebouncedNumberField(
+                  label: '最小px',
+                  value: config.randomOffsetMinPx,
+                  min: 0, max: 500,
+                  isDark: isDark,
+                  onChanged: (v) => state.setClickerConfig(
+                      config.copyWith(randomOffsetMinPx: v)),
+                ),
+              )),
+              const SizedBox(width: 8),
+              Expanded(child: SizedBox(
+                width: 90,
+                child: DebouncedNumberField(
+                  label: '最大px',
+                  value: config.randomOffsetMaxPx,
+                  min: 1, max: 500,
+                  isDark: isDark,
+                  onChanged: (v) => state.setClickerConfig(
+                      config.copyWith(randomOffsetMaxPx: v)),
+                ),
+              )),
+            ]),
+            Slider(
+              value: config.randomOffsetMaxPx.clamp(1, 50).toDouble(),
+              min: 1, max: 50,
+              divisions: 49,
+              activeColor: accent,
+              onChanged: (v) => state.setClickerConfig(
+                  config.copyWith(randomOffsetMaxPx: v.round())),
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text('每次点击在目标位置 ±${config.randomOffsetMaxPx}px 内随机落点',
+                  style: TextStyle(fontSize: 11,
+                      color: isDark ? Colors.grey.shade500 : Colors.black45)),
+            ),
+          ],
+        ]),
+      ),
+    );
+  }
+
+  // ─── Random Delay ──────────────────────────────────────────
+
+  Widget _randomDelayCard(MobileAppState state, ClickerConfig config,
+      Color accent, bool isDark) {
+    final enabled = config.randomDelayMinMs > 0 || config.randomDelayMaxMs > 0;
+    return Card(
+      color: isDark ? const Color(0xFF22223A) : Colors.white,
+      elevation: 0,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(children: [
+          Row(children: [
+            Icon(Icons.timelapse, color: accent, size: 18),
+            const SizedBox(width: 8),
+            Expanded(child: Text('间隔随机化',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
+                    color: isDark ? Colors.white70 : Colors.black87))),
+            Switch(
+              value: enabled,
+              activeColor: accent,
+              onChanged: (v) => state.setClickerConfig(config.copyWith(
+                  randomDelayMinMs: v ? 10 : 0,
+                  randomDelayMaxMs: v ? 50 : 0,
+              )),
+            ),
+          ]),
+          if (enabled) ...[
+            const Divider(height: 20),
+            Row(children: [
+              Text('延迟区间', style: TextStyle(fontSize: 13,
+                  color: isDark ? Colors.white70 : Colors.black87)),
+              const SizedBox(width: 12),
+              Expanded(child: SizedBox(
+                width: 90,
+                child: DebouncedNumberField(
+                  label: '最小ms',
+                  value: config.randomDelayMinMs,
+                  min: 0, max: 600000,
+                  isDark: isDark,
+                  onChanged: (v) => state.setClickerConfig(
+                      config.copyWith(randomDelayMinMs: v)),
+                ),
+              )),
+              const SizedBox(width: 8),
+              Expanded(child: SizedBox(
+                width: 90,
+                child: DebouncedNumberField(
+                  label: '最大ms',
+                  value: config.randomDelayMaxMs,
+                  min: 0, max: 600000,
+                  isDark: isDark,
+                  onChanged: (v) => state.setClickerConfig(
+                      config.copyWith(randomDelayMaxMs: v)),
+                ),
+              )),
+            ]),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text('每次点击之间额外延迟 ${config.randomDelayMinMs}~${config.randomDelayMaxMs}ms',
+                  style: TextStyle(fontSize: 11,
+                      color: isDark ? Colors.grey.shade500 : Colors.black45)),
+            ),
+          ],
+        ]),
+      ),
+    );
   }
 
   // ─── Repeat ───────────────────────────────────────────────

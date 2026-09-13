@@ -431,6 +431,17 @@ class ClickService {
       }
     }
 
+    // Apply random offset to point actions (tap/longPress only).
+    if (_config.randomOffsetEnabled &&
+        (_config.touchAction == TouchAction.tap ||
+            _config.touchAction == TouchAction.longPress)) {
+      final offsetMin = _config.randomOffsetMinPx;
+      final offsetMax = _config.randomOffsetMaxPx;
+      final range = offsetMax - offsetMin + 1;
+      x += offsetMin + _random.nextInt(range) * (_random.nextBool() ? 1 : -1);
+      y += offsetMin + _random.nextInt(range) * (_random.nextBool() ? 1 : -1);
+    }
+
     switch (_config.touchAction) {
       case TouchAction.tap:
         await _input.mouseClick(x: x, y: y, button: 'left');
