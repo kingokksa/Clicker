@@ -585,6 +585,7 @@ class _ClickerPageState extends State<ClickerPage> {
       MouseButton.left: '左键', MouseButton.right: '右键', MouseButton.middle: '中键',
       MouseButton.scrollUp: '滚轮上', MouseButton.scrollDown: '滚轮下',
       MouseButton.x1: '侧键1', MouseButton.x2: '侧键2',
+      MouseButton.leftRight: '左+右',
     };
     return Wrap(spacing: 6, runSpacing: 4, children: MouseButton.values.map((btn) =>
       _selectChip(labels[btn]!, config.mouseButton == btn,
