@@ -225,10 +225,11 @@ class ClickService {
     final wantsRandom = _config.randomDelayMinMs > 0 ||
         _config.randomDelayMaxMs > 0 ||
         _config.randomOffsetEnabled;
-    // Native fast clicker only supports single-button clicks; combos like
-    // left+right must go through the Dart path where they are expanded.
-    final wantsCombo = _config.mouseButton == MouseButton.leftRight;
-    final useNative = baseUs <= 50000 && Platform.isWindows && !wantsRandom && !wantsCombo;
+    // Sequence mode uses mouseDown/mouseUp and per-step delays, which the
+    // native fast clicker cannot express — route it through the Dart path.
+    final wantsSequence = _config.clickType == ClickType.sequence;
+    final useNative =
+        baseUs <= 50000 && Platform.isWindows && !wantsRandom && !wantsSequence;
 
     if (useNative) {
       _log('using native fast clicker (base=${baseUs}us)');
@@ -415,7 +416,7 @@ class ClickService {
     } else if (_config.clickMode == ClickMode.touch) {
       await _performTouchAction();
     } else {
-      // Mouse mode — supports click, drag, swipe
+      // Mouse mode — supports click, drag, swipe, sequence
       if (_config.clickType == ClickType.drag) {
         await _input.mouseDrag(
           startX: _config.dragStartX, startY: _config.dragStartY,
@@ -428,6 +429,8 @@ class ClickService {
           endX: _config.swipeEndX, endY: _config.swipeEndY,
           durationMs: _config.swipeDurationMs,
         );
+      } else if (_config.clickType == ClickType.sequence) {
+        await _performMouseSequence();
       } else {
         await _performMouseClick();
       }
@@ -531,15 +534,6 @@ class ClickService {
       y += offsetY;
     }
 
-    // Left+right combo: click left (press+release) then right (press+release)
-    // at the same position. Follows the same position mode — in "follow mouse"
-    // mode both buttons land at the live cursor position instead of a fixed one.
-    if (_config.mouseButton == MouseButton.leftRight) {
-      await _input.mouseClick(x: x, y: y, button: 'left', doubleClick: false);
-      await _input.mouseClick(x: x, y: y, button: 'right', doubleClick: false);
-      return;
-    }
-
     // mouseClick already handles SetCursorPos for fixed positions,
     // no need to call mouseMove separately
     await _input.mouseClick(
@@ -548,6 +542,63 @@ class ClickService {
       button: _config.mouseButton.name,
       doubleClick: _config.clickType == ClickType.double,
     );
+  }
+
+  Future<void> _performMouseSequence() async {
+    int x = _config.positionMode == PositionMode.fixed ||
+            _config.positionMode == PositionMode.pick
+        ? _config.fixedX
+        : -1;
+    int y = _config.positionMode == PositionMode.fixed ||
+            _config.positionMode == PositionMode.pick
+        ? _config.fixedY
+        : -1;
+
+    // Resolve live cursor position so random offset can jitter around it even
+    // in "follow mouse" mode (otherwise offset is silently skipped).
+    if (x < 0 && y < 0 && _config.randomOffsetEnabled && Platform.isWindows) {
+      try {
+        final pos =
+            await _platformChannel.invokeMethod<Map>('getCursorPosition');
+        x = pos?['x'] as int? ?? -1;
+        y = pos?['y'] as int? ?? -1;
+      } catch (_) {}
+    }
+
+    if (x >= 0 && y >= 0 && _config.randomOffsetEnabled) {
+      final offsetMin = _config.randomOffsetMinPx;
+      final offsetMax = _config.randomOffsetMaxPx;
+      final range = offsetMax - offsetMin + 1;
+      x += offsetMin + _random.nextInt(range) * (_random.nextBool() ? 1 : -1);
+      y += offsetMin + _random.nextInt(range) * (_random.nextBool() ? 1 : -1);
+    }
+
+    for (final item in _config.mouseSequence) {
+      if (_status != ClickerStatus.running) break;
+      switch (item.action) {
+        case MouseActionType.click:
+          await _input.mouseClick(x: x, y: y, button: item.button.name, doubleClick: false);
+          break;
+        case MouseActionType.doubleClick:
+          await _input.mouseClick(x: x, y: y, button: item.button.name, doubleClick: true);
+          break;
+        case MouseActionType.press:
+          await _input.mouseDown(x: x, y: y, button: item.button.name);
+          break;
+        case MouseActionType.release:
+          await _input.mouseUp(x: x, y: y, button: item.button.name);
+          break;
+        case MouseActionType.delay:
+          await Future.delayed(Duration(milliseconds: item.delayMs));
+          break;
+      }
+      // Per-step pause after non-delay actions (delay steps already waited).
+      if (_status == ClickerStatus.running &&
+          item.action != MouseActionType.delay &&
+          item.delayMs > 0) {
+        await Future.delayed(Duration(milliseconds: item.delayMs));
+      }
+    }
   }
 
   Future<void> _performKeyAction() async {

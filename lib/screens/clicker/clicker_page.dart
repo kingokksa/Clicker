@@ -80,6 +80,11 @@ class _ClickerPageState extends State<ClickerPage> {
         if (config.clickType == ClickType.swipe) ...[
           _spacing, _section(title: '扫过路径', icon: FluentIcons.forward, child: _buildMouseSwipePathSelector(context, config, state, theme)),
         ],
+        if (config.clickType == ClickType.sequence) ...[
+          _spacing, _section(title: '动作序列', icon: FluentIcons.bulleted_list, child: _buildMouseSequenceEditor(context, config, state, theme)),
+          _spacing, _section(title: '点击位置', icon: FluentIcons.map_pin, child: _buildPositionSelector(context, config, state, theme)),
+          _spacing, _section(title: '随机偏移', icon: FluentIcons.open_in_new_tab, child: _buildRandomOffset(config, state, theme)),
+        ],
       ]);
     }
 
@@ -349,6 +354,101 @@ class _ClickerPageState extends State<ClickerPage> {
     }));
   }
 
+  // ─── Mouse Sequence Editor ────────────────────────────────
+
+  Widget _buildMouseSequenceEditor(BuildContext context, ClickerConfig config, AppState state, FluentThemeData theme) {
+    final seq = config.mouseSequence;
+    final isDark = theme.brightness == Brightness.dark;
+    final containerBg = isDark ? const Color(0xFF303050) : const Color(0xFFF0F0F8);
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      if (seq.isNotEmpty) ...[
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(color: containerBg, borderRadius: BorderRadius.circular(8)),
+          child: Wrap(spacing: 4, runSpacing: 4, children: [
+            for (int i = 0; i < seq.length; i++) ...[
+              _mouseActionChip(seq[i], onDelete: () {
+                final n = List<MouseActionItem>.from(seq)..removeAt(i);
+                state.setClickerConfig(config.copyWith(mouseSequence: n));
+              }),
+              if (i < seq.length - 1) const Icon(FluentIcons.forward, size: 12),
+            ],
+          ]),
+        ),
+        const SizedBox(height: 6),
+        Row(children: [
+          Text('共 ${seq.length} 个动作', style: TextStyle(fontSize: 12, color: theme.brightness == Brightness.dark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
+          const Spacer(),
+          HyperlinkButton(onPressed: () => state.setClickerConfig(config.copyWith(mouseSequence: <MouseActionItem>[])), child: const Text('清空')),
+        ]),
+      ] else
+        const Padding(padding: EdgeInsets.all(16), child: Center(child: Text('点击下方按钮添加动作', style: TextStyle(fontSize: 12)))),
+      const SizedBox(height: 8),
+      SizedBox(width: double.infinity, child: Button(onPressed: () => _showMouseActionPicker(context, state, config), child: const Text('+ 添加动作'))),
+      const SizedBox(height: 10),
+      const Text('快速模板', style: TextStyle(fontSize: 12)),
+      const SizedBox(height: 4),
+      Wrap(spacing: 4, runSpacing: 4, children: [
+        _mouseTemplateChip('左键后右键', [
+          const MouseActionItem(action: MouseActionType.click, button: MouseButton.left, delayMs: 50),
+          const MouseActionItem(action: MouseActionType.click, button: MouseButton.right, delayMs: 50),
+        ], config, state),
+        _mouseTemplateChip('左键双击', [
+          const MouseActionItem(action: MouseActionType.doubleClick, button: MouseButton.left, delayMs: 50),
+        ], config, state),
+        _mouseTemplateChip('按住后松开', [
+          const MouseActionItem(action: MouseActionType.press, button: MouseButton.left, delayMs: 200),
+          const MouseActionItem(action: MouseActionType.release, button: MouseButton.left, delayMs: 50),
+        ], config, state),
+      ]),
+    ]);
+  }
+
+  static String _mouseActionLabel(MouseActionItem item) {
+    if (item.action == MouseActionType.delay) return '延迟 ${item.delayMs}ms';
+    const actionLabels = {
+      MouseActionType.click: '单击',
+      MouseActionType.doubleClick: '双击',
+      MouseActionType.press: '按下',
+      MouseActionType.release: '松开',
+    };
+    const buttonLabels = {
+      MouseButton.left: '左键', MouseButton.right: '右键', MouseButton.middle: '中键',
+      MouseButton.scrollUp: '滚轮上', MouseButton.scrollDown: '滚轮下',
+      MouseButton.x1: '侧键1', MouseButton.x2: '侧键2',
+    };
+    return '${buttonLabels[item.button]}·${actionLabels[item.action]}';
+  }
+
+  Widget _mouseActionChip(MouseActionItem item, {VoidCallback? onDelete}) {
+    return Builder(builder: (context) {
+      final accent = FluentTheme.of(context).accentColor;
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(color: accent.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(4), border: Border.all(color: accent.withValues(alpha: 0.3))),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Text(_mouseActionLabel(item), style: TextStyle(color: accent, fontWeight: FontWeight.w600, fontFamily: 'monospace', fontSize: 12)),
+          if (onDelete != null) ...[
+            const SizedBox(width: 4),
+            IconButton(icon: const Icon(FluentIcons.clear, size: 10), onPressed: onDelete),
+          ],
+        ]),
+      );
+    });
+  }
+
+  Widget _mouseTemplateChip(String label, List<MouseActionItem> items, ClickerConfig config, AppState state) {
+    return _selectChip(label, false, () => state.setClickerConfig(config.copyWith(mouseSequence: items)));
+  }
+
+  void _showMouseActionPicker(BuildContext context, AppState state, ClickerConfig config) {
+    showDialog(context: context, builder: (ctx) => _MouseActionPickerDialog(onConfirm: (item) {
+      final n = List<MouseActionItem>.from(config.mouseSequence)..add(item);
+      state.setClickerConfig(config.copyWith(mouseSequence: n));
+      Navigator.pop(ctx);
+    }));
+  }
+
   // ─── Combo Key Editor ─────────────────────────────────────
 
   Widget _buildComboKeyEditor(BuildContext context, ClickerConfig config, AppState state, FluentThemeData theme) {
@@ -507,6 +607,8 @@ class _ClickerPageState extends State<ClickerPage> {
         () => state.setClickerConfig(config.copyWith(clickType: ClickType.drag)), icon: FluentIcons.move),
       _selectChip('扫过', config.clickType == ClickType.swipe,
         () => state.setClickerConfig(config.copyWith(clickType: ClickType.swipe)), icon: FluentIcons.forward),
+      _selectChip('序列', config.clickType == ClickType.sequence,
+        () => state.setClickerConfig(config.copyWith(clickType: ClickType.sequence)), icon: FluentIcons.bulleted_list),
     ]);
   }
 
@@ -585,7 +687,6 @@ class _ClickerPageState extends State<ClickerPage> {
       MouseButton.left: '左键', MouseButton.right: '右键', MouseButton.middle: '中键',
       MouseButton.scrollUp: '滚轮上', MouseButton.scrollDown: '滚轮下',
       MouseButton.x1: '侧键1', MouseButton.x2: '侧键2',
-      MouseButton.leftRight: '左+右',
     };
     return Wrap(spacing: 6, runSpacing: 4, children: MouseButton.values.map((btn) =>
       _selectChip(labels[btn]!, config.mouseButton == btn,
@@ -1040,6 +1141,86 @@ class _ComboKeyPickerDialogState extends State<_ComboKeyPickerDialog> {
           ])),
       ])),
       actions: [FilledButton(onPressed: _selectedKey.isEmpty ? null : () => widget.onConfirm(_selectedKey), child: const Text('确认'))],
+    );
+  }
+}
+
+// ─── Mouse Action Picker Dialog ──────────────────────────────
+
+class _MouseActionPickerDialog extends StatefulWidget {
+  final ValueChanged<MouseActionItem> onConfirm;
+  const _MouseActionPickerDialog({required this.onConfirm});
+  @override
+  State<_MouseActionPickerDialog> createState() => _MouseActionPickerDialogState();
+}
+
+class _MouseActionPickerDialogState extends State<_MouseActionPickerDialog> {
+  MouseActionType _action = MouseActionType.click;
+  MouseButton _button = MouseButton.left;
+  int _delayMs = 50;
+
+  static const _actionLabels = <MouseActionType, String>{
+    MouseActionType.click: '单击',
+    MouseActionType.doubleClick: '双击',
+    MouseActionType.press: '按下',
+    MouseActionType.release: '松开',
+    MouseActionType.delay: '延迟',
+  };
+  static const _buttonLabels = <MouseButton, String>{
+    MouseButton.left: '左键', MouseButton.right: '右键', MouseButton.middle: '中键',
+    MouseButton.scrollUp: '滚轮上', MouseButton.scrollDown: '滚轮下',
+    MouseButton.x1: '侧键1', MouseButton.x2: '侧键2',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = FluentTheme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final accent = theme.accentColor;
+    final unselectedBg = isDark ? const Color(0xFF303050) : const Color(0xFFE8E8F0);
+    final unselectedBorder = isDark ? const Color(0xFF404060) : const Color(0xFFD0D0D8);
+    final unselectedText = isDark ? const Color(0xFFC0C0D8) : const Color(0xFF5A5A70);
+    return ContentDialog(
+      title: const Text('添加动作'),
+      content: SizedBox(width: 400, child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const Text('动作类型', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+        const SizedBox(height: 6),
+        Wrap(spacing: 6, runSpacing: 6, children: _actionLabels.entries.map((e) {
+          final sel = _action == e.key;
+          return GestureDetector(onTap: () => setState(() => _action = e.key),
+            child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(color: sel ? accent.withValues(alpha: 0.2) : unselectedBg,
+                borderRadius: BorderRadius.circular(4), border: Border.all(color: sel ? accent : unselectedBorder)),
+              child: Text(e.value, style: TextStyle(fontSize: 12, color: sel ? accent : unselectedText, fontWeight: sel ? FontWeight.w600 : FontWeight.normal)),
+            ),
+          );
+        }).toList()),
+        const SizedBox(height: 14),
+        if (_action != MouseActionType.delay) ...[
+          const Text('鼠标按键', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+          const SizedBox(height: 6),
+          Wrap(spacing: 6, runSpacing: 6, children: _buttonLabels.entries.map((e) {
+            final sel = _button == e.key;
+            return GestureDetector(onTap: () => setState(() => _button = e.key),
+              child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(color: sel ? accent.withValues(alpha: 0.2) : unselectedBg,
+                  borderRadius: BorderRadius.circular(4), border: Border.all(color: sel ? accent : unselectedBorder)),
+                child: Text(e.value, style: TextStyle(fontSize: 12, color: sel ? accent : unselectedText, fontWeight: sel ? FontWeight.w600 : FontWeight.normal)),
+              ),
+            );
+          }).toList()),
+          const SizedBox(height: 14),
+        ],
+        const Text('步进延迟', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+        const SizedBox(height: 6),
+        Row(children: [
+          Text(_action == MouseActionType.delay ? '等待 ${_delayMs}ms' : '动作后延迟 ${_delayMs}ms', style: const TextStyle(fontSize: 12)),
+          Expanded(child: Slider(value: _delayMs.toDouble(), min: 0, max: 2000, divisions: 80, onChanged: (v) => setState(() => _delayMs = v.round()))),
+        ]),
+      ])),
+      actions: [FilledButton(onPressed: () {
+        widget.onConfirm(MouseActionItem(action: _action, button: _button, delayMs: _delayMs));
+      }, child: const Text('确认'))],
     );
   }
 }

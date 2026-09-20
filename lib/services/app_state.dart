@@ -64,6 +64,11 @@ class AppState extends ChangeNotifier {
   String _macroError = '';
   bool _isInitialized = false;
 
+  // Scheduled start/stop
+  Timer? _scheduleTimer;
+  String _lastStartFireDay = '';
+  String _lastStopFireDay = '';
+
   /// 高频点击计数走独立 notifier — 不触发全页 notifyListeners。
   /// 连点运行时计数每 500ms 刷新，若走全局广播会让所有 watch
   /// AppState 的页面（IndexedStack 内全部页面）无差别重建。
@@ -308,6 +313,9 @@ class AppState extends ChangeNotifier {
       };
 
       _hotkeyService.start();
+
+      // Scheduled auto-start / auto-stop
+      _startScheduleTimer();
 
       // Load hold trigger keys
       _holdTriggerKeys = _storage.loadHoldTriggerKeys();
@@ -597,6 +605,72 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ─── Scheduled Start / Stop ───────────────────────────────
+
+  void _startScheduleTimer() {
+    _scheduleTimer?.cancel();
+    _scheduleTimer = Timer.periodic(
+      const Duration(seconds: 20),
+      (_) => _checkSchedules(),
+    );
+  }
+
+  void _checkSchedules() {
+    _checkSchedule(_clickerConfig.startSchedule, isStart: true);
+    _checkSchedule(_clickerConfig.stopSchedule, isStart: false);
+  }
+
+  void _checkSchedule(ClickerSchedule s, {required bool isStart}) {
+    if (!s.enabled) return;
+    final now = DateTime.now();
+
+    ClickerConfig update(ClickerSchedule ns) => isStart
+        ? _clickerConfig.copyWith(startSchedule: ns)
+        : _clickerConfig.copyWith(stopSchedule: ns);
+
+    if (s.timing == ScheduleTiming.countdown) {
+      var fireAt = s.fireAtEpochMs;
+      if (fireAt == 0) {
+        // Arm the countdown on the first check after it is enabled.
+        fireAt = now.millisecondsSinceEpoch + s.afterMinutes * 60000;
+        setClickerConfig(update(s.copyWith(fireAtEpochMs: fireAt)));
+        return;
+      }
+      if (now.millisecondsSinceEpoch >= fireAt) {
+        _fireSchedule(isStart);
+        setClickerConfig(update(s.copyWith(enabled: false, fireAtEpochMs: 0)));
+      }
+      return;
+    }
+
+    // Clock mode: fire at (or after) the configured time of day.
+    final target = DateTime(now.year, now.month, now.day, s.hour, s.minute);
+    if (now.isBefore(target)) return;
+
+    if (s.repeat == ScheduleRepeat.once) {
+      _fireSchedule(isStart);
+      setClickerConfig(update(s.copyWith(enabled: false)));
+    } else {
+      final dayKey = '${now.year}-${now.month}-${now.day}';
+      final last = isStart ? _lastStartFireDay : _lastStopFireDay;
+      if (last == dayKey) return;
+      if (isStart) {
+        _lastStartFireDay = dayKey;
+      } else {
+        _lastStopFireDay = dayKey;
+      }
+      _fireSchedule(isStart);
+    }
+  }
+
+  void _fireSchedule(bool isStart) {
+    if (isStart) {
+      if (!_clickService.isRunning) _clickService.start();
+    } else {
+      if (_clickService.isRunning) _clickService.stop();
+    }
+  }
+
   // ─── Import / Export ──────────────────────────────────────
 
   Future<bool> exportConfig() => _storage.exportConfigToFile(
@@ -639,6 +713,7 @@ class AppState extends ChangeNotifier {
 
   @override
   void dispose() {
+    _scheduleTimer?.cancel();
     _clickService.dispose();
     _macroService.dispose();
     _hotkeyService.dispose();

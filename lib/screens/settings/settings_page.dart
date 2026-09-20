@@ -11,7 +11,7 @@ import 'package:window_manager/window_manager.dart';
 import '../../services/app_state.dart';
 import '../../services/update_service.dart';
 import '../../models/hotkey_config.dart';
-import '../../models/clicker_config.dart' show SoundConfig;
+import '../../models/clicker_config.dart' show SoundConfig, ClickerSchedule, ScheduleTiming, ScheduleRepeat;
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -63,6 +63,8 @@ class _SettingsPageState extends State<SettingsPage> {
       _sectionCard(title: '窗口', icon: FluentIcons.stack, child: _buildWindowOptions(state)),
       const SizedBox(height: 12),
       _sectionCard(title: '开机自启', icon: FluentIcons.brightness, child: _buildAutoStartSection(state)),
+      const SizedBox(height: 12),
+      _sectionCard(title: '定时任务', icon: FluentIcons.clock, child: _buildScheduleSection(state)),
       const SizedBox(height: 12),
       _sectionCard(title: '配置管理', icon: FluentIcons.save, child: _buildProfileSection(context, state)),
       const SizedBox(height: 12),
@@ -212,6 +214,124 @@ class _SettingsPageState extends State<SettingsPage> {
       const channel = MethodChannel('com.clicker.pro/platform');
       await channel.invokeMethod(enabled ? 'enableAutoStart' : 'disableAutoStart');
     } catch (_) {}
+  }
+
+  // ─── Scheduled Tasks ──────────────────────────────────────
+
+  Widget _buildScheduleSection(AppState state) {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _buildScheduleTile(state, title: '定时开始', icon: FluentIcons.play, isStart: true),
+      const SizedBox(height: 12),
+      const Divider(style: DividerThemeData(horizontalMargin: EdgeInsets.zero)),
+      const SizedBox(height: 12),
+      _buildScheduleTile(state, title: '定时停止', icon: FluentIcons.stop, isStart: false),
+    ]);
+  }
+
+  Widget _buildScheduleTile(AppState state, {required String title, required IconData icon, required bool isStart}) {
+    final config = state.clickerConfig;
+    final s = isStart ? config.startSchedule : config.stopSchedule;
+    final accent = FluentTheme.of(context).accentColor;
+
+    void update(ClickerSchedule ns) {
+      final updated = isStart
+          ? config.copyWith(startSchedule: ns)
+          : config.copyWith(stopSchedule: ns);
+      state.setClickerConfig(updated);
+    }
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Icon(icon, size: 14, color: accent.withValues(alpha: 0.7)),
+        const SizedBox(width: 8),
+        Expanded(child: Text(title, style: const TextStyle(fontSize: 13))),
+        ToggleSwitch(
+          checked: s.enabled,
+          onChanged: (v) => update(s.copyWith(enabled: v, fireAtEpochMs: 0)),
+        ),
+      ]),
+      if (s.enabled) ...[
+        const SizedBox(height: 10),
+        Row(children: [
+          _chip('时间点', s.timing == ScheduleTiming.clock,
+              () => update(s.copyWith(timing: ScheduleTiming.clock, fireAtEpochMs: 0))),
+          const SizedBox(width: 6),
+          _chip('倒计时', s.timing == ScheduleTiming.countdown,
+              () => update(s.copyWith(timing: ScheduleTiming.countdown, fireAtEpochMs: 0))),
+          const Spacer(),
+          if (s.timing == ScheduleTiming.clock) ...[
+            _chip('仅一次', s.repeat == ScheduleRepeat.once,
+                () => update(s.copyWith(repeat: ScheduleRepeat.once))),
+            const SizedBox(width: 6),
+            _chip('每天', s.repeat == ScheduleRepeat.daily,
+                () => update(s.copyWith(repeat: ScheduleRepeat.daily))),
+          ],
+        ]),
+        const SizedBox(height: 10),
+        if (s.timing == ScheduleTiming.clock)
+          Row(children: [
+            const Text('时间:', style: TextStyle(fontSize: 12)),
+            const SizedBox(width: 8),
+            _timeBox(s.hour, (v) => update(s.copyWith(hour: v % 24))),
+            const Text(' 时 ', style: TextStyle(fontSize: 12)),
+            _timeBox(s.minute, (v) => update(s.copyWith(minute: v % 60))),
+            const Text(' 分', style: TextStyle(fontSize: 12)),
+          ])
+        else
+          Row(children: [
+            const Text('启用后', style: TextStyle(fontSize: 12)),
+            const SizedBox(width: 8),
+            SizedBox(width: 70, child: TextBox(
+              controller: TextEditingController(text: s.afterMinutes.toString()),
+              textAlign: TextAlign.center,
+              onChanged: (v) {
+                final p = int.tryParse(v);
+                if (p != null && p > 0) update(s.copyWith(afterMinutes: p, fireAtEpochMs: 0));
+              },
+            )),
+            const Text(' 分钟后触发', style: TextStyle(fontSize: 12)),
+          ]),
+      ],
+    ]);
+  }
+
+  Widget _chip(String label, bool selected, VoidCallback onTap) {
+    return Builder(builder: (context) {
+      final isDark = FluentTheme.of(context).brightness == Brightness.dark;
+      final accent = FluentTheme.of(context).accentColor;
+      final unselectedBg = isDark ? const Color(0xFF303050) : const Color(0xFFE8E8F0);
+      final unselectedBorder = isDark ? const Color(0xFF404060) : const Color(0xFFD0D0D8);
+      final unselectedText = isDark ? const Color(0xFFC0C0D8) : const Color(0xFF5A5A70);
+      return GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: selected ? accent.withValues(alpha: 0.2) : unselectedBg,
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: selected ? accent : unselectedBorder),
+          ),
+          child: Text(label, style: TextStyle(
+            fontSize: 12, fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+            color: selected ? accent : unselectedText,
+          )),
+        ),
+      );
+    });
+  }
+
+  Widget _timeBox(int value, ValueChanged<int> onChanged) {
+    return SizedBox(
+      width: 46,
+      child: TextBox(
+        controller: TextEditingController(text: value.toString()),
+        textAlign: TextAlign.center,
+        onChanged: (v) {
+          final p = int.tryParse(v);
+          if (p != null && p >= 0) onChanged(p);
+        },
+      ),
+    );
   }
 
   // ─── Profiles ─────────────────────────────────────────────

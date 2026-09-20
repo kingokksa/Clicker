@@ -57,14 +57,14 @@ class SoundConfig {
   );
 }
 
-enum ClickType { single, double, drag, swipe }
+enum ClickType { single, double, drag, swipe, sequence }
 
 enum ClickMode { mouse, keyboard, touch }
 
 /// Touch gesture types — used on mobile and also available on desktop.
 enum TouchAction { tap, longPress, drag, swipe }
 
-enum MouseButton { left, right, middle, scrollUp, scrollDown, x1, x2, leftRight }
+enum MouseButton { left, right, middle, scrollUp, scrollDown, x1, x2 }
 
 enum PositionMode { current, fixed, pick }
 
@@ -92,6 +92,115 @@ class KeySequenceItem {
       delayMs: json['delayMs'] ?? 50,
     );
   }
+}
+
+/// A single step in a mouse action sequence.
+enum MouseActionType { click, press, release, doubleClick, delay }
+
+/// One entry in the mouse action sequence.
+/// [delayMs] is the pause after this step (ignored for [MouseActionType.delay],
+/// which uses [delayMs] as the pause duration itself).
+class MouseActionItem {
+  final MouseActionType action;
+  final MouseButton button;
+  final int delayMs;
+
+  const MouseActionItem({
+    required this.action,
+    this.button = MouseButton.left,
+    this.delayMs = 50,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'action': action.name,
+        'button': button.name,
+        'delayMs': delayMs,
+      };
+
+  factory MouseActionItem.fromJson(Map<String, dynamic> json) {
+    return MouseActionItem(
+      action: MouseActionType.values.firstWhereOrNull(
+            (e) => e.name == json['action'],
+          ) ??
+          MouseActionType.click,
+      button: MouseButton.values.firstWhereOrNull(
+            (e) => e.name == json['button'],
+          ) ??
+          MouseButton.left,
+      delayMs: json['delayMs'] ?? 50,
+    );
+  }
+}
+
+/// Timing mode for scheduled start/stop.
+enum ScheduleTiming { clock, countdown }
+
+/// Recurrence for a schedule. Countdown schedules are always one-shot.
+enum ScheduleRepeat { once, daily }
+
+/// A single scheduled start/stop event.
+class ClickerSchedule {
+  bool enabled;
+  ScheduleTiming timing;   // clock = 具体时间点, countdown = 倒计时
+  ScheduleRepeat repeat;   // once = 仅一次, daily = 每天重复
+  int hour;                // clock mode: 0-23
+  int minute;              // clock mode: 0-59
+  int afterMinutes;        // countdown mode: minutes after arming
+  int fireAtEpochMs;       // computed absolute fire time (0 = not armed) — scheduler-managed
+
+  const ClickerSchedule({
+    this.enabled = false,
+    this.timing = ScheduleTiming.clock,
+    this.repeat = ScheduleRepeat.once,
+    this.hour = 0,
+    this.minute = 0,
+    this.afterMinutes = 10,
+    this.fireAtEpochMs = 0,
+  });
+
+  ClickerSchedule copyWith({
+    bool? enabled,
+    ScheduleTiming? timing,
+    ScheduleRepeat? repeat,
+    int? hour,
+    int? minute,
+    int? afterMinutes,
+    int? fireAtEpochMs,
+  }) => ClickerSchedule(
+    enabled: enabled ?? this.enabled,
+    timing: timing ?? this.timing,
+    repeat: repeat ?? this.repeat,
+    hour: hour ?? this.hour,
+    minute: minute ?? this.minute,
+    afterMinutes: afterMinutes ?? this.afterMinutes,
+    fireAtEpochMs: fireAtEpochMs ?? this.fireAtEpochMs,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'enabled': enabled,
+    'timing': timing.name,
+    'repeat': repeat.name,
+    'hour': hour,
+    'minute': minute,
+    'afterMinutes': afterMinutes,
+    if (fireAtEpochMs != 0) 'fireAtEpochMs': fireAtEpochMs,
+  };
+
+  factory ClickerSchedule.fromJson(Map<String, dynamic> json) => ClickerSchedule(
+    enabled: json['enabled'] ?? false,
+    timing: ScheduleTiming.values.firstWhereOrNull(
+          (e) => e.name == json['timing'],
+        ) ??
+        ScheduleTiming.clock,
+    repeat: ScheduleRepeat.values.firstWhereOrNull(
+          (e) => e.name == json['repeat'],
+        ) ??
+        ScheduleRepeat.once,
+    hour: json['hour'] ?? 0,
+    minute: json['minute'] ?? 0,
+    afterMinutes: json['afterMinutes'] ?? 10,
+    fireAtEpochMs: json['fireAtEpochMs'] ?? 0,
+  );
 }
 
 class ClickerConfig {
@@ -126,6 +235,13 @@ class ClickerConfig {
 
   // Key sequence
   List<KeySequenceItem> keySequence;
+
+  // Mouse action sequence
+  List<MouseActionItem> mouseSequence;
+
+  // Scheduled auto-start / auto-stop
+  ClickerSchedule startSchedule;
+  ClickerSchedule stopSchedule;
 
   // Key combo (keys pressed together)
   List<String> comboKeys;
@@ -217,6 +333,9 @@ class ClickerConfig {
     this.swipeEndY = 0,
     this.swipeDurationMs = 300,
     this.keySequence = const [],
+    this.mouseSequence = const [],
+    this.startSchedule = const ClickerSchedule(),
+    this.stopSchedule = const ClickerSchedule(),
     this.comboKeys = const [],
     this.textToType = '',
     this.textTypeDelayMs = 50,
@@ -312,6 +431,16 @@ class ClickerConfig {
               ?.map((e) => KeySequenceItem.fromJson(e as Map<String, dynamic>))
               .toList() ??
           [],
+      mouseSequence: (json['mouseSequence'] as List<dynamic>?)
+              ?.map((e) => MouseActionItem.fromJson(e as Map<String, dynamic>))
+              .toList() ??
+          [],
+      startSchedule: json['startSchedule'] != null
+          ? ClickerSchedule.fromJson(json['startSchedule'])
+          : const ClickerSchedule(),
+      stopSchedule: json['stopSchedule'] != null
+          ? ClickerSchedule.fromJson(json['stopSchedule'])
+          : const ClickerSchedule(),
       comboKeys: (json['comboKeys'] as List<dynamic>?)
               ?.map((e) => e as String)
               .toList() ??
@@ -398,6 +527,9 @@ class ClickerConfig {
         'swipeEndY': swipeEndY,
         'swipeDurationMs': swipeDurationMs,
         'keySequence': keySequence.map((e) => e.toJson()).toList(),
+        'mouseSequence': mouseSequence.map((e) => e.toJson()).toList(),
+        'startSchedule': startSchedule.toJson(),
+        'stopSchedule': stopSchedule.toJson(),
         'comboKeys': comboKeys,
         'textToType': textToType,
         'textTypeDelayMs': textTypeDelayMs,
@@ -468,6 +600,9 @@ class ClickerConfig {
     int? swipeEndY,
     int? swipeDurationMs,
     List<KeySequenceItem>? keySequence,
+    List<MouseActionItem>? mouseSequence,
+    ClickerSchedule? startSchedule,
+    ClickerSchedule? stopSchedule,
     List<String>? comboKeys,
     String? textToType,
     int? textTypeDelayMs,
@@ -537,6 +672,9 @@ class ClickerConfig {
       swipeEndY: swipeEndY ?? this.swipeEndY,
       swipeDurationMs: swipeDurationMs ?? this.swipeDurationMs,
       keySequence: keySequence ?? this.keySequence,
+      mouseSequence: mouseSequence ?? this.mouseSequence,
+      startSchedule: startSchedule ?? this.startSchedule,
+      stopSchedule: stopSchedule ?? this.stopSchedule,
       comboKeys: comboKeys ?? this.comboKeys,
       textToType: textToType ?? this.textToType,
       textTypeDelayMs: textTypeDelayMs ?? this.textTypeDelayMs,
