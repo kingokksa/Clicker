@@ -233,7 +233,13 @@ class ClickService {
       return;
     }
 
-    final delayUs = _getDelayUs();
+    int delayUs;
+    try {
+      delayUs = _getDelayUs();
+    } catch (_) {
+      // Never let a bad delay config break the click loop.
+      delayUs = baseUs;
+    }
     _log('using Dart timer mode (delay=${delayUs}us)');
 
     _timer = Timer(Duration(microseconds: delayUs), () async {
@@ -356,38 +362,46 @@ class ClickService {
   }
 
   int _getDelayUs() {
-    final baseUs = (_config.intervalMs * 1000).round();
+    final baseUs = (_config.intervalMs * 1000).round().clamp(1, 1 << 30).toInt();
     var delay = baseUs;
 
     // Smart delay: add human-like random variation
     if (_config.smartDelayEnabled) {
       final variation = (baseUs * 0.3).round();
-      delay += _random.nextInt(variation * 2 + 1) - variation;
+      if (variation > 0) {
+        delay += _random.nextInt(variation * 2 + 1) - variation;
+      }
     }
     // Human-like mode: more pronounced variation with optional random pauses
     else if (_config.humanLikeEnabled) {
       final variation = (baseUs * 0.4).round();
-      delay += _random.nextInt(variation * 2 + 1) - variation;
+      if (variation > 0) {
+        delay += _random.nextInt(variation * 2 + 1) - variation;
+      }
 
       // Random pause (advanced feature)
       if (_config.humanLikeRandomPause && _random.nextInt(100) < _config.humanLikePauseChance) {
-        final pauseRange = _config.humanLikePauseMaxMs - _config.humanLikePauseMinMs;
-        final pauseMs = _config.humanLikePauseMinMs + (pauseRange > 0 ? _random.nextInt(pauseRange + 1) : 0);
+        final lo = _config.humanLikePauseMinMs;
+        final hi = _config.humanLikePauseMaxMs;
+        final pauseMs = hi > lo ? lo + _random.nextInt(hi - lo + 1) : lo;
         delay += pauseMs * 1000;
       } else if (!_config.humanLikeRandomPause && _random.nextInt(100) < 5) {
         // Legacy: occasional pause without config
-        delay += baseUs + _random.nextInt(baseUs * 2);
+        delay += baseUs + _random.nextInt(baseUs * 2 + 1);
       }
     }
 
     // User-configured random delay range ALWAYS applies on top, so it is not
     // silently skipped when smart delay / human-like mode is also enabled.
-    if (_config.randomDelayMinMs > 0 && _config.randomDelayMaxMs > 0) {
-      final randomExtraMs = _config.randomDelayMinMs +
-          _random.nextInt(_config.randomDelayMaxMs - _config.randomDelayMinMs + 1);
+    final lo = _config.randomDelayMinMs;
+    final hi = _config.randomDelayMaxMs;
+    if (lo > 0 && hi > 0) {
+      final mn = lo < hi ? lo : hi;
+      final mx = lo < hi ? hi : lo;
+      final randomExtraMs = mn + _random.nextInt(mx - mn + 1);
       delay += randomExtraMs * 1000;
     }
-    return delay;
+    return delay < 1 ? 1 : delay;
   }
 
   Future<void> _performAction() async {
