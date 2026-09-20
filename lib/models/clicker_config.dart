@@ -64,7 +64,7 @@ enum ClickMode { mouse, keyboard, touch }
 /// Touch gesture types — used on mobile and also available on desktop.
 enum TouchAction { tap, longPress, drag, swipe }
 
-enum MouseButton { left, right, middle, scrollUp, scrollDown, x1, x2 }
+enum MouseButton { left, right, middle, scrollUp, scrollDown, x1, x2, leftRight }
 
 enum PositionMode { current, fixed, pick }
 

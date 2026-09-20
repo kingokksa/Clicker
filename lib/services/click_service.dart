@@ -225,7 +225,10 @@ class ClickService {
     final wantsRandom = _config.randomDelayMinMs > 0 ||
         _config.randomDelayMaxMs > 0 ||
         _config.randomOffsetEnabled;
-    final useNative = baseUs <= 50000 && Platform.isWindows && !wantsRandom;
+    // Native fast clicker only supports single-button clicks; combos like
+    // left+right must go through the Dart path where they are expanded.
+    final wantsCombo = _config.mouseButton == MouseButton.leftRight;
+    final useNative = baseUs <= 50000 && Platform.isWindows && !wantsRandom && !wantsCombo;
 
     if (useNative) {
       _log('using native fast clicker (base=${baseUs}us)');
@@ -526,6 +529,15 @@ class ClickService {
       final offsetY = offsetMin + _random.nextInt(range) * (_random.nextBool() ? 1 : -1);
       x += offsetX;
       y += offsetY;
+    }
+
+    // Left+right combo: click left (press+release) then right (press+release)
+    // at the same position. Follows the same position mode — in "follow mouse"
+    // mode both buttons land at the live cursor position instead of a fixed one.
+    if (_config.mouseButton == MouseButton.leftRight) {
+      await _input.mouseClick(x: x, y: y, button: 'left', doubleClick: false);
+      await _input.mouseClick(x: x, y: y, button: 'right', doubleClick: false);
+      return;
     }
 
     // mouseClick already handles SetCursorPos for fixed positions,
