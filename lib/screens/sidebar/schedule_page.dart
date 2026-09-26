@@ -1,6 +1,9 @@
-/// 定时任务页面 — 定时自动开始 / 停止连点。
-/// 配置字段落在 [ClickerConfig.startSchedule] / [ClickerConfig.stopSchedule]，
-/// 实际调度由 AppState 的周期定时器执行。
+/// 定时任务页面 — 可增删的定时任务列表，每个任务到点自动执行一个动作
+/// （启动/停止连点、播放/停止宏）。
+/// 所有选项常显：先配动作和时间，再开「启用」开关布防。
+/// 布防时刻由 AppState.updateScheduleAt(rearm) 统一计算：
+/// 时间点模式取下一个 hh:mm（已过顺延到明天），倒计时取 当前 + N 分钟，
+/// 因此「一开开关」绝不会立即触发。
 library;
 
 import 'package:fluent_ui/fluent_ui.dart';
@@ -14,6 +17,10 @@ class SchedulePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
+    final config = state.clickerConfig;
+    final tasks = config.schedules;
+    final isDark = FluentTheme.of(context).brightness == Brightness.dark;
+    final subColor = isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A);
 
     return ScaffoldPage.scrollable(
       padding: const EdgeInsets.all(20),
@@ -23,101 +30,208 @@ class SchedulePage extends StatelessWidget {
           const SizedBox(width: 10),
           const Text('定时任务', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
         ]),
+        const SizedBox(height: 6),
+        Text('到点自动执行动作：先配置动作与时间，再打开「启用」开关布防',
+          style: TextStyle(fontSize: 12, color: subColor)),
         const SizedBox(height: 16),
-        _card(context, title: '定时开始', icon: FluentIcons.play, child: _ScheduleTile(state: state, isStart: true)),
-        const SizedBox(height: 12),
-        _card(context, title: '定时停止', icon: FluentIcons.stop, child: _ScheduleTile(state: state, isStart: false)),
-      ],
-    );
-  }
-
-  Widget _card(BuildContext context, {required String title, required IconData icon, required Widget child}) {
-    return Card(
-      padding: const EdgeInsets.all(16),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          Icon(icon, size: 16),
-          const SizedBox(width: 8),
-          Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+          Expanded(child: Text('共 ${tasks.length} 个任务', style: TextStyle(fontSize: 13, color: subColor))),
+          Button(
+            child: const Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(FluentIcons.add, size: 14),
+              SizedBox(width: 6),
+              Text('添加任务'),
+            ]),
+            onPressed: state.addSchedule,
+          ),
         ]),
         const SizedBox(height: 12),
-        child,
-      ]),
+        if (tasks.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 48),
+            child: Center(
+              child: Text('还没有任务，点右上角「添加任务」新建一个',
+                style: TextStyle(fontSize: 13, color: subColor)),
+            ),
+          ),
+        for (var i = 0; i < tasks.length; i++) ...[
+          _ScheduleCard(
+            index: i,
+            task: tasks[i],
+            state: state,
+            onDelete: () => state.removeScheduleAt(i),
+          ),
+          const SizedBox(height: 12),
+        ],
+      ],
     );
   }
 }
 
-class _ScheduleTile extends StatelessWidget {
+class _ScheduleCard extends StatelessWidget {
+  final int index;
+  final ClickerSchedule task;
   final AppState state;
-  final bool isStart;
-  const _ScheduleTile({required this.state, required this.isStart});
+  final VoidCallback onDelete;
+  const _ScheduleCard({
+    required this.index,
+    required this.task,
+    required this.state,
+    required this.onDelete,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final config = state.clickerConfig;
-    final s = isStart ? config.startSchedule : config.stopSchedule;
-    final accent = FluentTheme.of(context).accentColor;
+    final isDark = FluentTheme.of(context).brightness == Brightness.dark;
+    final subColor = isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A);
+    final macros = state.macros;
 
-    void update(ClickerSchedule ns) {
-      final updated = isStart
-          ? config.copyWith(startSchedule: ns)
-          : config.copyWith(stopSchedule: ns);
-      state.setClickerConfig(updated);
+    void update(ClickerSchedule ns, {bool rearm = false}) {
+      state.updateScheduleAt(index, ns, rearm: rearm);
     }
 
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        Icon(isStart ? FluentIcons.play : FluentIcons.stop, size: 14, color: accent.withValues(alpha: 0.7)),
-        const SizedBox(width: 8),
-        const Expanded(child: Text('启用此定时', style: TextStyle(fontSize: 13))),
-        ToggleSwitch(
-          checked: s.enabled,
-          onChanged: (v) => update(s.copyWith(enabled: v, fireAtEpochMs: 0)),
-        ),
-      ]),
-      if (s.enabled) ...[
-        const SizedBox(height: 10),
+    void setAction(ScheduleAction a) {
+      var ns = task.copyWith(action: a);
+      if (a == ScheduleAction.playMacro && ns.macroId == null && macros.isNotEmpty) {
+        ns = ns.copyWith(macroId: macros.first.id);
+      }
+      if (a != ScheduleAction.playMacro) ns = ns.copyWith(clearMacroId: true);
+      update(ns, rearm: true);
+    }
+
+    return Card(
+      padding: const EdgeInsets.all(16),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          _chip(context, '时间点', s.timing == ScheduleTiming.clock,
-              () => update(s.copyWith(timing: ScheduleTiming.clock, fireAtEpochMs: 0))),
-          const SizedBox(width: 6),
-          _chip(context, '倒计时', s.timing == ScheduleTiming.countdown,
-              () => update(s.copyWith(timing: ScheduleTiming.countdown, fireAtEpochMs: 0))),
+          Text('任务 ${index + 1}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+          const SizedBox(width: 10),
+          Text(task.action.label, style: TextStyle(fontSize: 12, color: subColor)),
           const Spacer(),
-          if (s.timing == ScheduleTiming.clock) ...[
-            _chip(context, '仅一次', s.repeat == ScheduleRepeat.once,
-                () => update(s.copyWith(repeat: ScheduleRepeat.once))),
+          GestureDetector(
+            onTap: onDelete,
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(FluentIcons.delete, size: 14, color: isDark ? const Color(0xFFE06666) : const Color(0xFFC0392B)),
+                const SizedBox(width: 4),
+                Text('删除', style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFFE06666) : const Color(0xFFC0392B))),
+              ]),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 12),
+
+        // ── 动作 + 启用 ──
+        Row(children: [
+          const SizedBox(width: 60, child: Text('动作', style: TextStyle(fontSize: 13))),
+          Expanded(child: ComboBox<ScheduleAction>(
+            value: task.action,
+            isExpanded: true,
+            items: ScheduleAction.values
+                .map((a) => ComboBoxItem<ScheduleAction>(value: a, child: Text(a.label, style: const TextStyle(fontSize: 13))))
+                .toList(),
+            onChanged: (v) { if (v != null) setAction(v); },
+          )),
+          const SizedBox(width: 12),
+          ToggleSwitch(
+            checked: task.enabled,
+            onChanged: (v) => update(task.copyWith(enabled: v, fireAtEpochMs: v ? task.fireAtEpochMs : 0), rearm: v),
+          ),
+        ]),
+        const SizedBox(height: 6),
+
+        // ── 播放宏：选宏 ──
+        if (task.action == ScheduleAction.playMacro) ...[
+          Row(children: [
+            const SizedBox(width: 60, child: Text('宏', style: TextStyle(fontSize: 13))),
+            Expanded(child: macros.isEmpty
+              ? _hint('暂无宏 — 请先在宏页面录制', isDark: isDark)
+              : ComboBox<String>(
+                  value: macros.any((m) => m.id == task.macroId) ? task.macroId : macros.first.id,
+                  isExpanded: true,
+                  items: macros.map((m) => ComboBoxItem<String>(value: m.id, child: Text(m.name, style: const TextStyle(fontSize: 13)))).toList(),
+                  onChanged: (v) { if (v != null) update(task.copyWith(macroId: v)); },
+                )),
+          ]),
+          const SizedBox(height: 6),
+        ],
+
+        // ── 时间模式 ──
+        Row(children: [
+          const SizedBox(width: 60, child: Text('时间', style: TextStyle(fontSize: 13))),
+          _chip(context, '时间点', task.timing == ScheduleTiming.clock, () => update(task.copyWith(timing: ScheduleTiming.clock), rearm: true)),
+          const SizedBox(width: 6),
+          _chip(context, '倒计时', task.timing == ScheduleTiming.countdown, () => update(task.copyWith(timing: ScheduleTiming.countdown), rearm: true)),
+          const Spacer(),
+          if (task.timing == ScheduleTiming.clock) ...[
+            _chip(context, '仅一次', task.repeat == ScheduleRepeat.once, () => update(task.copyWith(repeat: ScheduleRepeat.once), rearm: true)),
             const SizedBox(width: 6),
-            _chip(context, '每天', s.repeat == ScheduleRepeat.daily,
-                () => update(s.copyWith(repeat: ScheduleRepeat.daily))),
+            _chip(context, '每天', task.repeat == ScheduleRepeat.daily, () => update(task.copyWith(repeat: ScheduleRepeat.daily), rearm: true)),
           ],
         ]),
         const SizedBox(height: 10),
-        if (s.timing == ScheduleTiming.clock)
+
+        // ── 具体时间 / 倒计时分钟 ──
+        if (task.timing == ScheduleTiming.clock)
           Row(children: [
-            const Text('时间:', style: TextStyle(fontSize: 12)),
+            const SizedBox(width: 60),
+            const Text('时刻:', style: TextStyle(fontSize: 13)),
             const SizedBox(width: 8),
-            _timeBox(s.hour, (v) => update(s.copyWith(hour: v % 24))),
-            const Text(' 时 ', style: TextStyle(fontSize: 12)),
-            _timeBox(s.minute, (v) => update(s.copyWith(minute: v % 60))),
-            const Text(' 分', style: TextStyle(fontSize: 12)),
+            _timeBox(task.hour, (v) => update(task.copyWith(hour: v % 24), rearm: true)),
+            const Text(' 时 ', style: TextStyle(fontSize: 13)),
+            _timeBox(task.minute, (v) => update(task.copyWith(minute: v % 60), rearm: true)),
+            const Text(' 分', style: TextStyle(fontSize: 13)),
           ])
         else
           Row(children: [
-            const Text('启用后', style: TextStyle(fontSize: 12)),
+            const SizedBox(width: 60),
+            const Text('启用后', style: TextStyle(fontSize: 13)),
             const SizedBox(width: 8),
             SizedBox(width: 70, child: TextBox(
-              controller: TextEditingController(text: s.afterMinutes.toString()),
+              controller: TextEditingController(text: task.afterMinutes.toString()),
               textAlign: TextAlign.center,
               onChanged: (v) {
                 final p = int.tryParse(v);
-                if (p != null && p > 0) update(s.copyWith(afterMinutes: p, fireAtEpochMs: 0));
+                if (p != null && p > 0) update(task.copyWith(afterMinutes: p), rearm: true);
               },
             )),
-            const Text(' 分钟后触发', style: TextStyle(fontSize: 12)),
+            const Text(' 分钟后触发', style: TextStyle(fontSize: 13)),
           ]),
-      ],
-    ]);
+
+        // ── 下次触发提示 ──
+        if (task.enabled) ...[
+          const SizedBox(height: 10),
+          Row(children: [
+            const SizedBox(width: 60),
+            Icon(FluentIcons.info, size: 12, color: subColor),
+            const SizedBox(width: 6),
+            Text('下次触发：${_formatFireAt(task.fireAtEpochMs)}', style: TextStyle(fontSize: 12, color: subColor)),
+          ]),
+        ],
+      ]),
+    );
+  }
+
+  Widget _hint(String text, {required bool isDark}) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    decoration: BoxDecoration(
+      color: isDark ? const Color(0xFF303050) : const Color(0xFFF0F0F8),
+      borderRadius: BorderRadius.circular(4),
+    ),
+    child: Text(text, style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
+  );
+
+  String _formatFireAt(int epochMs) {
+    if (epochMs <= 0) return '未布防';
+    final t = DateTime.fromMillisecondsSinceEpoch(epochMs);
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final day = DateTime(t.year, t.month, t.day);
+    final diff = day.difference(today).inDays;
+    final hm = '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+    if (diff == 0) return '今天 $hm';
+    if (diff == 1) return '明天 $hm';
+    return '${t.month}-${t.day} $hm';
   }
 
   Widget _chip(BuildContext context, String label, bool selected, VoidCallback onTap) {

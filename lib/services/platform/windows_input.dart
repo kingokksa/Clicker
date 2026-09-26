@@ -339,8 +339,8 @@ class WindowsInput extends PlatformInput {
       final int flagValue = flags;
       final sw = GetSystemMetrics(SM_CXSCREEN);
       final sh = GetSystemMetrics(SM_CYSCREEN);
-      p.ref.mi.dx = cursor.ref.x * 65535 ~/ sw;
-      p.ref.mi.dy = cursor.ref.y * 65535 ~/ sh;
+      p.ref.mi.dx = cursor.ref.x * 65535 ~/ (sw - 1);
+      p.ref.mi.dy = cursor.ref.y * 65535 ~/ (sh - 1);
       p.ref.mi.dwFlags =
           MOUSE_EVENT_FLAGS(flagValue | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE);
     } else {

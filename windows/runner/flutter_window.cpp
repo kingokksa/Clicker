@@ -495,8 +495,8 @@ static void SendHoldTriggerAction(HoldTriggerEntry* entry) {
     // attach an absolute move at the current cursor (same as the macro player).
     POINT pt;
     if (GetCursorPos(&pt)) {
-      LONG dx = (LONG)(pt.x * 65535.0 / GetSystemMetrics(SM_CXSCREEN));
-      LONG dy = (LONG)(pt.y * 65535.0 / GetSystemMetrics(SM_CYSCREEN));
+      LONG dx = (LONG)(pt.x * 65535.0 / (GetSystemMetrics(SM_CXSCREEN) - 1));
+      LONG dy = (LONG)(pt.y * 65535.0 / (GetSystemMetrics(SM_CYSCREEN) - 1));
       INPUT inputs[2] = {};
       inputs[0].type = INPUT_MOUSE;
       inputs[0].mi.dx = dx;
@@ -1860,8 +1860,8 @@ bool FlutterWindow::OnCreate() {
           INPUT inputs[3] = {};
           // Move mouse
           inputs[0].type = INPUT_MOUSE;
-          inputs[0].mi.dx = (LONG)(clickX * 65535.0 / GetSystemMetrics(SM_CXSCREEN));
-          inputs[0].mi.dy = (LONG)(clickY * 65535.0 / GetSystemMetrics(SM_CYSCREEN));
+          inputs[0].mi.dx = (LONG)(clickX * 65535.0 / (GetSystemMetrics(SM_CXSCREEN) - 1));
+          inputs[0].mi.dy = (LONG)(clickY * 65535.0 / (GetSystemMetrics(SM_CYSCREEN) - 1));
           inputs[0].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
           // Down
           inputs[1].type = INPUT_MOUSE;
@@ -3337,8 +3337,8 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
       // Game-friendly injection (raw-input games ignore bare mouse_event).
       POINT pt;
       if (GetCursorPos(&pt)) {
-        LONG dx = (LONG)(pt.x * 65535.0 / GetSystemMetrics(SM_CXSCREEN));
-        LONG dy = (LONG)(pt.y * 65535.0 / GetSystemMetrics(SM_CYSCREEN));
+        LONG dx = (LONG)(pt.x * 65535.0 / (GetSystemMetrics(SM_CXSCREEN) - 1));
+        LONG dy = (LONG)(pt.y * 65535.0 / (GetSystemMetrics(SM_CYSCREEN) - 1));
         INPUT inputs[2] = {};
         inputs[0].type = INPUT_MOUSE;
         inputs[0].mi.dx = dx;
@@ -3641,8 +3641,8 @@ static void SendOneClick() {
       POINT pt;
       if (GetCursorPos(&pt)) { cx = pt.x; cy = pt.y; }
     }
-    LONG dx = (LONG)(cx * 65535.0 / GetSystemMetrics(SM_CXSCREEN));
-    LONG dy = (LONG)(cy * 65535.0 / GetSystemMetrics(SM_CYSCREEN));
+    LONG dx = (LONG)(cx * 65535.0 / (GetSystemMetrics(SM_CXSCREEN) - 1));
+    LONG dy = (LONG)(cy * 65535.0 / (GetSystemMetrics(SM_CYSCREEN) - 1));
 
     INPUT inputs[2] = {};
     inputs[0].type = INPUT_MOUSE;

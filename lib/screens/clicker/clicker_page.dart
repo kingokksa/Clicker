@@ -16,7 +16,12 @@ class ClickerPage extends StatefulWidget {
   State<ClickerPage> createState() => _ClickerPageState();
 }
 
+/// 点击间隔滑块的显示单位
+enum _IntervalUnit { ms, s, min }
+
 class _ClickerPageState extends State<ClickerPage> {
+  /// 点击间隔滑块的显示单位（值始终以毫秒存储，仅滑块刻度/分档变化）
+  _IntervalUnit _intervalUnit = _IntervalUnit.ms;
   final _textTypeController = TextEditingController();
 
   @override
@@ -673,41 +678,61 @@ class _ClickerPageState extends State<ClickerPage> {
 
   Widget _buildIntervalSlider(ClickerConfig config, AppState state, FluentThemeData theme) {
     final ms = config.intervalMs;
+
+    // 每个单位下的快捷档位（毫秒值 + 标签）
+    final (List<double> chipMs, List<String> chipLabels) =
+      switch (_intervalUnit) {
+        _IntervalUnit.ms  => (const [1, 10, 50, 100, 500, 1000], const ['1ms', '10ms', '50ms', '100ms', '500ms', '1s']),
+        _IntervalUnit.s   => (const [100, 500, 1000, 2000, 5000, 10000, 30000, 60000], const ['0.1s', '0.5s', '1s', '2s', '5s', '10s', '30s', '60s']),
+        _IntervalUnit.min => (const [60000, 120000, 180000, 300000], const ['1min', '2min', '3min', '5min']),
+      };
+
     String label;
-    if (ms >= 1000) {
-      label = '${(ms / 1000).toStringAsFixed(1)}s';
-    } else if (ms != ms.roundToDouble()) {
-      label = '${ms.toStringAsFixed(2)}ms';
-    } else {
-      label = '${ms.toInt()}ms';
+    switch (_intervalUnit) {
+      case _IntervalUnit.ms:
+        label = '${ms.toInt()}ms';
+      case _IntervalUnit.s:
+        label = '${(ms / 1000).toStringAsFixed(1)}s';
+      case _IntervalUnit.min:
+        label = '${(ms / 60000).toStringAsFixed(2)}min';
     }
+
+    // 左侧输入框的数值 = 实际毫秒 ÷ 单位倍率：输 100，选「秒」= 100 秒，选「毫秒」= 100 毫秒
+    final factor = switch (_intervalUnit) {
+      _IntervalUnit.ms => 1.0,
+      _IntervalUnit.s => 1000.0,
+      _IntervalUnit.min => 60000.0,
+    };
+
     return Column(children: [
-      Row(children: [
-        Text(label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
-        const SizedBox(width: 12),
-        ...<double>[1, 10, 50, 100, 500, 1000].map((v) => Padding(padding: const EdgeInsets.only(left: 4),
-          child: _selectChip(
-            v >= 1000 ? '${(v / 1000).toStringAsFixed(0)}s' : '${v.toInt()}ms',
-            (ms - v).abs() < 0.005,
-            () => state.setClickerConfig(config.copyWith(intervalMs: v))))),
-      ]),
+      Text(label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
       const SizedBox(height: 4),
-      Row(children: [
-        Expanded(child: Slider(
-          value: ms.clamp(1, 300000),
-          min: 1, max: 300000,
-          onChanged: (v) => state.setClickerConfig(config.copyWith(intervalMs: v.roundToDouble())),
+      // ── 当前单位下的快捷档位 ──
+      Wrap(spacing: 4, runSpacing: 4, children: [
+        for (var i = 0; i < chipMs.length; i++)
+          _selectChip(
+            chipLabels[i],
+            (ms - chipMs[i]).abs() < 0.005,
+            () => state.setClickerConfig(config.copyWith(intervalMs: chipMs[i]))),
+      ]),
+      const SizedBox(height: 8),
+      // ── 精确输入框 + 单位下拉框（居中）──
+      Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        SizedBox(width: 140, child: _DebouncedIntervalTextBox(
+          value: ms / factor,
+          onChanged: (v) => state.setClickerConfig(config.copyWith(intervalMs: (v * factor).roundToDouble())),
+        )),
+        const SizedBox(width: 10),
+        SizedBox(width: 96, child: ComboBox<_IntervalUnit>(
+          value: _intervalUnit,
+          isExpanded: true,
+          items: _IntervalUnit.values.map((unit) => ComboBoxItem<_IntervalUnit>(
+            value: unit,
+            child: Text(switch (unit) { _IntervalUnit.ms => '毫秒', _IntervalUnit.s => '秒', _IntervalUnit.min => '分' }),
+          )).toList(),
+          onChanged: (v) { if (v != null) setState(() => _intervalUnit = v); },
         )),
       ]),
-      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Text('1ms', style: TextStyle(fontSize: 11, color: theme.brightness == Brightness.dark ? const Color(0xFF707090) : const Color(0xFF9A9AAA))),
-        Text('5min', style: TextStyle(fontSize: 11, color: theme.brightness == Brightness.dark ? const Color(0xFF707090) : const Color(0xFF9A9AAA))),
-      ]),
-      const SizedBox(height: 6),
-      SizedBox(width: 140, child: _DebouncedIntervalTextBox(
-        value: ms,
-        onChanged: (v) => state.setClickerConfig(config.copyWith(intervalMs: v)),
-      )),
     ]);
   }
 

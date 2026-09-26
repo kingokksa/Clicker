@@ -85,6 +85,10 @@ class ClickService {
   final Random _random = Random();
   int _nativeGeneration = 0;
 
+  // 贝塞尔移动缓存：记住已移动到的固定目标点，避免连点循环每拍重复拖动
+  int _lastMoveX = -1;
+  int _lastMoveY = -1;
+
   // Native fast clicker channel
   static const _platformChannel = MethodChannel('com.clicker.pro/platform');
   bool _usingNativeClicker = false;
@@ -155,6 +159,9 @@ class ClickService {
 
     _clickCount = 0;
     _startTime = DateTime.now();
+    // 重新开始点击时重置贝塞尔移动缓存，确保目标点即使没变也会重新移动到位
+    _lastMoveX = -1;
+    _lastMoveY = -1;
     // Clear any emergency stop flag from native layer
     floatingPanelPaused = false;
 
@@ -369,15 +376,8 @@ class ClickService {
     final baseUs = (_config.intervalMs * 1000).round().clamp(1, 1 << 30).toInt();
     var delay = baseUs;
 
-    // Smart delay: add human-like random variation
-    if (_config.smartDelayEnabled) {
-      final variation = (baseUs * 0.3).round();
-      if (variation > 0) {
-        delay += _random.nextInt(variation * 2 + 1) - variation;
-      }
-    }
-    // Human-like mode: more pronounced variation with optional random pauses
-    else if (_config.humanLikeEnabled) {
+    // Human-like mode: ±40% variation on each interval, with optional random pauses
+    if (_config.humanLikeEnabled) {
       final variation = (baseUs * 0.4).round();
       if (variation > 0) {
         delay += _random.nextInt(variation * 2 + 1) - variation;
@@ -389,9 +389,6 @@ class ClickService {
         final hi = _config.humanLikePauseMaxMs;
         final pauseMs = hi > lo ? lo + _random.nextInt(hi - lo + 1) : lo;
         delay += pauseMs * 1000;
-      } else if (!_config.humanLikeRandomPause && _random.nextInt(100) < 5) {
-        // Legacy: occasional pause without config
-        delay += baseUs + _random.nextInt(baseUs * 2 + 1);
       }
     }
 
@@ -499,6 +496,44 @@ class ClickService {
     }
   }
 
+  /// 拟人贝塞尔移动：从当前光标到 [targetX, targetY] 走一段二次贝塞尔曲线，
+  /// 分段移动模拟真人滑动手感。仅在能读到当前光标时生效，否则退回直接跳转。
+  Future<void> _moveMouseBezier(int targetX, int targetY) async {
+    int srcX = -1, srcY = -1;
+    if (Platform.isWindows) {
+      try {
+        final pos = await _platformChannel.invokeMethod<Map>('getCursorPosition');
+        srcX = pos?['x'] as int? ?? -1;
+        srcY = pos?['y'] as int? ?? -1;
+      } catch (_) {}
+    }
+    if (srcX < 0 || srcY < 0) {
+      await _input.mouseMove(targetX, targetY);
+      return;
+    }
+    final dx = targetX - srcX;
+    final dy = targetY - srcY;
+    final dist = sqrt((dx * dx + dy * dy).toDouble());
+    if (dist < 8.0) {
+      await _input.mouseMove(targetX, targetY);
+      return;
+    }
+    // 二次贝塞尔控制点：路径中点加随机偏移
+    final cpX = (srcX + targetX) / 2.0 + (_random.nextInt(61) - 30);
+    final cpY = (srcY + targetY) / 2.0 + (_random.nextInt(61) - 30);
+    final steps = (dist / 2.5).clamp(12, 40).toInt();
+    for (var i = 1; i <= steps; i++) {
+      if (_status != ClickerStatus.running) return;
+      final t = i / steps;
+      final u = 1.0 - t;
+      final x = (u * u * srcX + 2 * u * t * cpX + t * t * targetX).round();
+      final y = (u * u * srcY + 2 * u * t * cpY + t * t * targetY).round();
+      await _input.mouseMove(x, y);
+      await Future.delayed(const Duration(milliseconds: 5));
+    }
+    await _input.mouseMove(targetX, targetY);
+  }
+
   Future<void> _performMouseClick() async {
     int x = _config.positionMode == PositionMode.fixed ||
             _config.positionMode == PositionMode.pick
@@ -523,7 +558,24 @@ class ClickService {
       }
     }
 
-    // Apply random offset if enabled
+    // 固定目标点（随机偏移之前），供贝塞尔移动使用
+    final int targetX = x;
+    final int targetY = y;
+    final bool hasFixedTarget = _config.positionMode == PositionMode.fixed ||
+        _config.positionMode == PositionMode.pick;
+
+    // 拟人贝塞尔轨迹：仅固定/拾取位置、且目标点变化时才走曲线移动，
+    // 移动一次到位后原地连点，避免每拍把鼠标拖来拖去（尤其是往左上角滑）。
+    if (hasFixedTarget && _config.humanLikeEnabled && _config.humanLikeBezierCurve &&
+        targetX >= 0 && targetY >= 0) {
+      if (_lastMoveX != targetX || _lastMoveY != targetY) {
+        await _moveMouseBezier(targetX, targetY);
+        _lastMoveX = targetX;
+        _lastMoveY = targetY;
+      }
+    }
+
+    // Apply random offset if enabled（点击瞬时的微调，不触发贝塞尔拖动）
     if (x >= 0 && y >= 0 && _config.randomOffsetEnabled) {
       final offsetMin = _config.randomOffsetMinPx;
       final offsetMax = _config.randomOffsetMaxPx;
@@ -563,6 +615,21 @@ class ClickService {
         x = pos?['x'] as int? ?? -1;
         y = pos?['y'] as int? ?? -1;
       } catch (_) {}
+    }
+
+    // 固定目标点（随机偏移之前）
+    final int targetX = x;
+    final int targetY = y;
+    final bool hasFixedTarget = _config.positionMode == PositionMode.fixed ||
+        _config.positionMode == PositionMode.pick;
+
+    if (hasFixedTarget && _config.humanLikeEnabled && _config.humanLikeBezierCurve &&
+        targetX >= 0 && targetY >= 0) {
+      if (_lastMoveX != targetX || _lastMoveY != targetY) {
+        await _moveMouseBezier(targetX, targetY);
+        _lastMoveX = targetX;
+        _lastMoveY = targetY;
+      }
     }
 
     if (x >= 0 && y >= 0 && _config.randomOffsetEnabled) {

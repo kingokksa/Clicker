@@ -138,18 +138,40 @@ enum ScheduleTiming { clock, countdown }
 /// Recurrence for a schedule. Countdown schedules are always one-shot.
 enum ScheduleRepeat { once, daily }
 
-/// A single scheduled start/stop event.
+/// 定时触发时要执行的动作。
+enum ScheduleAction {
+  startClick('启动连点'),
+  stopClick('停止连点'),
+  playMacro('播放宏'),
+  stopMacro('停止宏');
+
+  const ScheduleAction(this.label);
+  final String label;
+}
+
+/// A single scheduled task.
 class ClickerSchedule {
+  static int _idSeq = 0;
+  /// 生成唯一任务 id（时间戳 + 自增，同一运行内不冲突）。
+  static String newId() =>
+      '${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}_${_idSeq++}';
+
+  final String id;                  // 任务唯一标识（增删定位用）
   final bool enabled;
-  final ScheduleTiming timing;   // clock = 具体时间点, countdown = 倒计时
-  final ScheduleRepeat repeat;   // once = 仅一次, daily = 每天重复
-  final int hour;                // clock mode: 0-23
-  final int minute;              // clock mode: 0-59
-  final int afterMinutes;        // countdown mode: minutes after arming
-  final int fireAtEpochMs;       // computed absolute fire time (0 = not armed) — scheduler-managed
+  final ScheduleAction action;    // 触发时执行的动作
+  final String? macroId;          // action == playMacro 时播放的宏 id
+  final ScheduleTiming timing;    // clock = 具体时间点, countdown = 倒计时
+  final ScheduleRepeat repeat;    // once = 仅一次, daily = 每天重复
+  final int hour;                 // clock mode: 0-23
+  final int minute;               // clock mode: 0-59
+  final int afterMinutes;         // countdown mode: minutes after arming
+  final int fireAtEpochMs;        // 已布防的绝对触发时刻（0 = 未布防）— 由调度器管理
 
   const ClickerSchedule({
+    this.id = '',
     this.enabled = false,
+    this.action = ScheduleAction.startClick,
+    this.macroId,
     this.timing = ScheduleTiming.clock,
     this.repeat = ScheduleRepeat.once,
     this.hour = 0,
@@ -159,15 +181,22 @@ class ClickerSchedule {
   });
 
   ClickerSchedule copyWith({
+    String? id,
     bool? enabled,
+    ScheduleAction? action,
+    String? macroId,
     ScheduleTiming? timing,
     ScheduleRepeat? repeat,
     int? hour,
     int? minute,
     int? afterMinutes,
     int? fireAtEpochMs,
+    bool clearMacroId = false,
   }) => ClickerSchedule(
+    id: id ?? this.id,
     enabled: enabled ?? this.enabled,
+    action: action ?? this.action,
+    macroId: clearMacroId ? null : (macroId ?? this.macroId),
     timing: timing ?? this.timing,
     repeat: repeat ?? this.repeat,
     hour: hour ?? this.hour,
@@ -177,7 +206,10 @@ class ClickerSchedule {
   );
 
   Map<String, dynamic> toJson() => {
+    if (id.isNotEmpty) 'id': id,
     'enabled': enabled,
+    'action': action.name,
+    if (macroId != null) 'macroId': macroId,
     'timing': timing.name,
     'repeat': repeat.name,
     'hour': hour,
@@ -186,8 +218,15 @@ class ClickerSchedule {
     if (fireAtEpochMs != 0) 'fireAtEpochMs': fireAtEpochMs,
   };
 
-  factory ClickerSchedule.fromJson(Map<String, dynamic> json) => ClickerSchedule(
+  factory ClickerSchedule.fromJson(Map<String, dynamic> json,
+      {ScheduleAction defaultAction = ScheduleAction.startClick}) => ClickerSchedule(
+    id: json['id'] as String? ?? newId(),
     enabled: json['enabled'] ?? false,
+    // 旧配置没有 action 字段：按插槽语义回退（start 槽→启动连点，stop 槽→停止连点）
+    action: json['action'] != null
+        ? (ScheduleAction.values.asNameMap()[json['action']] ?? defaultAction)
+        : defaultAction,
+    macroId: json['macroId'] as String?,
     timing: ScheduleTiming.values.firstWhereOrNull(
           (e) => e.name == json['timing'],
         ) ??
@@ -201,6 +240,34 @@ class ClickerSchedule {
     afterMinutes: json['afterMinutes'] ?? 10,
     fireAtEpochMs: json['fireAtEpochMs'] ?? 0,
   );
+}
+
+/// 解析定时任务列表。兼容旧版 startSchedule/stopSchedule 两个固定槽位：
+/// 二者迁移到列表并保留原有动作语义（start→启动连点，stop→停止连点）。
+List<ClickerSchedule> _parseSchedules(Map<String, dynamic> json) {
+  final list = json['schedules'];
+  if (list is List) {
+    return list
+        .whereType<Map>()
+        .map((e) => ClickerSchedule.fromJson(e.cast<String, dynamic>()))
+        .toList();
+  }
+  final result = <ClickerSchedule>[];
+  final start = json['startSchedule'];
+  if (start is Map) {
+    result.add(ClickerSchedule.fromJson(
+      start.cast<String, dynamic>(),
+      defaultAction: ScheduleAction.startClick,
+    ));
+  }
+  final stop = json['stopSchedule'];
+  if (stop is Map) {
+    result.add(ClickerSchedule.fromJson(
+      stop.cast<String, dynamic>(),
+      defaultAction: ScheduleAction.stopClick,
+    ));
+  }
+  return result;
 }
 
 class ClickerConfig {
@@ -239,9 +306,8 @@ class ClickerConfig {
   // Mouse action sequence
   List<MouseActionItem> mouseSequence;
 
-  // Scheduled auto-start / auto-stop
-  ClickerSchedule startSchedule;
-  ClickerSchedule stopSchedule;
+  // Scheduled tasks (auto start/stop click, play/stop macro, ...)
+  List<ClickerSchedule> schedules;
 
   // Key combo (keys pressed together)
   List<String> comboKeys;
@@ -270,7 +336,6 @@ class ClickerConfig {
 
   // Feature toggles
   bool autoClickEnabled;
-  bool smartDelayEnabled;
   bool humanLikeEnabled;
   bool soundFeedbackEnabled;
   bool statsEnabled;
@@ -334,8 +399,7 @@ class ClickerConfig {
     this.swipeDurationMs = 300,
     this.keySequence = const [],
     this.mouseSequence = const [],
-    this.startSchedule = const ClickerSchedule(),
-    this.stopSchedule = const ClickerSchedule(),
+    this.schedules = const [],
     this.comboKeys = const [],
     this.textToType = '',
     this.textTypeDelayMs = 50,
@@ -350,7 +414,6 @@ class ClickerConfig {
     this.holdTriggerEnabled = false,
     this.holdTriggerKey = 'F5',
     this.autoClickEnabled = true,
-    this.smartDelayEnabled = false,
     this.humanLikeEnabled = false,
     this.humanLikeBezierCurve = false,
     this.humanLikeRandomPause = true,
@@ -435,12 +498,7 @@ class ClickerConfig {
               ?.map((e) => MouseActionItem.fromJson(e as Map<String, dynamic>))
               .toList() ??
           [],
-      startSchedule: json['startSchedule'] != null
-          ? ClickerSchedule.fromJson(json['startSchedule'])
-          : const ClickerSchedule(),
-      stopSchedule: json['stopSchedule'] != null
-          ? ClickerSchedule.fromJson(json['stopSchedule'])
-          : const ClickerSchedule(),
+      schedules: _parseSchedules(json),
       comboKeys: (json['comboKeys'] as List<dynamic>?)
               ?.map((e) => e as String)
               .toList() ??
@@ -458,7 +516,6 @@ class ClickerConfig {
       holdTriggerEnabled: json['holdTriggerEnabled'] ?? false,
       holdTriggerKey: json['holdTriggerKey'] ?? 'F5',
       autoClickEnabled: json['autoClickEnabled'] ?? true,
-      smartDelayEnabled: json['smartDelayEnabled'] ?? false,
       humanLikeEnabled: json['humanLikeEnabled'] ?? false,
       humanLikeBezierCurve: json['humanLikeBezierCurve'] ?? false,
       humanLikeRandomPause: json['humanLikeRandomPause'] ?? true,
@@ -528,8 +585,7 @@ class ClickerConfig {
         'swipeDurationMs': swipeDurationMs,
         'keySequence': keySequence.map((e) => e.toJson()).toList(),
         'mouseSequence': mouseSequence.map((e) => e.toJson()).toList(),
-        'startSchedule': startSchedule.toJson(),
-        'stopSchedule': stopSchedule.toJson(),
+        'schedules': schedules.map((e) => e.toJson()).toList(),
         'comboKeys': comboKeys,
         'textToType': textToType,
         'textTypeDelayMs': textTypeDelayMs,
@@ -544,7 +600,6 @@ class ClickerConfig {
         'holdTriggerEnabled': holdTriggerEnabled,
         'holdTriggerKey': holdTriggerKey,
         'autoClickEnabled': autoClickEnabled,
-        'smartDelayEnabled': smartDelayEnabled,
         'humanLikeEnabled': humanLikeEnabled,
         'humanLikeBezierCurve': humanLikeBezierCurve,
         'humanLikeRandomPause': humanLikeRandomPause,
@@ -601,8 +656,7 @@ class ClickerConfig {
     int? swipeDurationMs,
     List<KeySequenceItem>? keySequence,
     List<MouseActionItem>? mouseSequence,
-    ClickerSchedule? startSchedule,
-    ClickerSchedule? stopSchedule,
+    List<ClickerSchedule>? schedules,
     List<String>? comboKeys,
     String? textToType,
     int? textTypeDelayMs,
@@ -617,7 +671,6 @@ class ClickerConfig {
     bool? holdTriggerEnabled,
     String? holdTriggerKey,
     bool? autoClickEnabled,
-    bool? smartDelayEnabled,
     bool? humanLikeEnabled,
     bool? humanLikeBezierCurve,
     bool? humanLikeRandomPause,
@@ -673,8 +726,7 @@ class ClickerConfig {
       swipeDurationMs: swipeDurationMs ?? this.swipeDurationMs,
       keySequence: keySequence ?? this.keySequence,
       mouseSequence: mouseSequence ?? this.mouseSequence,
-      startSchedule: startSchedule ?? this.startSchedule,
-      stopSchedule: stopSchedule ?? this.stopSchedule,
+      schedules: schedules ?? this.schedules,
       comboKeys: comboKeys ?? this.comboKeys,
       textToType: textToType ?? this.textToType,
       textTypeDelayMs: textTypeDelayMs ?? this.textTypeDelayMs,
@@ -689,7 +741,6 @@ class ClickerConfig {
       holdTriggerEnabled: holdTriggerEnabled ?? this.holdTriggerEnabled,
       holdTriggerKey: holdTriggerKey ?? this.holdTriggerKey,
       autoClickEnabled: autoClickEnabled ?? this.autoClickEnabled,
-      smartDelayEnabled: smartDelayEnabled ?? this.smartDelayEnabled,
       humanLikeEnabled: humanLikeEnabled ?? this.humanLikeEnabled,
       humanLikeBezierCurve: humanLikeBezierCurve ?? this.humanLikeBezierCurve,
       humanLikeRandomPause: humanLikeRandomPause ?? this.humanLikeRandomPause,
