@@ -86,6 +86,34 @@
       "icon": "machine_learning",
       "size": 0,
       "minAppVersion": 1
+    },
+    {
+      "id": "schedule",
+      "name": "定时任务",
+      "version": "1.0.0",
+      "author": "Clicker",
+      "description": "定时自动开始 / 停止连点",
+      "category": "automation",
+      "platforms": ["windows", "linux", "macos"],
+      "type": "dart",
+      "dartPluginId": "schedule",
+      "icon": "clock",
+      "size": 0,
+      "minAppVersion": 1
+    },
+    {
+      "id": "humanize",
+      "name": "拟人模式",
+      "version": "1.0.0",
+      "author": "Clicker",
+      "description": "拟人化节奏与反检测：随机偏移、随机延迟、按键抖动",
+      "category": "click",
+      "platforms": ["windows", "linux", "macos"],
+      "type": "dart",
+      "dartPluginId": "humanize",
+      "icon": "accounts",
+      "size": 0,
+      "minAppVersion": 1
     }
   ]
 }
