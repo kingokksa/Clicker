@@ -329,8 +329,24 @@ class WindowsInput extends PlatformInput {
   void _sendMouseInput(MOUSE_EVENT_FLAGS flags, {int mouseData = 0}) {
     final p = calloc<INPUT>();
     p.ref.type = INPUT_MOUSE;
-    p.ref.mi.dwFlags = flags;
     p.ref.mi.mouseData = mouseData;
+    // Fullscreen / borderless games usually read raw input and ignore
+    // SetCursorPos + a bare SendInput that has no explicit MOVE. Mirror the
+    // native fast clicker (and the macro player's sendClick) by tagging the
+    // current cursor position as an absolute move on every input.
+    final cursor = calloc<POINT>();
+    if (GetCursorPos(cursor) != 0) {
+      final int flagValue = flags;
+      final sw = GetSystemMetrics(SM_CXSCREEN);
+      final sh = GetSystemMetrics(SM_CYSCREEN);
+      p.ref.mi.dx = cursor.ref.x * 65535 ~/ sw;
+      p.ref.mi.dy = cursor.ref.y * 65535 ~/ sh;
+      p.ref.mi.dwFlags =
+          MOUSE_EVENT_FLAGS(flagValue | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE);
+    } else {
+      p.ref.mi.dwFlags = flags;
+    }
+    calloc.free(cursor);
     final result = SendInput(1, p, sizeOf<INPUT>());
     calloc.free(p);
     if (result == 0) {
