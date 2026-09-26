@@ -94,6 +94,13 @@ if(EXISTS "${AI_TRACKER_SRC}/main.cpp")
     COMPONENT Runtime)
 endif()
 
+# === Bundled plugin store index ===
+# Shipped next to the executable so the plugin store works offline
+# (fallback index) in addition to the remote GitHub source.
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../plugins/plugin_index.json"
+  DESTINATION "${INSTALL_BUNDLE_LIB_DIR}/plugins"
+  COMPONENT Runtime)
+
 install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
   COMPONENT Runtime)
 
