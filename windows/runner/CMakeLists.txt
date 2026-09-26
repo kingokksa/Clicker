@@ -20,6 +20,13 @@ add_executable(${BINARY_NAME} WIN32
 # that need different build settings.
 apply_standard_settings(${BINARY_NAME})
 
+# Run as administrator so injected clicks reach elevated (admin) target apps
+# (e.g. fullscreen games). The linker's default generated manifest sets
+# asInvoker; adding requestedExecutionLevel directly to runner.exe.manifest
+# would conflict, so set the UAC level via /MANIFESTUAC instead.
+target_link_options(${BINARY_NAME} PRIVATE
+  "SHELL:/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\"")
+
 # Add preprocessor definitions for the build version.
 target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION=\"${FLUTTER_VERSION}\"")
 target_compile_definitions(${BINARY_NAME} PRIVATE "FLUTTER_VERSION_MAJOR=${FLUTTER_VERSION_MAJOR}")
