@@ -28,8 +28,6 @@ class HumanizePage extends StatelessWidget {
         const SizedBox(height: 16),
         _card(context, title: '拟人模式', icon: FluentIcons.accounts, child: _buildHumanLike(context, config, state)),
         const SizedBox(height: 12),
-        _card(context, title: '智能延迟', icon: FluentIcons.timer, child: _buildSmartDelay(context, config, state)),
-        const SizedBox(height: 12),
         _card(context, title: '随机延迟', icon: FluentIcons.clock, child: _buildRandomDelay(context, config, state)),
         const SizedBox(height: 12),
         _card(context, title: '随机偏移', icon: FluentIcons.open_in_new_tab, child: _buildRandomOffset(context, config, state)),
@@ -126,21 +124,6 @@ class HumanizePage extends StatelessWidget {
           ]),
         ],
       ],
-    ]);
-  }
-
-  // ─── 智能延迟 ─────────────────────────────────────────────
-
-  Widget _buildSmartDelay(BuildContext context, ClickerConfig config, AppState state) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      _subtitle(context, '在点击间隔上叠加 ±30% 的轻微随机抖动'),
-      Row(children: [
-        const Expanded(child: Text('启用智能延迟', style: TextStyle(fontSize: 13))),
-        ToggleSwitch(
-          checked: config.smartDelayEnabled,
-          onChanged: (v) => state.setClickerConfig(config.copyWith(smartDelayEnabled: v)),
-        ),
-      ]),
     ]);
   }
 
