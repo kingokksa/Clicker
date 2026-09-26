@@ -140,13 +140,13 @@ enum ScheduleRepeat { once, daily }
 
 /// A single scheduled start/stop event.
 class ClickerSchedule {
-  bool enabled;
-  ScheduleTiming timing;   // clock = 具体时间点, countdown = 倒计时
-  ScheduleRepeat repeat;   // once = 仅一次, daily = 每天重复
-  int hour;                // clock mode: 0-23
-  int minute;              // clock mode: 0-59
-  int afterMinutes;        // countdown mode: minutes after arming
-  int fireAtEpochMs;       // computed absolute fire time (0 = not armed) — scheduler-managed
+  final bool enabled;
+  final ScheduleTiming timing;   // clock = 具体时间点, countdown = 倒计时
+  final ScheduleRepeat repeat;   // once = 仅一次, daily = 每天重复
+  final int hour;                // clock mode: 0-23
+  final int minute;              // clock mode: 0-59
+  final int afterMinutes;        // countdown mode: minutes after arming
+  final int fireAtEpochMs;       // computed absolute fire time (0 = not armed) — scheduler-managed
 
   const ClickerSchedule({
     this.enabled = false,
