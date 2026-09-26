@@ -53,6 +53,7 @@ class AppState extends ChangeNotifier {
   bool _minimizeToTray = true;
   bool _floatingAlwaysOnTop = true;
   bool _uiAnimations = true;
+  double _uiScale = 1.15;
 
   // Status
   ClickerStatus _clickerStatus = ClickerStatus.idle;
@@ -100,6 +101,7 @@ class AppState extends ChangeNotifier {
   bool get hasAskedMinimizeToTray => _storage.hasAskedMinimizeToTray;
   bool get floatingAlwaysOnTop => _floatingAlwaysOnTop;
   bool get uiAnimations => _uiAnimations;
+  double get uiScale => _uiScale;
   ClickService get clickService => _clickService;
   ClickerStatus get clickerStatus => _clickerStatus;
   MacroStatus get macroStatus => _macroStatus;
@@ -157,6 +159,7 @@ class AppState extends ChangeNotifier {
       _minimizeToTray = _storage.minimizeToTray;
       _floatingAlwaysOnTop = _storage.floatingAlwaysOnTop;
       _uiAnimations = _storage.uiAnimations;
+      _uiScale = _storage.uiScale;
       _profiles = _storage.listProfiles();
 
       // Apply always-on-top setting on startup
@@ -580,6 +583,12 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setUiScale(double value) {
+    _uiScale = value.clamp(0.8, 1.8);
+    _storage.setUiScale(_uiScale);
+    notifyListeners();
+  }
+
   // ─── Profile Actions ──────────────────────────────────────
 
   Future<void> saveProfile(String name) async {
@@ -681,6 +690,7 @@ class AppState extends ChangeNotifier {
     holdTriggerKeys: _holdTriggerKeys,
     accentColorValue: _accentColor.toARGB32(),
     uiAnimations: _uiAnimations,
+    uiScale: _uiScale,
   );
 
   Future<ImportResult> importConfig() async {
@@ -700,6 +710,7 @@ class AppState extends ChangeNotifier {
         _accentColor = Color(result.accentColorValue!);
       }
       if (result.uiAnimations != null) _uiAnimations = result.uiAnimations!;
+      if (result.uiScale != null) _uiScale = result.uiScale!;
       _macros = await _storage.loadAllMacros();
       _profiles = _storage.listProfiles();
       if (result.holdTriggerKeys != null) {

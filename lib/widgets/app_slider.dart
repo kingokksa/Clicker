@@ -43,7 +43,7 @@ class AppSlider extends StatelessWidget {
             ),
           ),
           SizedBox(
-            width: 48,
+            width: 60,
             child: Text(
               label!,
               style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,

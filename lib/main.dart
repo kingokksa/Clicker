@@ -2,9 +2,7 @@ library;
 
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
-import 'package:flutter_acrylic/flutter_acrylic.dart' as acrylic;
 import 'app.dart';
 import 'mobile_app.dart';
 import 'services/plugin/plugin_manager.dart';
@@ -15,6 +13,8 @@ import 'services/plugins/image_recognition_plugin.dart';
 import 'services/plugins/theme_center_plugin.dart';
 import 'services/plugins/background_execution_plugin.dart';
 import 'services/plugins/ai_tracker_plugin.dart';
+import 'services/plugins/schedule_plugin.dart';
+import 'services/plugins/humanize_plugin.dart';
 import 'services/system_tray_service.dart';
 
 void main() async {
@@ -43,6 +43,8 @@ void _registerBuiltinPlugins() {
   pm.registerDartPlugin(ThemeCenterPlugin.new);
   pm.registerDartPlugin(BackgroundExecutionPlugin.new);
   pm.registerDartPlugin(AiTrackerPlugin.new);
+  pm.registerDartPlugin(SchedulePlugin.new);
+  pm.registerDartPlugin(HumanizePlugin.new);
   // 原生插件声明式设置页的渲染工厂（UI 层注入）
   PluginManager.declarativePageFactory = buildDeclarativePluginPage;
 }
@@ -51,25 +53,9 @@ Future<void> _initDesktopWindow() async {
   try {
     await windowManager.ensureInitialized();
     await windowManager.setMinimumSize(const Size(500, 680));
-    await windowManager.setSize(const Size(920, 720));
+    await windowManager.setSize(const Size(1080, 760));
     await windowManager.setTitle('Clicker');
     await windowManager.center();
     await windowManager.setPreventClose(true);
   } catch (_) {}
-
-  if (Platform.isWindows) {
-    try {
-      await acrylic.Window.initialize();
-      await acrylic.Window.setEffect(
-        effect: acrylic.WindowEffect.acrylic,
-        color: const Color(0xFF1A1A2E),
-        dark: true,
-      );
-    } catch (_) {}
-
-    try {
-      const platformChannel = MethodChannel('com.clicker.pro/platform');
-      await platformChannel.invokeMethod('reapplyDwmFixes');
-    } catch (_) {}
-  }
 }
