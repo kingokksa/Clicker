@@ -37,11 +37,20 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => HomeScreenState();
 }
 
-class HomeScreenState extends State<HomeScreen> with WindowListener {
+class HomeScreenState extends State<HomeScreen> with WindowListener, TickerProviderStateMixin {
   String _currentPageId = 'clicker';
   bool _isFloatingMode = false;
   bool _isMaximized = false;
   bool _isClosing = false;
+
+  /// 页面切换淡入过渡（IndexedStack 本身是瞬时切换，这里补一层柔和过渡）
+  late final AnimationController _pageFade;
+
+  /// 窗口状态切换（最大化/还原）过渡动画 —— 纯 Dart 内容层，
+  /// 不触发连续 surface resize，因此不卡；受“动画效果”开关控制。
+  late final AnimationController _windowTransition;
+  late final Animation<double> _windowScale;
+  late final Animation<double> _windowFade;
 
   /// 插件页面 widget 缓存（激活后首次构建，切换页面不销毁）
   final Map<String, Widget> _pluginPageCache = {};
@@ -53,7 +62,10 @@ class HomeScreenState extends State<HomeScreen> with WindowListener {
 
   /// Navigate to a specific page by ID (e.g., 'macro', 'hold_trigger', 'settings')
   void navigateTo(String pageId) {
-    if (mounted) setState(() => _currentPageId = pageId);
+    if (!mounted) return;
+    if (_currentPageId == pageId) return;
+    setState(() => _currentPageId = pageId);
+    _animatePageSwitch();
   }
 
   /// 导航条目：已启用插件 manifest 声明的页面（静态，无需激活插件）。
@@ -108,9 +120,17 @@ class HomeScreenState extends State<HomeScreen> with WindowListener {
 
   /// 页面切换入口：插件页面若未激活则触发按需激活
   void _selectPage(String pageId) {
+    if (_currentPageId == pageId) return;
     setState(() => _currentPageId = pageId);
+    _animatePageSwitch();
     final reg = PluginHost.instance.page(pageId);
     if (reg == null) _ensurePageActivated(pageId);
+  }
+
+  /// 触发页面切换的淡入过渡；受“动画效果”开关控制。
+  void _animatePageSwitch() {
+    if (!context.read<AppState>().uiAnimations) return;
+    _pageFade.forward(from: 0.0);
   }
 
   void _ensurePageActivated(String pageId) {
@@ -149,6 +169,22 @@ class HomeScreenState extends State<HomeScreen> with WindowListener {
   @override
   void initState() {
     super.initState();
+    _pageFade = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 180),
+      value: 1.0,
+    );
+    _windowTransition = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 220),
+      value: 1.0,
+    );
+    _windowScale = Tween<double>(begin: 0.97, end: 1.0).animate(
+      CurvedAnimation(parent: _windowTransition, curve: Curves.easeOutCubic),
+    );
+    _windowFade = Tween<double>(begin: 0.3, end: 1.0).animate(
+      CurvedAnimation(parent: _windowTransition, curve: Curves.easeOut),
+    );
     windowManager.addListener(this);
     _initSystemTray();
     _checkMaximized();
@@ -159,6 +195,8 @@ class HomeScreenState extends State<HomeScreen> with WindowListener {
 
   @override
   void dispose() {
+    _pageFade.dispose();
+    _windowTransition.dispose();
     _pluginPageCache.clear();
     PluginManager.instance.removeListener(_onPluginStateChanged);
     PluginHost.instance.removeListener(_onPluginStateChanged);
@@ -188,9 +226,22 @@ class HomeScreenState extends State<HomeScreen> with WindowListener {
   }
 
   @override
-  void onWindowMaximize() => setState(() => _isMaximized = true);
+  void onWindowMaximize() {
+    setState(() => _isMaximized = true);
+    _animateWindowTransition();
+  }
   @override
-  void onWindowUnmaximize() => setState(() => _isMaximized = false);
+  void onWindowUnmaximize() {
+    setState(() => _isMaximized = false);
+    _animateWindowTransition();
+  }
+
+  /// 触发最大化/还原的内容过渡；受“动画效果”开关控制。
+  void _animateWindowTransition() {
+    if (!mounted) return;
+    if (!context.read<AppState>().uiAnimations) return;
+    _windowTransition.forward(from: 0.0);
+  }
 
   Future<void> _initSystemTray() async {
     if (!Platform.isWindows) return;
@@ -282,7 +333,7 @@ class HomeScreenState extends State<HomeScreen> with WindowListener {
     setState(() => _isFloatingMode = true);
     // Use native batch method — single platform channel call instead of 5+
     windowManager.setMinimumSize(const Size(180, 60));
-    _platformChannel.invokeMethod('switchToFloatingWindow', [state.floatingAlwaysOnTop]);
+    await _platformChannel.invokeMethod('switchToFloatingWindow', [state.floatingAlwaysOnTop]);
   }
 
   Future<void> _switchToMain() async {
@@ -290,7 +341,7 @@ class HomeScreenState extends State<HomeScreen> with WindowListener {
     final state = context.read<AppState>();
     // Use native batch method — single platform channel call instead of 6+
     windowManager.setMinimumSize(const Size(500, 680));
-    _platformChannel.invokeMethod('switchToMainWindow', [state.alwaysOnTop]);
+    await _platformChannel.invokeMethod('switchToMainWindow', [state.alwaysOnTop]);
   }
 
   @override
@@ -329,9 +380,18 @@ class HomeScreenState extends State<HomeScreen> with WindowListener {
           // Page content — IndexedStack keeps all pages alive (no dispose on switch)
           Expanded(child: ColoredBox(
             color: FluentTheme.of(context).scaffoldBackgroundColor,
-            child: IndexedStack(
-              index: currentIndex,
-              children: pages,
+            child: FadeTransition(
+              opacity: _pageFade,
+              child: ScaleTransition(
+                scale: _windowScale,
+                child: FadeTransition(
+                  opacity: _windowFade,
+                  child: IndexedStack(
+                    index: currentIndex,
+                    children: pages,
+                  ),
+                ),
+              ),
             ),
           )),
         ])),
@@ -484,56 +544,62 @@ class _GlassTitleBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
-    return GestureDetector(
-      onDoubleTap: () {
-        if (isMaximized) {
-          _platformChannel.invokeMethod('unmaximizeWindow');
-        } else {
-          _platformChannel.invokeMethod('maximizeWindow');
-        }
-      },
-      onPanStart: (_) => windowManager.startDragging(),
-      child: Container(
-        height: 36,
-        decoration: BoxDecoration(
-          color: isDark
-            ? const Color(0xFF16162A).withValues(alpha: 0.88)
-            : const Color(0xFFF0F0FA).withValues(alpha: 0.88),
-          border: Border(
-            bottom: BorderSide(
-              color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0),
-              width: 1,
-            ),
+    void toggleMaximize() {
+      if (isMaximized) {
+        _platformChannel.invokeMethod('unmaximizeWindow');
+      } else {
+        _platformChannel.invokeMethod('maximizeWindow');
+      }
+    }
+
+    return Container(
+      height: 36,
+      decoration: BoxDecoration(
+        color: isDark
+          ? const Color(0xFF16162A).withValues(alpha: 0.88)
+          : const Color(0xFFF0F0FA).withValues(alpha: 0.88),
+        border: Border(
+          bottom: BorderSide(
+            color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0),
+            width: 1,
           ),
         ),
-        child: Row(children: [
-          const SizedBox(width: 12),
-          Icon(FluentIcons.touch, size: 14, color: FluentTheme.of(context).accentColor),
-          const SizedBox(width: 8),
-          Text('Clicker', style: TextStyle(
-            fontSize: 12, fontWeight: FontWeight.w600,
-            fontFamily: 'Segoe UI Variable, Segoe UI, Microsoft YaHei UI',
-            color: isDark ? const Color(0xFFC0C0E8) : const Color(0xFF5A5A80),
-          )),
-          const Spacer(),
-          // Always-on-top toggle
-          _TopMostButton(isDark: isDark, isPinned: state.alwaysOnTop, animations: animations, onToggle: () {
-            final v = !state.alwaysOnTop;
-            state.setAlwaysOnTop(v);
-            windowManager.setAlwaysOnTop(v);
-          }),
-          _WindowButton(
-            icon: FluentIcons.back_to_window,
-            isDark: isDark,
-            animations: animations,
-            tooltip: '悬浮窗',
-            onPressed: onFloatingMode,
-          ),
-          _WindowButton(icon: FluentIcons.chrome_minimize, isDark: isDark, animations: animations, onPressed: () => _platformChannel.invokeMethod('minimizeWindow')),
-          _MaximizeButton(isDark: isDark, isMaximized: isMaximized, animations: animations),
-          _WindowButton(icon: FluentIcons.chrome_close, isDark: isDark, animations: animations, isClose: true, onPressed: () => windowManager.close()),
-        ]),
       ),
+      child: Row(children: [
+        // 拖动 + 双击最大化区域。只覆盖标题文字/空白，不含右侧按钮——
+        // 否则外层 onDoubleTap 会进入手势竞技场，拖慢按钮单击（等双击超时）响应。
+        Expanded(child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onDoubleTap: toggleMaximize,
+          onPanStart: (_) => windowManager.startDragging(),
+          child: Row(children: [
+            const SizedBox(width: 12),
+            Icon(FluentIcons.touch, size: 14, color: FluentTheme.of(context).accentColor),
+            const SizedBox(width: 8),
+            Text('Clicker', style: TextStyle(
+              fontSize: 12, fontWeight: FontWeight.w600,
+              fontFamily: 'Segoe UI Variable, Segoe UI, Microsoft YaHei UI',
+              color: isDark ? const Color(0xFFC0C0E8) : const Color(0xFF5A5A80),
+            )),
+          ]),
+        )),
+        // Always-on-top toggle
+        _TopMostButton(isDark: isDark, isPinned: state.alwaysOnTop, animations: animations, onToggle: () {
+          final v = !state.alwaysOnTop;
+          state.setAlwaysOnTop(v);
+          windowManager.setAlwaysOnTop(v);
+        }),
+        _WindowButton(
+          icon: FluentIcons.back_to_window,
+          isDark: isDark,
+          animations: animations,
+          tooltip: '悬浮窗',
+          onPressed: onFloatingMode,
+        ),
+        _WindowButton(icon: FluentIcons.chrome_minimize, isDark: isDark, animations: animations, onPressed: () => _platformChannel.invokeMethod('minimizeWindow')),
+        _MaximizeButton(isDark: isDark, isMaximized: isMaximized, animations: animations),
+        _WindowButton(icon: FluentIcons.chrome_close, isDark: isDark, animations: animations, isClose: true, onPressed: () => windowManager.close()),
+      ]),
     );
   }
 }

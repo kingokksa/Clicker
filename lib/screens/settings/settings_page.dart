@@ -11,7 +11,7 @@ import 'package:window_manager/window_manager.dart';
 import '../../services/app_state.dart';
 import '../../services/update_service.dart';
 import '../../models/hotkey_config.dart';
-import '../../models/clicker_config.dart' show SoundConfig, ClickerSchedule, ScheduleTiming, ScheduleRepeat;
+import '../../models/clicker_config.dart' show SoundConfig;
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -22,6 +22,7 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   String _appVersion = '';
+  double? _uiScalePreview;
 
   @override
   void initState() {
@@ -54,8 +55,6 @@ class _SettingsPageState extends State<SettingsPage> {
         _buildHotkeyRow(context, state, theme, label: '播放宏', value: hotkeys.playMacro, field: 'playMacro', icon: FluentIcons.play),
       ])),
       const SizedBox(height: 12),
-      _sectionCard(title: '拟人模式', icon: FluentIcons.accounts, child: _buildHumanLikeSection(context, state)),
-      const SizedBox(height: 12),
       _sectionCard(title: '声音反馈', icon: FluentIcons.volume2, child: _buildSoundFeedbackSection(context, state)),
     ];
 
@@ -63,8 +62,6 @@ class _SettingsPageState extends State<SettingsPage> {
       _sectionCard(title: '窗口', icon: FluentIcons.stack, child: _buildWindowOptions(state)),
       const SizedBox(height: 12),
       _sectionCard(title: '开机自启', icon: FluentIcons.brightness, child: _buildAutoStartSection(state)),
-      const SizedBox(height: 12),
-      _sectionCard(title: '定时任务', icon: FluentIcons.clock, child: _buildScheduleSection(state)),
       const SizedBox(height: 12),
       _sectionCard(title: '配置管理', icon: FluentIcons.save, child: _buildProfileSection(context, state)),
       const SizedBox(height: 12),
@@ -165,7 +162,29 @@ class _SettingsPageState extends State<SettingsPage> {
   // ─── Window ───────────────────────────────────────────────
 
   Widget _buildWindowOptions(AppState state) {
+    final uiScale = _uiScalePreview ?? state.uiScale;
     return Column(children: [
+      Row(children: [
+        const Text('界面缩放', style: TextStyle(fontSize: 13)),
+        const SizedBox(width: 12),
+        Expanded(child: Slider(
+          min: 0.9,
+          max: 1.5,
+          divisions: 12,
+          value: uiScale,
+          onChanged: (v) => setState(() => _uiScalePreview = v),
+          onChangeEnd: (v) {
+            state.setUiScale(v);
+            setState(() => _uiScalePreview = null);
+          },
+        )),
+        SizedBox(width: 44, child: Text(
+          '${(uiScale * 100).round()}%',
+          textAlign: TextAlign.right,
+          style: const TextStyle(fontSize: 13, fontFamily: 'monospace'),
+        )),
+      ]),
+      const Divider(style: DividerThemeData(horizontalMargin: EdgeInsets.zero)),
       Row(children: [
         const Expanded(child: Text('关闭时最小化到托盘', style: TextStyle(fontSize: 13))),
         ToggleSwitch(checked: state.minimizeToTray, onChanged: (v) => state.setMinimizeToTray(v)),
@@ -214,124 +233,6 @@ class _SettingsPageState extends State<SettingsPage> {
       const channel = MethodChannel('com.clicker.pro/platform');
       await channel.invokeMethod(enabled ? 'enableAutoStart' : 'disableAutoStart');
     } catch (_) {}
-  }
-
-  // ─── Scheduled Tasks ──────────────────────────────────────
-
-  Widget _buildScheduleSection(AppState state) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      _buildScheduleTile(state, title: '定时开始', icon: FluentIcons.play, isStart: true),
-      const SizedBox(height: 12),
-      const Divider(style: DividerThemeData(horizontalMargin: EdgeInsets.zero)),
-      const SizedBox(height: 12),
-      _buildScheduleTile(state, title: '定时停止', icon: FluentIcons.stop, isStart: false),
-    ]);
-  }
-
-  Widget _buildScheduleTile(AppState state, {required String title, required IconData icon, required bool isStart}) {
-    final config = state.clickerConfig;
-    final s = isStart ? config.startSchedule : config.stopSchedule;
-    final accent = FluentTheme.of(context).accentColor;
-
-    void update(ClickerSchedule ns) {
-      final updated = isStart
-          ? config.copyWith(startSchedule: ns)
-          : config.copyWith(stopSchedule: ns);
-      state.setClickerConfig(updated);
-    }
-
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        Icon(icon, size: 14, color: accent.withValues(alpha: 0.7)),
-        const SizedBox(width: 8),
-        Expanded(child: Text(title, style: const TextStyle(fontSize: 13))),
-        ToggleSwitch(
-          checked: s.enabled,
-          onChanged: (v) => update(s.copyWith(enabled: v, fireAtEpochMs: 0)),
-        ),
-      ]),
-      if (s.enabled) ...[
-        const SizedBox(height: 10),
-        Row(children: [
-          _chip('时间点', s.timing == ScheduleTiming.clock,
-              () => update(s.copyWith(timing: ScheduleTiming.clock, fireAtEpochMs: 0))),
-          const SizedBox(width: 6),
-          _chip('倒计时', s.timing == ScheduleTiming.countdown,
-              () => update(s.copyWith(timing: ScheduleTiming.countdown, fireAtEpochMs: 0))),
-          const Spacer(),
-          if (s.timing == ScheduleTiming.clock) ...[
-            _chip('仅一次', s.repeat == ScheduleRepeat.once,
-                () => update(s.copyWith(repeat: ScheduleRepeat.once))),
-            const SizedBox(width: 6),
-            _chip('每天', s.repeat == ScheduleRepeat.daily,
-                () => update(s.copyWith(repeat: ScheduleRepeat.daily))),
-          ],
-        ]),
-        const SizedBox(height: 10),
-        if (s.timing == ScheduleTiming.clock)
-          Row(children: [
-            const Text('时间:', style: TextStyle(fontSize: 12)),
-            const SizedBox(width: 8),
-            _timeBox(s.hour, (v) => update(s.copyWith(hour: v % 24))),
-            const Text(' 时 ', style: TextStyle(fontSize: 12)),
-            _timeBox(s.minute, (v) => update(s.copyWith(minute: v % 60))),
-            const Text(' 分', style: TextStyle(fontSize: 12)),
-          ])
-        else
-          Row(children: [
-            const Text('启用后', style: TextStyle(fontSize: 12)),
-            const SizedBox(width: 8),
-            SizedBox(width: 70, child: TextBox(
-              controller: TextEditingController(text: s.afterMinutes.toString()),
-              textAlign: TextAlign.center,
-              onChanged: (v) {
-                final p = int.tryParse(v);
-                if (p != null && p > 0) update(s.copyWith(afterMinutes: p, fireAtEpochMs: 0));
-              },
-            )),
-            const Text(' 分钟后触发', style: TextStyle(fontSize: 12)),
-          ]),
-      ],
-    ]);
-  }
-
-  Widget _chip(String label, bool selected, VoidCallback onTap) {
-    return Builder(builder: (context) {
-      final isDark = FluentTheme.of(context).brightness == Brightness.dark;
-      final accent = FluentTheme.of(context).accentColor;
-      final unselectedBg = isDark ? const Color(0xFF303050) : const Color(0xFFE8E8F0);
-      final unselectedBorder = isDark ? const Color(0xFF404060) : const Color(0xFFD0D0D8);
-      final unselectedText = isDark ? const Color(0xFFC0C0D8) : const Color(0xFF5A5A70);
-      return GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-          decoration: BoxDecoration(
-            color: selected ? accent.withValues(alpha: 0.2) : unselectedBg,
-            borderRadius: BorderRadius.circular(4),
-            border: Border.all(color: selected ? accent : unselectedBorder),
-          ),
-          child: Text(label, style: TextStyle(
-            fontSize: 12, fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-            color: selected ? accent : unselectedText,
-          )),
-        ),
-      );
-    });
-  }
-
-  Widget _timeBox(int value, ValueChanged<int> onChanged) {
-    return SizedBox(
-      width: 46,
-      child: TextBox(
-        controller: TextEditingController(text: value.toString()),
-        textAlign: TextAlign.center,
-        onChanged: (v) {
-          final p = int.tryParse(v);
-          if (p != null && p >= 0) onChanged(p);
-        },
-      ),
-    );
   }
 
   // ─── Profiles ─────────────────────────────────────────────
@@ -504,150 +405,6 @@ class _SettingsPageState extends State<SettingsPage> {
         ]);
       },
     );
-  }
-
-  // ──── Human-like Mode Section ────
-
-  Widget _buildHumanLikeSection(BuildContext context, AppState state) {
-    final config = state.clickerConfig;
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        const Text('启用拟人模式', style: TextStyle(fontSize: 13)),
-        const Spacer(),
-        ToggleSwitch(
-          checked: config.humanLikeEnabled,
-          onChanged: (v) => state.setClickerConfig(config.copyWith(
-            humanLikeEnabled: v,
-            smartDelayEnabled: v || config.smartDelayEnabled,
-            randomOffsetEnabled: v || config.randomOffsetEnabled,
-          )),
-        ),
-      ]),
-      if (config.humanLikeEnabled) ...[
-        const SizedBox(height: 12),
-        const Divider(),
-        const SizedBox(height: 8),
-        // Random offset — shared with main page
-        Row(children: [
-          const Text('随机偏移', style: TextStyle(fontSize: 12)),
-          const Spacer(),
-          ToggleSwitch(
-            checked: config.randomOffsetEnabled,
-            onChanged: (v) => state.setClickerConfig(config.copyWith(randomOffsetEnabled: v)),
-          ),
-        ]),
-        if (config.randomOffsetEnabled) Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: Row(children: [
-            const SizedBox(width: 80, child: Text('偏移范围:', style: TextStyle(fontSize: 11))),
-            SizedBox(width: 60, child: TextBox(
-              controller: TextEditingController(text: config.randomOffsetMinPx.toString()),
-              placeholder: '1',
-              onChanged: (v) { final p = int.tryParse(v); if (p != null && p > 0) state.setClickerConfig(config.copyWith(randomOffsetMinPx: p)); },
-            )),
-            const SizedBox(width: 4),
-            const Text('-', style: TextStyle(fontSize: 12)),
-            const SizedBox(width: 4),
-            SizedBox(width: 60, child: TextBox(
-              controller: TextEditingController(text: config.randomOffsetMaxPx.toString()),
-              placeholder: '5',
-              onChanged: (v) { final p = int.tryParse(v); if (p != null && p > 0) state.setClickerConfig(config.copyWith(randomOffsetMaxPx: p)); },
-            )),
-            const SizedBox(width: 4),
-            const Text('px', style: TextStyle(fontSize: 11)),
-          ]),
-        ),
-        const SizedBox(height: 6),
-        // Random delay — shared with main page
-        Row(children: [
-          const Text('随机延迟', style: TextStyle(fontSize: 12)),
-          const Spacer(),
-          ToggleSwitch(
-            checked: config.smartDelayEnabled,
-            onChanged: (v) => state.setClickerConfig(config.copyWith(
-              smartDelayEnabled: v,
-              // Seed the visible range fields with defaults so the toggle
-              // alone actually enables a ms-range random delay.
-              randomDelayMinMs: (v && config.randomDelayMinMs <= 0) ? 10 : config.randomDelayMinMs,
-              randomDelayMaxMs: (v && config.randomDelayMaxMs <= 0) ? 50 : config.randomDelayMaxMs,
-            )),
-          ),
-        ]),
-        if (config.smartDelayEnabled) Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: Row(children: [
-            const SizedBox(width: 80, child: Text('延迟范围:', style: TextStyle(fontSize: 11))),
-            SizedBox(width: 60, child: TextBox(
-              controller: TextEditingController(text: config.randomDelayMinMs.toString()),
-              placeholder: '10',
-              onChanged: (v) { final p = int.tryParse(v); if (p != null && p > 0) state.setClickerConfig(config.copyWith(randomDelayMinMs: p)); },
-            )),
-            const SizedBox(width: 4),
-            const Text('-', style: TextStyle(fontSize: 12)),
-            const SizedBox(width: 4),
-            SizedBox(width: 60, child: TextBox(
-              controller: TextEditingController(text: config.randomDelayMaxMs.toString()),
-              placeholder: '50',
-              onChanged: (v) { final p = int.tryParse(v); if (p != null && p > 0) state.setClickerConfig(config.copyWith(randomDelayMaxMs: p)); },
-            )),
-            const SizedBox(width: 4),
-            const Text('ms', style: TextStyle(fontSize: 11)),
-          ]),
-        ),
-        const SizedBox(height: 6),
-        // Bezier curve
-        Row(children: [
-          const Text('贝塞尔轨迹', style: TextStyle(fontSize: 12)),
-          const Spacer(),
-          ToggleSwitch(
-            checked: config.humanLikeBezierCurve,
-            onChanged: (v) => state.setClickerConfig(config.copyWith(humanLikeBezierCurve: v)),
-          ),
-        ]),
-        const SizedBox(height: 6),
-        // Random pause
-        Row(children: [
-          const Text('随机暂停', style: TextStyle(fontSize: 12)),
-          const Spacer(),
-          ToggleSwitch(
-            checked: config.humanLikeRandomPause,
-            onChanged: (v) => state.setClickerConfig(config.copyWith(humanLikeRandomPause: v)),
-          ),
-        ]),
-        if (config.humanLikeRandomPause) ...[
-          const SizedBox(height: 6),
-          Row(children: [
-            const SizedBox(width: 80, child: Text('暂停概率:', style: TextStyle(fontSize: 11))),
-            Expanded(child: Slider(
-              value: config.humanLikePauseChance.toDouble(),
-              min: 1, max: 20, divisions: 19,
-              label: '${config.humanLikePauseChance}%',
-              onChanged: (v) => state.setClickerConfig(config.copyWith(humanLikePauseChance: v.round())),
-            )),
-            const SizedBox(width: 8),
-            Text('${config.humanLikePauseChance}%', style: const TextStyle(fontSize: 11)),
-          ]),
-          Row(children: [
-            const SizedBox(width: 80, child: Text('暂停时长:', style: TextStyle(fontSize: 11))),
-            SizedBox(width: 60, child: TextBox(
-              controller: TextEditingController(text: config.humanLikePauseMinMs.toString()),
-              placeholder: '200',
-              onChanged: (v) { final p = int.tryParse(v); if (p != null && p > 0) state.setClickerConfig(config.copyWith(humanLikePauseMinMs: p)); },
-            )),
-            const SizedBox(width: 4),
-            const Text('-', style: TextStyle(fontSize: 12)),
-            const SizedBox(width: 4),
-            SizedBox(width: 60, child: TextBox(
-              controller: TextEditingController(text: config.humanLikePauseMaxMs.toString()),
-              placeholder: '800',
-              onChanged: (v) { final p = int.tryParse(v); if (p != null && p > 0) state.setClickerConfig(config.copyWith(humanLikePauseMaxMs: p)); },
-            )),
-            const SizedBox(width: 4),
-            const Text('ms', style: TextStyle(fontSize: 11)),
-          ]),
-        ],
-      ],
-    ]);
   }
 
   // ──── Sound Feedback Section ────

@@ -22,6 +22,7 @@ class StorageService {
   static const _keyFloatingAlwaysOnTop = 'floating_always_on_top';
   static const _keyAccentColor = 'accent_color';
   static const _keyUiAnimations = 'ui_animations';
+  static const _keyUiScale = 'ui_scale';
   static const _keyProfiles = 'profiles';
   static const _keyHoldTriggerKeys = 'hold_trigger_keys';
   static const _keyFloatingPanelVisible = 'floating_panel_visible';
@@ -137,6 +138,12 @@ class StorageService {
     await _prefs.setBool(_keyUiAnimations, value);
   }
 
+  double get uiScale => _prefs.getDouble(_keyUiScale) ?? 1.15;
+
+  Future<void> setUiScale(double value) async {
+    await _prefs.setDouble(_keyUiScale, value);
+  }
+
   // ─── Profiles ─────────────────────────────────────────────
 
   List<String> listProfiles() {
@@ -229,6 +236,7 @@ class StorageService {
     List<HoldTriggerKey>? holdTriggerKeys,
     int? accentColorValue,
     bool? uiAnimations,
+    double? uiScale,
   }) async {
     final macros = await loadAllMacros();
     final data = {
@@ -239,6 +247,7 @@ class StorageService {
       'alwaysOnTop': alwaysOnTop,
       if (accentColorValue != null) 'accentColor': accentColorValue,
       if (uiAnimations != null) 'uiAnimations': uiAnimations,
+      if (uiScale != null) 'uiScale': uiScale,
       if (holdTriggerKeys != null)
         'holdTriggerKeys': holdTriggerKeys.map((k) => k.toJson()).toList(),
       'macros': macros.map((m) => m.toJson()).toList(),
@@ -262,6 +271,7 @@ class StorageService {
     List<HoldTriggerKey>? holdTriggerKeys,
     int? accentColorValue,
     bool? uiAnimations,
+    double? uiScale,
   }) async {
     try {
       final json = await exportConfig(
@@ -272,6 +282,7 @@ class StorageService {
         holdTriggerKeys: holdTriggerKeys,
         accentColorValue: accentColorValue,
         uiAnimations: uiAnimations,
+        uiScale: uiScale,
       );
       final path = await FilePicker.platform.saveFile(
         dialogTitle: '导出配置',
@@ -296,6 +307,7 @@ class StorageService {
       final alwaysOnTop = data['alwaysOnTop'] as bool? ?? true;
       final accentColorValue = data['accentColor'] as int?;
       final uiAnimations = data['uiAnimations'] as bool?;
+      final uiScale = data['uiScale'] as double?;
 
       // Save configs
       await saveClickerConfig(clickerConfig);
@@ -304,6 +316,7 @@ class StorageService {
       await setAlwaysOnTop(alwaysOnTop);
       if (accentColorValue != null) await setAccentColorValue(accentColorValue);
       if (uiAnimations != null) await setUiAnimations(uiAnimations);
+      if (uiScale != null) await setUiScale(uiScale);
 
       // Import macros
       if (data['macros'] != null) {
@@ -342,6 +355,7 @@ class StorageService {
         alwaysOnTop: alwaysOnTop,
         accentColorValue: accentColorValue,
         uiAnimations: uiAnimations,
+        uiScale: uiScale,
         holdTriggerKeys: holdTriggerKeys,
       );
     } catch (e) {
@@ -379,6 +393,7 @@ class ImportResult {
   final bool? alwaysOnTop;
   final int? accentColorValue;
   final bool? uiAnimations;
+  final double? uiScale;
   final List<HoldTriggerKey>? holdTriggerKeys;
 
   const ImportResult({
@@ -390,6 +405,7 @@ class ImportResult {
     this.alwaysOnTop,
     this.accentColorValue,
     this.uiAnimations,
+    this.uiScale,
     this.holdTriggerKeys,
   });
 }

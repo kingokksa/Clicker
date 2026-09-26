@@ -72,7 +72,6 @@ class _ClickerPageState extends State<ClickerPage> {
         if (config.clickType == ClickType.single || config.clickType == ClickType.double) ...[
           _spacing, _section(title: '鼠标按键', icon: FluentIcons.touch_pointer, child: _buildMouseButtonSelector(config, state, theme)),
           _spacing, _section(title: '点击位置', icon: FluentIcons.map_pin, child: _buildPositionSelector(context, config, state, theme)),
-          _spacing, _section(title: '随机偏移', icon: FluentIcons.open_in_new_tab, child: _buildRandomOffset(config, state, theme)),
         ],
         if (config.clickType == ClickType.drag) ...[
           _spacing, _section(title: '拖拽路径', icon: FluentIcons.move, child: _buildMouseDragPathSelector(context, config, state, theme)),
@@ -83,7 +82,6 @@ class _ClickerPageState extends State<ClickerPage> {
         if (config.clickType == ClickType.sequence) ...[
           _spacing, _section(title: '动作序列', icon: FluentIcons.bulleted_list, child: _buildMouseSequenceEditor(context, config, state, theme)),
           _spacing, _section(title: '点击位置', icon: FluentIcons.map_pin, child: _buildPositionSelector(context, config, state, theme)),
-          _spacing, _section(title: '随机偏移', icon: FluentIcons.open_in_new_tab, child: _buildRandomOffset(config, state, theme)),
         ],
       ]);
     }
@@ -91,12 +89,6 @@ class _ClickerPageState extends State<ClickerPage> {
     final settingsSections = <Widget>[
       _inlineSection(title: isKeyboard ? '按键间隔' : '点击间隔', child: _buildIntervalSlider(config, state, theme)),
       _spacing,
-      _section(title: '随机延迟', icon: FluentIcons.clock, child: _buildRandomDelay(config, state, theme)),
-      _spacing,
-      if (isKeyboard) ...[
-        _section(title: '防检测', icon: FluentIcons.shield, child: _buildJitterSettings(config, state, theme)),
-        _spacing,
-      ],
       _section(title: '重复模式', icon: FluentIcons.refresh, child: _buildRepeatModeSelector(config, state, theme)),
     ];
 
@@ -535,66 +527,6 @@ class _ClickerPageState extends State<ClickerPage> {
     return _selectChip(label, false, () => state.setClickerConfig(config.copyWith(textToType: text)));
   }
 
-  // ─── Jitter Settings ──────────────────────────────────────
-
-  Widget _buildJitterSettings(ClickerConfig config, AppState state, FluentThemeData theme) {
-    return Column(children: [
-      Row(children: [
-        const Expanded(child: Text('启用按键抖动', style: TextStyle(fontSize: 13))),
-        ToggleSwitch(checked: config.jitterEnabled, onChanged: (v) => state.setClickerConfig(config.copyWith(jitterEnabled: v))),
-      ]),
-      if (config.jitterEnabled) ...[
-        const SizedBox(height: 10),
-        Row(children: [
-          const Text('范围:', style: TextStyle(fontSize: 12)),
-          const SizedBox(width: 8),
-          SizedBox(width: 70, child: TextBox(
-            controller: TextEditingController(text: config.jitterMinMs.toString()),
-            onChanged: (v) { final p = int.tryParse(v); if (p != null && p >= 0) state.setClickerConfig(config.copyWith(jitterMinMs: p)); },
-          )),
-          const SizedBox(width: 6), const Text('~', style: TextStyle(fontSize: 13)), const SizedBox(width: 6),
-          SizedBox(width: 70, child: TextBox(
-            controller: TextEditingController(text: config.jitterMaxMs.toString()),
-            onChanged: (v) { final p = int.tryParse(v); if (p != null && p >= 0) state.setClickerConfig(config.copyWith(jitterMaxMs: p)); },
-          )),
-          const Text(' ms', style: TextStyle(fontSize: 12)),
-        ]),
-      ],
-    ]);
-  }
-
-  // ─── Random Offset ────────────────────────────────────────
-
-  Widget _buildRandomOffset(ClickerConfig config, AppState state, FluentThemeData theme) {
-    return Column(children: [
-      Row(children: [
-        const Expanded(child: Text('启用随机偏移', style: TextStyle(fontSize: 13))),
-        ToggleSwitch(checked: config.randomOffsetEnabled, onChanged: (v) => state.setClickerConfig(config.copyWith(randomOffsetEnabled: v))),
-      ]),
-      if (config.randomOffsetEnabled) ...[
-        const SizedBox(height: 10),
-        Row(children: [
-          const Text('范围:', style: TextStyle(fontSize: 12)),
-          const SizedBox(width: 8),
-          SizedBox(width: 70, child: TextBox(
-            controller: TextEditingController(text: config.randomOffsetMinPx.toString()),
-            onChanged: (v) { final p = int.tryParse(v); if (p != null && p >= 0) state.setClickerConfig(config.copyWith(randomOffsetMinPx: p)); },
-          )),
-          const SizedBox(width: 6), const Text('~', style: TextStyle(fontSize: 13)), const SizedBox(width: 6),
-          SizedBox(width: 70, child: TextBox(
-            controller: TextEditingController(text: config.randomOffsetMaxPx.toString()),
-            onChanged: (v) { final p = int.tryParse(v); if (p != null && p >= 0) state.setClickerConfig(config.copyWith(randomOffsetMaxPx: p)); },
-          )),
-          const Text(' px', style: TextStyle(fontSize: 12)),
-        ]),
-        const SizedBox(height: 8),
-        Slider(value: config.randomOffsetMaxPx.toDouble(), min: 1, max: 50, divisions: 49,
-          label: '${config.randomOffsetMaxPx}px',
-          onChanged: (v) => state.setClickerConfig(config.copyWith(randomOffsetMaxPx: v.round()))),
-      ],
-    ]);
-  }
-
   // ─── Mouse Action Type (click / drag / swipe) ────────────
 
   Widget _buildMouseActionSelector(ClickerConfig config, AppState state, FluentThemeData theme) {
@@ -776,39 +708,6 @@ class _ClickerPageState extends State<ClickerPage> {
         value: ms,
         onChanged: (v) => state.setClickerConfig(config.copyWith(intervalMs: v)),
       )),
-    ]);
-  }
-
-  // ─── Random Delay ─────────────────────────────────────────
-
-  Widget _buildRandomDelay(ClickerConfig config, AppState state, FluentThemeData theme) {
-    final enabled = config.randomDelayMinMs > 0 || config.randomDelayMaxMs > 0;
-    return Column(children: [
-      Row(children: [
-        const Expanded(child: Text('启用随机延迟', style: TextStyle(fontSize: 13))),
-        ToggleSwitch(checked: enabled, onChanged: (v) {
-          state.setClickerConfig(config.copyWith(randomDelayMinMs: v ? 10 : 0, randomDelayMaxMs: v ? 50 : 0));
-        }),
-      ]),
-      if (enabled) ...[
-        const SizedBox(height: 10),
-        Row(children: [
-          const Text('最小:', style: TextStyle(fontSize: 12)),
-          const SizedBox(width: 6),
-          SizedBox(width: 70, child: TextBox(
-            controller: TextEditingController(text: config.randomDelayMinMs.toString()),
-            onChanged: (v) { final p = int.tryParse(v); if (p != null && p >= 0) state.setClickerConfig(config.copyWith(randomDelayMinMs: p)); },
-          )),
-          const SizedBox(width: 12),
-          const Text('最大:', style: TextStyle(fontSize: 12)),
-          const SizedBox(width: 6),
-          SizedBox(width: 70, child: TextBox(
-            controller: TextEditingController(text: config.randomDelayMaxMs.toString()),
-            onChanged: (v) { final p = int.tryParse(v); if (p != null && p >= 0) state.setClickerConfig(config.copyWith(randomDelayMaxMs: p)); },
-          )),
-          const Text(' ms', style: TextStyle(fontSize: 12)),
-        ]),
-      ],
     ]);
   }
 

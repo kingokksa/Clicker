@@ -31,6 +31,8 @@ final Map<String, IconData> pluginIconMap = {
   'stack': FluentIcons.stack,
   'back_to_window': FluentIcons.back_to_window,
   'scroll_up_down': FluentIcons.scroll_up_down,
+  'clock': FluentIcons.clock,
+  'accounts': FluentIcons.accounts,
 };
 
 /// 解析图标名；未知名回退到 puzzle

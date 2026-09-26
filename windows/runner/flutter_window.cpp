@@ -2774,8 +2774,8 @@ bool FlutterWindow::OnCreate() {
 
           UINT dpi = GetDpiForWindow(hw);
           double scale = dpi / 96.0;
-          int w = static_cast<int>(920 * scale);
-          int h = static_cast<int>(720 * scale);
+          int w = static_cast<int>(1080 * scale);
+          int h = static_cast<int>(760 * scale);
 
           // Center on the monitor the window is currently on
           HMONITOR mon = MonitorFromWindow(hw, MONITOR_DEFAULTTONEAREST);
@@ -2998,15 +2998,18 @@ bool FlutterWindow::OnCreate() {
 
   flutter_controller_->ForceRedraw();
 
-  // Remove the native title bar style to prevent system from drawing
-  // caption buttons that would overlap with our custom title bar.
-  // We keep WS_THICKFRAME for resize and WS_MAXIMIZEBOX/WS_MINIMIZEBOX
-  // for window state transitions.
+  // Remove the native title bar style and force-disable DWM window
+  // transitions. Keeping WS_CAPTION re-enables the system maximize/minimize/
+  // close animation, but on a Flutter window DWM waits for a synchronous
+  // redraw the surface can't deliver — producing the multi-second stall
+  // before the transition starts. Dropping the caption style makes window
+  // state changes apply instantly (WS_THICKFRAME still allows resizing,
+  // WS_MAXIMIZEBOX/WS_MINIMIZEBOX still allow maximize/minimize).
   LONG style = GetWindowLong(hwnd, GWL_STYLE);
   style &= ~(WS_CAPTION | WS_SYSMENU);
   SetWindowLong(hwnd, GWL_STYLE, style);
 
-  BOOL disableTransitions = FALSE;
+  BOOL disableTransitions = TRUE;
   DwmSetWindowAttribute(hwnd, DWMWA_TRANSITIONS_FORCEDISABLED, &disableTransitions, sizeof(disableTransitions));
 
   return true;

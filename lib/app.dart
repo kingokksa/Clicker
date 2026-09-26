@@ -1,11 +1,8 @@
 /// App entry point — initialises state and launches FluentApp.
 library;
 
-import 'dart:io';
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:provider/provider.dart';
-import 'package:flutter_acrylic/flutter_acrylic.dart' as acrylic;
-import 'package:flutter/services.dart';
 import 'services/app_state.dart';
 import 'screens/home_screen.dart';
 
@@ -17,24 +14,12 @@ class ClickerApp extends StatefulWidget {
 }
 
 class _ClickerAppState extends State<ClickerApp> {
-  String? _lastThemeMode;
-  Color? _lastAccentColor;
-  static const _platformChannel = MethodChannel('com.clicker.pro/platform');
-
   @override
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
       create: (_) => AppState()..init(),
       child: Consumer<AppState>(
         builder: (context, state, _) {
-          // Only update acrylic when theme or accent actually changes
-          // to avoid constant DWM reconfiguration causing lag/flicker
-          if (_lastThemeMode != state.themeMode || _lastAccentColor != state.accentColor) {
-            _lastThemeMode = state.themeMode;
-            _lastAccentColor = state.accentColor;
-            _updateAcrylic(state.themeMode, state.accentColor);
-          }
-
           if (!state.isInitialized) {
             return const FluentApp(
               debugShowCheckedModeBanner: false,
@@ -57,6 +42,7 @@ class _ClickerAppState extends State<ClickerApp> {
 
           final isDark = state.themeMode == 'dark';
           final accent = state.accentColor;
+          final uiScale = state.uiScale;
           return FluentApp(
             title: 'Clicker',
             debugShowCheckedModeBanner: false,
@@ -65,11 +51,10 @@ class _ClickerAppState extends State<ClickerApp> {
               accentColor: _toAccent(accent),
               visualDensity: VisualDensity.standard,
               fontFamily: 'Segoe UI Variable, Segoe UI, Microsoft YaHei UI, PingFang SC, sans-serif',
-              scaffoldBackgroundColor: const Color(0xFFF8F8FC).withValues(alpha: 0.88),
-              cardColor: Colors.white.withValues(alpha: 0.78),
+              scaffoldBackgroundColor: const Color(0xFFF8F8FC),
+              cardColor: Colors.white,
               navigationPaneTheme: NavigationPaneThemeData(
-                backgroundColor: const Color(0xFFF2F2FA).withValues(alpha: 0.75),
-                animationDuration: Duration.zero,
+                backgroundColor: const Color(0xFFF2F2FA),
               ),
             ),
             darkTheme: FluentThemeData(
@@ -77,37 +62,27 @@ class _ClickerAppState extends State<ClickerApp> {
               accentColor: _toAccent(accent),
               visualDensity: VisualDensity.standard,
               fontFamily: 'Segoe UI Variable, Segoe UI, Microsoft YaHei UI, PingFang SC, sans-serif',
-              scaffoldBackgroundColor: const Color(0xFF16162A).withValues(alpha: 0.88),
-              cardColor: const Color(0xFF22223A).withValues(alpha: 0.78),
+              scaffoldBackgroundColor: const Color(0xFF16162A),
+              cardColor: const Color(0xFF22223A),
               navigationPaneTheme: NavigationPaneThemeData(
-                backgroundColor: const Color(0xFF16162A).withValues(alpha: 0.75),
-                animationDuration: Duration.zero,
+                backgroundColor: const Color(0xFF16162A),
               ),
             ),
             themeMode: isDark ? ThemeMode.dark : ThemeMode.light,
             builder: (context, child) {
-              return ExcludeSemantics(child: child!);
+              // 统一放大所有文本：全局 textScaler 会同时作用于主题排版
+              // 和各页面硬编码的 fontSize，一次生效、无需逐组件改字号。
+              final media = MediaQuery.of(context);
+              return MediaQuery(
+                data: media.copyWith(textScaler: TextScaler.linear(uiScale)),
+                child: ExcludeSemantics(child: child!),
+              );
             },
             home: HomeScreen(key: HomeScreen.globalKey),
           );
         },
       ),
     );
-  }
-
-  void _updateAcrylic(String themeMode, Color accent) {
-    if (!Platform.isWindows) return;
-    final isDark = themeMode == 'dark';
-    try {
-      acrylic.Window.setEffect(
-        effect: acrylic.WindowEffect.acrylic,
-        color: isDark ? const Color(0xFF16162A) : const Color(0xFFF8F8FC),
-        dark: isDark,
-      );
-    } catch (_) {}
-    try {
-      _platformChannel.invokeMethod('reapplyDwmFixes');
-    } catch (_) {}
   }
 }
 
