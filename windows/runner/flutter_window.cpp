@@ -491,8 +491,28 @@ static void SendHoldTriggerAction(HoldTriggerEntry* entry) {
     else if (entry->mouse_button == 3) { flags_down = MOUSEEVENTF_XDOWN; flags_up = MOUSEEVENTF_XUP; mouse_data = XBUTTON1; }
     else if (entry->mouse_button == 4) { flags_down = MOUSEEVENTF_XDOWN; flags_up = MOUSEEVENTF_XUP; mouse_data = XBUTTON2; }
 
-    mouse_event(flags_down, 0, 0, mouse_data, 0);
-    mouse_event(flags_up, 0, 0, mouse_data, 0);
+    // Game-friendly injection: raw-input games ignore bare mouse_event, so
+    // attach an absolute move at the current cursor (same as the macro player).
+    POINT pt;
+    if (GetCursorPos(&pt)) {
+      LONG dx = (LONG)(pt.x * 65535.0 / GetSystemMetrics(SM_CXSCREEN));
+      LONG dy = (LONG)(pt.y * 65535.0 / GetSystemMetrics(SM_CYSCREEN));
+      INPUT inputs[2] = {};
+      inputs[0].type = INPUT_MOUSE;
+      inputs[0].mi.dx = dx;
+      inputs[0].mi.dy = dy;
+      inputs[0].mi.mouseData = mouse_data;
+      inputs[0].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE | flags_down;
+      inputs[1].type = INPUT_MOUSE;
+      inputs[1].mi.dx = dx;
+      inputs[1].mi.dy = dy;
+      inputs[1].mi.mouseData = mouse_data;
+      inputs[1].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE | flags_up;
+      SendInput(2, inputs, sizeof(INPUT));
+    } else {
+      mouse_event(flags_down, 0, 0, mouse_data, 0);
+      mouse_event(flags_up, 0, 0, mouse_data, 0);
+    }
   }
 }
 
@@ -3311,8 +3331,25 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     if (click_type == 0) {
       DWORD flags_down = (DWORD)(wparam & 0xFFFF);
       DWORD flags_up = (DWORD)lparam;
-      mouse_event(flags_down, 0, 0, 0, 0);
-      mouse_event(flags_up, 0, 0, 0, 0);
+      // Game-friendly injection (raw-input games ignore bare mouse_event).
+      POINT pt;
+      if (GetCursorPos(&pt)) {
+        LONG dx = (LONG)(pt.x * 65535.0 / GetSystemMetrics(SM_CXSCREEN));
+        LONG dy = (LONG)(pt.y * 65535.0 / GetSystemMetrics(SM_CYSCREEN));
+        INPUT inputs[2] = {};
+        inputs[0].type = INPUT_MOUSE;
+        inputs[0].mi.dx = dx;
+        inputs[0].mi.dy = dy;
+        inputs[0].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE | flags_down;
+        inputs[1].type = INPUT_MOUSE;
+        inputs[1].mi.dx = dx;
+        inputs[1].mi.dy = dy;
+        inputs[1].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE | flags_up;
+        SendInput(2, inputs, sizeof(INPUT));
+      } else {
+        mouse_event(flags_down, 0, 0, 0, 0);
+        mouse_event(flags_up, 0, 0, 0, 0);
+      }
     } else if (click_type == 1) {
       BYTE vk = (BYTE)(wparam & 0xFF);
       keybd_event(vk, 0, 0, 0);
@@ -3592,8 +3629,30 @@ static void SendOneClick() {
     else if (g_clicker.button == 3) { flags_down = MOUSEEVENTF_XDOWN; flags_up = MOUSEEVENTF_XUP; mouse_data = XBUTTON1; }
     else if (g_clicker.button == 4) { flags_down = MOUSEEVENTF_XDOWN; flags_up = MOUSEEVENTF_XUP; mouse_data = XBUTTON2; }
 
-    mouse_event(flags_down, 0, 0, mouse_data, 0);
-    mouse_event(flags_up, 0, 0, mouse_data, 0);
+    // Use SendInput with an explicit absolute move (same as the macro player's
+    // "sendClick"). Fullscreen / borderless games that read raw input ignore
+    // SetCursorPos + bare mouse_event, but accept MOUSEEVENTF_ABSOLUTE|MOVE.
+    int cx = g_clicker.x;
+    int cy = g_clicker.y;
+    if (cx < 0 || cy < 0) {
+      POINT pt;
+      if (GetCursorPos(&pt)) { cx = pt.x; cy = pt.y; }
+    }
+    LONG dx = (LONG)(cx * 65535.0 / GetSystemMetrics(SM_CXSCREEN));
+    LONG dy = (LONG)(cy * 65535.0 / GetSystemMetrics(SM_CYSCREEN));
+
+    INPUT inputs[2] = {};
+    inputs[0].type = INPUT_MOUSE;
+    inputs[0].mi.dx = dx;
+    inputs[0].mi.dy = dy;
+    inputs[0].mi.mouseData = mouse_data;
+    inputs[0].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE | flags_down;
+    inputs[1].type = INPUT_MOUSE;
+    inputs[1].mi.dx = dx;
+    inputs[1].mi.dy = dy;
+    inputs[1].mi.mouseData = mouse_data;
+    inputs[1].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE | flags_up;
+    SendInput(2, inputs, sizeof(INPUT));
   }
 
   g_clicker.click_count++;
