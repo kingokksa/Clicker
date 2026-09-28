@@ -22,6 +22,7 @@ import '../app_paths.dart';
 import 'plugin_api.dart';
 import 'plugin_event_bus.dart';
 import 'plugin_host.dart';
+import 'plugin_integrity.dart';
 import 'plugin_manifest.dart';
 import 'plugin_storage.dart';
 import 'native_plugin_runtime.dart';
@@ -143,15 +144,20 @@ class PluginManager extends ChangeNotifier
     } catch (_) {}
   }
 
-  /// 从 zip 安装外部插件
-  Future<bool> installFromZip(String zipPath) async {
+  /// 从 zip 安装外部插件。
+  ///
+  /// [beforeRegister] 在插件注册（进入 installed 状态）之前回调，用于
+  /// 写入安装留痕（包体 SHA256 等）。返回 false 可中止注册。
+  Future<bool> installFromZip(String zipPath,
+      {Future<bool> Function(PluginManifest)? beforeRegister}) async {
     final manifest = await _extractZipToPluginsDir(zipPath);
     if (manifest == null) return false;
-    return _registerExternal(manifest);
+    return _registerExternal(manifest, beforeRegister: beforeRegister);
   }
 
-  /// 从目录安装外部插件
-  Future<bool> installFromDirectory(String sourceDir) async {
+  /// 从目录安装外部插件。
+  Future<bool> installFromDirectory(String sourceDir,
+      {Future<bool> Function(PluginManifest)? beforeRegister}) async {
     try {
       final srcManifest =
           File('$sourceDir${Platform.pathSeparator}manifest.json');
@@ -163,13 +169,20 @@ class PluginManager extends ChangeNotifier
           Directory('$pluginsDir${Platform.pathSeparator}${manifest.id}');
       if (await destDir.exists()) await destDir.delete(recursive: true);
       await _copyDirectory(Directory(sourceDir), destDir);
-      return _registerExternal(manifest);
+      // 文件已整体替换，旧的库指纹锚点不再有效，下次激活重新建立。
+      await PluginIntegrity.instance.dropNativeLibAnchor(manifest.id);
+      return _registerExternal(manifest, beforeRegister: beforeRegister);
     } catch (_) {
       return false;
     }
   }
 
-  Future<bool> _registerExternal(PluginManifest manifest) async {
+  Future<bool> _registerExternal(PluginManifest manifest,
+      {Future<bool> Function(PluginManifest)? beforeRegister}) async {
+    if (beforeRegister != null) {
+      final proceed = await beforeRegister(manifest);
+      if (!proceed) return false;
+    }
     _plugins[manifest.id] = PluginDescriptor(manifest: manifest, isBuiltin: false);
     await installPlugin(manifest.id);
     return true;
@@ -206,6 +219,8 @@ class PluginManager extends ChangeNotifier
           Directory('$pluginsDir${Platform.pathSeparator}${manifest.id}');
       if (await destDir.exists()) await destDir.delete(recursive: true);
       await _copyDirectory(Directory(root), destDir);
+      // 文件已整体替换，旧的库指纹锚点不再有效，下次激活重新建立。
+      await PluginIntegrity.instance.dropNativeLibAnchor(manifest.id);
       try { await extractDir.delete(recursive: true); } catch (_) {}
       return manifest;
     } catch (_) {
@@ -347,6 +362,14 @@ class PluginManager extends ChangeNotifier
     final libPath = resolveNativeLibraryPath(desc.manifest, pluginDir);
     if (libPath == null || !File(libPath).existsSync()) {
       desc.errorMessage = '未找到当前平台的插件库';
+      return false;
+    }
+
+    // 加载前复核原生库指纹。库被换（供应链/文件被篡改）时拒绝激活，
+    // 避免「装上就信一辈子」——第一次激活留下的指纹就是信任锚。
+    final verdict = await PluginIntegrity.instance.checkNativeLib(desc.id, libPath);
+    if (verdict == IntegrityVerdict.changed) {
+      desc.errorMessage = '插件库已发生变化（SHA256 不匹配），已拒绝加载；请重新安装该插件';
       return false;
     }
 

@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: ['main', 'master']
+  pull_request:
+    branches: ['main', 'master']
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (errors only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.3.0
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.1'
+          channel: 'stable'
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # 只拦 error，不拦 info/warning —— 现有代码库有 75 个 info/warning，
+      # 一次性拦会让所有 PR 直接红灯，门禁就没人愿意过。error 是硬底线。
+      - name: flutter analyze
+        run: flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings
+        continue-on-error: false
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.3.0
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.1'
+          channel: 'stable'
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: flutter test
+        run: flutter test --no-pub --coverage
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: coverage
+          path: coverage/lcov.info
