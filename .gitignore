@@ -43,3 +43,26 @@ driver/**/*.vcxproj.user
 !driver/**/*.sys
 !driver/**/*.cat
 !driver/**/*.inf
+
+# Test coverage output (CI artifact, not committed)
+coverage/
+
+# --- 一次性脚手架 / 遗留物（已从 git 移除，本地可保留） ---
+# 图标调试产物（icon.png 是正式图标，被 pubspec 引用，必须保留）
+icon_check.png
+icon_fixed.png
+icon_preview.png
+icon copy.png
+convert_icon.ps1
+
+# C++ 改动的临时 diff 导出
+*_diff.txt
+
+# 已废弃的 Python 原型（项目已迁移到 Flutter）
+/src/
+requirements.txt
+
+# 插件原生库构建产物（由 build_windows.bat / CMake 生成）
+plugins/*/windows/*.dll
+plugins/*/windows/*.exp
+plugins/*/windows/*.lib

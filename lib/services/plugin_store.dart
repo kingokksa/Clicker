@@ -15,6 +15,7 @@ import 'package:http/http.dart' as http;
 import 'app_paths.dart';
 import 'plugin/plugin_manager.dart';
 import 'plugin/plugin_manifest.dart' show currentPluginPlatform;
+import 'plugin/plugin_integrity.dart';
 import 'plugin/plugin_sources.dart';
 
 /// Remote plugin entry from a store index
@@ -32,6 +33,13 @@ class StorePluginEntry {
   final int size;           // Download size in bytes (0 for dart plugins)
   final String? downloadUrl; // For native plugins: zip download URL
   final int minAppVersion;
+
+  /// 包体 SHA256（十六进制小写）。缺失时无法做完整性校验，
+  /// 安装流程会提示"未校验"而非静默放行。
+  final String? sha256;
+
+  /// 原生库相对路径（相对 manifest.json）。原生插件加载 DLL 前据此核对指纹。
+  final String? nativeLib;
 
   // 来源信息（多源聚合）
   final String sourceId;    // 所属源 id（'official' / 'src_xxx'）
@@ -51,6 +59,8 @@ class StorePluginEntry {
     this.size = 0,
     this.downloadUrl,
     this.minAppVersion = 1,
+    this.sha256,
+    this.nativeLib,
     this.sourceId = 'official',
     this.sourceName = '官方插件',
   });
@@ -71,9 +81,35 @@ class StorePluginEntry {
       size: json['size'] as int? ?? 0,
       downloadUrl: json['downloadUrl'] as String?,
       minAppVersion: json['minAppVersion'] as int? ?? 1,
+      sha256: _normHash(json['sha256'] as String?),
+      nativeLib: _entrySha256(json['entry']),
       sourceId: json['sourceId'] as String? ?? sourceId,
       sourceName: json['sourceName'] as String? ?? sourceName,
     );
+  }
+
+  /// 包体指纹：索引里直接写了 sha256 字段则用它，
+  /// 否则从 entry（含 sha256 的文件表）里提取当前平台的原生库指纹。
+  String? get expectedSha256 => _resolveHash();
+
+  String? _resolveHash() {
+    final direct = _normHash(sha256);
+    if (direct != null) return direct;
+    return _normHash(nativeLib);
+  }
+
+  static String? _normHash(String? raw) {
+    final s = raw?.trim().toLowerCase();
+    if (s == null || s.isEmpty) return null;
+    // 容忍 64 位十六进制的宽松写法：去空格、去前缀
+    final cleaned = s.replaceAll(RegExp(r'[^0-9a-f]'), '');
+    return cleaned.length == 64 ? cleaned : null;
+  }
+
+  static String? _entrySha256(Map<String, dynamic>? entry) {
+    if (entry == null) return null;
+    final v = entry['sha256'] ?? entry['sha256_windows'] ?? entry['sha256.*'];
+    return _normHash(v is String ? v : null);
   }
 
   /// Whether this plugin supports the current platform
@@ -275,7 +311,10 @@ class PluginStore extends ChangeNotifier {
   /// Install a native plugin — download zip and extract
   Future<bool> _installNativePlugin(StorePluginEntry entry) async {
     if (entry.downloadUrl == null) return false;
-    return installFromZipUrl(entry.downloadUrl!);
+    return installFromZipUrl(entry.downloadUrl!,
+      expectedSha256: entry.expectedSha256,
+      source: 'store:${entry.sourceId}',
+    );
   }
 
   /// 从 GitHub 链接直接导入安装插件。
@@ -290,7 +329,9 @@ class PluginStore extends ChangeNotifier {
       return '这是一个插件源（索引）链接，请使用「添加源」加入商店';
     }
     final zip = resolution as GithubZipResolution;
-    final ok = await installFromZipUrl(zip.zipUrl);
+    final ok = await installFromZipUrl(zip.zipUrl,
+      source: 'github:url',
+    );
     if (ok) {
       await PluginManager.instance.discoverExternalPlugins();
       notifyListeners();
@@ -299,8 +340,14 @@ class PluginStore extends ChangeNotifier {
     return '插件包下载或安装失败';
   }
 
-  /// 下载 zip 并安装
-  Future<bool> installFromZipUrl(String zipUrl) async {
+  /// 下载 zip 并安装。
+  ///
+  /// [expectedSha256] 为商店索引/来源声明的包体指纹。提供时下载完成后
+  /// 会严格比对，不匹配则拒绝安装（不再静默返回 false）。缺失时不做
+  /// 校验，并在返回结果里通过 [installReport] 标记为「未校验」。
+  Future<bool> installFromZipUrl(String zipUrl,
+      {String? expectedSha256, String source = 'url'}) async {
+    String? tempPath;
     try {
       final response = await http.get(Uri.parse(zipUrl), headers: ghHeaders)
           .timeout(const Duration(seconds: 120));
@@ -308,20 +355,44 @@ class PluginStore extends ChangeNotifier {
 
       // Save to temp file
       final tempDir = await AppPaths.getTempDir();
-      final zipName = zipUrl.split('/').last;
-      final zipPath = '$tempDir${Platform.pathSeparator}import_${DateTime.now().millisecondsSinceEpoch}_$zipName';
-      await File(zipPath).writeAsBytes(response.bodyBytes);
+      final zipName = zipUrl.split('/').last.replaceAll(RegExp(r'[^\w.\-]+'), '_');
+      tempPath =
+          '$tempDir${Platform.pathSeparator}import_${DateTime.now().millisecondsSinceEpoch}_$zipName';
+      await File(tempPath).writeAsBytes(response.bodyBytes);
 
-      // Install from zip
-      final success = await PluginManager.instance.installFromZip(zipPath);
+      // 1) 落盘后立刻比对指纹——这是唯一可靠的校验点（网络字节不可信）
+      final hash = await PluginIntegrity.instance.sha256FileOrNull(tempPath);
+      final want = (expectedSha256 ?? '').toLowerCase();
+      if (want.isNotEmpty && want.length == 64 && hash.toLowerCase() != want) {
+        _error = 'SHA256 校验失败：来源声明与下载内容不一致，安装已中止';
+        notifyListeners();
+        return false;
+      }
 
-      // Cleanup temp file
-      try { await File(zipPath).delete(); } catch (_) {}
+      // 2) 安装
+      final success = await PluginManager.instance.installFromZip(tempPath,
+        beforeRegister: (manifest) async {
+          await PluginIntegrity.instance.recordInstall(
+            pluginId: manifest.id,
+            version: manifest.version,
+            zipSha256: hash,
+            source: source,
+          );
+          return true;
+        });
 
+      _error = want.isEmpty ? '已安装，但该来源未声明 SHA256，未能校验完整性' : null;
       notifyListeners();
       return success;
-    } catch (_) {
+    } catch (e) {
+      _error = '插件包下载或安装失败：$e';
+      notifyListeners();
       return false;
+    } finally {
+      // Cleanup temp file
+      if (tempPath != null) {
+        try { await File(tempPath).delete(); } catch (_) {}
+      }
     }
   }
 

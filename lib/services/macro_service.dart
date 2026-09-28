@@ -503,6 +503,12 @@ class MacroService {
     // repeatCount == 0 means infinite; loop until status changes.
     final totalRepeats = macro.repeatCount == 0 ? null : macro.repeatCount;
 
+    // 截止时刻调度：以「本拍应在什么时候结束」为基准，而不是逐拍累加
+    // Future.delayed。这样 _executeEvent 的实际耗时不会逐拍叠加成漂移，
+    // 也不会把 holdMs 漏算（hold 期间事件时间戳本就没推进）。
+    final clock = Stopwatch()..start();
+    int deadlineMs = 0;
+
     for (_currentRepeat = 0;
         totalRepeats == null || _currentRepeat < totalRepeats;
         _currentRepeat++) {
@@ -515,10 +521,12 @@ class MacroService {
 
         final event = events[i];
 
-        // Calculate delay from previous event
+        // Calculate when this step should fire, accounting for holdMs of the
+        // previous step: during a hold the recorded timestamps do not advance,
+        // so the next step must be offset by half the hold duration on both
+        // sides. waitMs takes precedence over the timestamp difference when set.
         if (i > 0) {
           final prevEvent = events[i - 1];
-          // Use waitMs from previous event if set, otherwise fall back to timestampMs difference
           int delay;
           if (prevEvent.waitMs > 0) {
             delay = (prevEvent.waitMs * speedMultiplier).round();
@@ -527,9 +535,16 @@ class MacroService {
                     speedMultiplier)
                 .round();
           }
-          if (delay > 0) {
-            await Future.delayed(Duration(milliseconds: delay));
-          }
+          deadlineMs += delay;
+          deadlineMs += (prevEvent.holdMs / 2 * speedMultiplier).round();
+        }
+
+        final remainMs = deadlineMs - clock.elapsedMilliseconds;
+        if (remainMs > 0) {
+          await Future.delayed(Duration(milliseconds: remainMs));
+        } else {
+          // 落后于进度：丢弃欠账，从当前位置重新对齐，不试图补回漏点。
+          deadlineMs = clock.elapsedMilliseconds;
         }
 
         if (_status != MacroStatus.playing) break;
@@ -546,13 +561,13 @@ class MacroService {
         // Execute event with hold duration
         await _executeEvent(event);
 
-        // Hold duration: wait after executing, before the next step's delay
+        // Hold duration: advances the deadline but does not insert an extra
+        // wait — the next step's deadline already includes half of it.
         if (event.holdMs > 0) {
-          final holdDelay = (event.holdMs * speedMultiplier).round();
-          if (holdDelay > 0) {
-            await Future.delayed(Duration(milliseconds: holdDelay));
-          }
+          deadlineMs += (event.holdMs / 2 * speedMultiplier).round();
         }
+
+        if (_status != MacroStatus.playing) break;
       }
     }
 

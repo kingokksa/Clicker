@@ -219,7 +219,15 @@ class ClickService {
     });
   }
 
-  void _scheduleClick() {
+  /// Arm the next click.
+  ///
+  /// [prevActionElapsed] 上一拍 _performAction 实际耗时。传入后会从本拍的
+  /// 定时器时长里扣掉，使「相邻两拍的实际间隔」等于配置的 delayUs，
+  /// 而不是 delayUs + 上一拍执行时间。
+  ///
+  /// 不传（首轮、暂停后恢复）时不做补偿：暂停期间用户本就不期待补点，
+  /// 也不该让暂停时间被「补」回来。
+  void _scheduleClick({Stopwatch? prevActionElapsed}) {
     if (_status != ClickerStatus.running) return;
 
     final baseUs = (_config.intervalMs * 1000).round();
@@ -251,7 +259,16 @@ class ClickService {
       // Never let a bad delay config break the click loop.
       delayUs = baseUs;
     }
-    _log('using Dart timer mode (delay=${delayUs}us)');
+
+    // 漂移补偿：本定时器要在上一拍动作完成后才挂载，动作耗时会被叠加到
+    // 每一拍上。这里把耗时扣回，使相邻两拍的间隔就是配置的 delayUs。
+    // 若动作比间隔还久，钳到 0——立即出下一拍，而不堆积漏点的回补。
+    if (prevActionElapsed != null) {
+      final elapsedUs = prevActionElapsed.elapsed.inMicroseconds;
+      delayUs = (delayUs - elapsedUs).clamp(0, delayUs);
+    }
+
+    _log('using Dart timer mode (delay=${delayUs}us${prevActionElapsed != null ? ', compensated ${prevActionElapsed.elapsed.inMilliseconds}ms' : ''})');
 
     _timer = Timer(Duration(microseconds: delayUs), () async {
       if (_status != ClickerStatus.running) return;
@@ -263,16 +280,18 @@ class ClickService {
         });
         return;
       }
+      final actionElapsed = Stopwatch()..start();
       try {
         await _performAction();
       } catch (e) {
         _log('action error: $e');
       }
+      actionElapsed.stop();
       // stop() may have been called inside _performAction (e.g. text mode)
       if (_status != ClickerStatus.running) return;
       _clickCount++;
       if (_shouldStop()) { stop(); return; }
-      _scheduleClick();
+      _scheduleClick(prevActionElapsed: actionElapsed);
     });
   }
 

@@ -82,32 +82,65 @@ flutter build apk --split-per-abi
 lib/
 ├── main.dart                    # 入口
 ├── app.dart                     # FluentApp + Provider
+├── mobile_app.dart              # 移动端入口
 ├── models/                      # 数据模型
+│   ├── clicker_config.dart      # 连点器配置（含调度 / 音效）
+│   ├── macro_model.dart         # 宏与宏事件
+│   ├── hold_trigger_key.dart    # 按键触发配置
+│   └── hotkey_config.dart       # 全局快捷键
 ├── screens/
 │   ├── clicker/                 # 连点器页面
 │   ├── macro/                   # 宏录制页面
 │   ├── settings/                # 设置页面
+│   ├── mobile/                  # 移动端页面
 │   ├── sidebar/                 # 侧边栏页面
-│   │   ├── image_recognition_page.dart  # 图像识别 + 条件触发
-│   │   ├── hold_trigger_page.dart       # 按键触发
-│   │   ├── plugin_page.dart             # 插件管理
-│   │   └── theme_center_page.dart       # 主题中心
+│   │   ├── image_recognition_page.dart    # 图像识别 + 条件触发
+│   │   ├── hold_trigger_page.dart         # 按键触发
+│   │   ├── plugin_page.dart               # 插件管理
+│   │   ├── theme_center_page.dart         # 主题中心
+│   │   ├── background_execution_page.dart # 后台执行
+│   │   ├── humanize_page.dart             # 拟人化设置
+│   │   └── schedule_page.dart             # 定时任务
 │   ├── floating_window.dart     # 悬浮窗
 │   └── home_screen.dart         # 主界面
 ├── services/
-│   ├── plugin_system.dart       # 插件框架（ClickerPlugin / NativeClickerPlugin）
-│   ├── plugin_registry.dart     # 插件注册中心（安装/启用/持久化）
-│   ├── plugin_store.dart        # 插件商店（远程索引/下载）
-│   ├── native_plugin_loader.dart # FFI 原生插件加载器
-│   ├── vision_plugin.dart       # 视觉插件接口（模板匹配/OCR/检测）
-│   ├── vision_service.dart      # 图像识别服务
-│   ├── screen_overlay_service.dart  # 屏幕覆盖层
-│   ├── click_service.dart       # 点击引擎
-│   ├── macro_service.dart       # 录制/回放引擎
+│   ├── click_service.dart       # 点击引擎（定时循环 + Stopwatch 漂移补偿）
+│   ├── macro_service.dart       # 录制 / 回放引擎
 │   ├── hotkey_service.dart      # 快捷键服务
+│   ├── storage_service.dart     # 配置持久化
+│   ├── local_storage.dart       # 轻量键值存储
+│   ├── app_paths.dart           # 数据 / 插件 / 临时目录
+│   ├── plugin_store.dart        # 插件商店（远程索引 / 下载 / SHA256 校验）
+│   ├── plugin/                  # 插件系统核心
+│   │   ├── plugin_manager.dart  # 安装 / 注册 / 激活
+│   │   ├── plugin_manifest.dart # manifest.json 解析
+│   │   ├── native_plugin_runtime.dart  # FFI 原生插件加载
+│   │   ├── plugin_integrity.dart  # SHA256 校验 / 安装留痕 / 库指纹复核
+│   │   ├── plugin_host.dart     # 插件宿主 API
+│   │   ├── plugin_api.dart      # 插件对外接口
+│   │   ├── plugin_storage.dart  # 插件私有存储
+│   │   ├── plugin_event_bus.dart
+│   │   ├── plugin_sources.dart  # 商店源 / GitHub 链接解析
+│   │   ├── icon_resolver.dart
+│   │   └── declarative_settings.dart
 │   ├── plugins/                 # 内置插件实现
+│   ├── vision_service.dart      # 图像识别服务
+│   ├── vision_plugin.dart       # 视觉插件接口（模板匹配 / OCR / 检测）
+│   ├── vision_plugin_manager.dart
+│   ├── vision_template_store.dart
+│   ├── screen_overlay_service.dart   # 屏幕覆盖层
+│   ├── screen_monitor_service.dart
+│   ├── window_detect_service.dart
+│   ├── system_tray_service.dart
+│   ├── update_service.dart
+│   ├── remote_control_service.dart
+│   ├── script_engine.dart
 │   └── platform/                # 平台输入抽象层
 ├── widgets/                     # 通用组件
+test/                            # 单元测试（flutter test）
+.github/workflows/
+├── ci.yml                       # PR 门禁：analyze + test
+└── release.yml                  # tag 触发的构建发布
 sdk/
 ├── clicker_plugin.h             # 插件 SDK C API 头文件
 └── template/                    # 插件项目模板
@@ -126,6 +159,17 @@ android/
 └── app/src/main/
     └── kotlin/                  # Android 无障碍服务
 ```
+
+## 开发
+
+```bash
+flutter pub get
+flutter analyze          # 存量 info/warning 较多，CI 只拦 error
+flutter test             # 运行 test/ 下的单元测试
+```
+
+CI 在 push / PR 到 main 时自动跑 `flutter analyze` 与 `flutter test`，
+详见 `.github/workflows/ci.yml`。
 
 ## 许可
 
