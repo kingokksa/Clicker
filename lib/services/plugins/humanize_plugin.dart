@@ -10,7 +10,6 @@ class HumanizePlugin extends Plugin {
     name: '拟人模式',
     version: '1.0.0',
     author: 'Clicker',
-    description: '拟人化节奏与反检测：随机偏移、随机延迟、按键抖动',
     category: 'click',
     platforms: ['windows', 'linux', 'macos'],
     runtime: PluginRuntime.dart,

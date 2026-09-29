@@ -11,7 +11,6 @@ class ApiPlugin extends Plugin {
     name: '外部接口',
     version: '1.0.0',
     author: 'Clicker',
-    description: '供外部程序与 AI 调用的 MCP / REST 接口',
     category: 'automation',
     platforms: ['windows', 'linux', 'macos'],
     runtime: PluginRuntime.dart,

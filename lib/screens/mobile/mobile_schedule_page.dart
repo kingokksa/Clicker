@@ -48,7 +48,7 @@ class MobileSchedulePage extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 48),
               child: Center(
-                child: Text('还没有任务，点上方「添加任务」新建一个',
+                child: Text('还没有任务',
                     style: TextStyle(fontSize: 13, color: subColor)),
               ),
             ),
@@ -149,7 +149,7 @@ class _ScheduleCard extends StatelessWidget {
               const SizedBox(width: 60, child: Text('宏', style: TextStyle(fontSize: 13))),
               Expanded(
                 child: macros.isEmpty
-                    ? Text('暂无宏 — 请先在宏页面录制',
+                    ? Text('暂无宏',
                         style: TextStyle(fontSize: 12, color: subColor))
                     : _dropdown<String>(
                         value: macros

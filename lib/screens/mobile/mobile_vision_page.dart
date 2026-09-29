@@ -307,8 +307,6 @@ class MobileVisionPageState extends State<MobileVisionPage> {
           Icon(Icons.image_search, size: 40, color: isDark ? Colors.grey.shade700 : Colors.grey.shade400),
           const SizedBox(height: 10),
           Text('还没有模板', style: TextStyle(fontSize: 14, color: isDark ? Colors.grey : Colors.black54)),
-          const SizedBox(height: 4),
-          Text('点击下方按钮截取屏幕区域作为模板', style: TextStyle(fontSize: 12, color: isDark ? Colors.grey : Colors.black45)),
         ]),
       ),
     );

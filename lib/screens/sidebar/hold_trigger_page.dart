@@ -502,8 +502,6 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
                   ]),
                   const SizedBox(height: 10),
 
-                  Text('点击坐标（相对目标窗口客户区）', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80))),
-                  const SizedBox(height: 6),
                   Row(children: [
                     SizedBox(
                       width: 80,

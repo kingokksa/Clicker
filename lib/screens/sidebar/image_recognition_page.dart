@@ -888,8 +888,6 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
           ),
           const SizedBox(height: 16),
           const Text('暂无触发条件', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
-          const SizedBox(height: 4),
-          Text('点击上方按钮添加条件触发规则', style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
         ])))
       else
         ..._triggers.map((t) {
@@ -2723,7 +2721,6 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
             Text('${(_detectConfidence * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
           ]),
           const SizedBox(height: 4),
-          const Text('需要先安装 ONNX Runtime 与检测模型（安装包已内置，可在「高级模型」中检查）', style: TextStyle(fontSize: 11, color: Color(0xFFFF9800))),
           const SizedBox(height: 6),
           Row(children: [
             Checkbox(

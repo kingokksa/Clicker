@@ -19,7 +19,6 @@ class YoloDetectPlugin extends VisionPlugin {
   final VisionPluginInfo info = const VisionPluginInfo(
     id: 'yolo_detect',
     name: 'YOLO目标检测',
-    description: '内置 YOLOX-Nano 目标检测（COCO 80 类），无需下载',
     version: '1.0.0',
     author: 'Clicker',
     capabilities: [VisionCapability.objectDetect],

@@ -10,7 +10,6 @@ class ThemeCenterPlugin extends Plugin {
     name: '主题中心',
     version: '1.0.0',
     author: 'Clicker',
-    description: '应用主题、强调色与外观定制',
     category: 'ui',
     platforms: ['windows', 'linux', 'macos'],
     runtime: PluginRuntime.dart,

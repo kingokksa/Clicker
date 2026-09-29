@@ -592,12 +592,6 @@ class _MobileClickerPageState extends State<MobileClickerPage> {
               onChanged: (v) => state.setClickerConfig(
                   config.copyWith(randomOffsetMaxPx: v.round())),
             ),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text('每次点击在目标位置 ±${config.randomOffsetMaxPx}px 内随机落点',
-                  style: TextStyle(fontSize: 11,
-                      color: isDark ? Colors.grey.shade500 : Colors.black45)),
-            ),
           ],
         ]),
       ),
@@ -660,12 +654,6 @@ class _MobileClickerPageState extends State<MobileClickerPage> {
                 ),
               )),
             ]),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text('每次点击之间额外延迟 ${config.randomDelayMinMs}~${config.randomDelayMaxMs}ms',
-                  style: TextStyle(fontSize: 11,
-                      color: isDark ? Colors.grey.shade500 : Colors.black45)),
-            ),
           ],
         ]),
       ),

@@ -41,9 +41,6 @@ class PositionPickerOverlay extends StatelessWidget {
                 Text(title,
                     style: const TextStyle(
                         color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
-                const Spacer(),
-                const Text('点击屏幕选择位置',
-                    style: TextStyle(color: Colors.white70, fontSize: 13)),
               ]),
             ),
           ),

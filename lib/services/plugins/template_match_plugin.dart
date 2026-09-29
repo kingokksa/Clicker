@@ -11,7 +11,6 @@ class TemplateMatchPlugin extends VisionPlugin {
   final VisionPluginInfo info = const VisionPluginInfo(
     id: 'builtin_template',
     name: '模板匹配',
-    description: '基于像素对比的图像模板查找，无需额外依赖',
     version: '1.0.0',
     author: 'Clicker',
     capabilities: [VisionCapability.templateMatch],

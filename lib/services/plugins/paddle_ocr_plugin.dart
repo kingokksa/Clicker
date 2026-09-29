@@ -12,7 +12,6 @@ class PaddleOcrPlugin extends VisionPlugin {
   final VisionPluginInfo info = const VisionPluginInfo(
     id: 'plugin_paddle_ocr',
     name: 'PaddleOCR',
-    description: '百度飞桨OCR引擎，中文识别精度高，需安装Python依赖',
     version: '1.0.0',
     author: 'Clicker',
     capabilities: [VisionCapability.ocr],

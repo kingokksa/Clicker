@@ -10,7 +10,6 @@ class SchedulePlugin extends Plugin {
     name: '定时任务',
     version: '1.0.0',
     author: 'Clicker',
-    description: '定时自动开始 / 停止连点',
     category: 'automation',
     platforms: ['windows', 'linux', 'macos'],
     runtime: PluginRuntime.dart,

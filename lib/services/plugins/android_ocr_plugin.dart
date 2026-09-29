@@ -12,7 +12,6 @@ class AndroidOcrPlugin extends VisionPlugin {
   final VisionPluginInfo info = const VisionPluginInfo(
     id: 'builtin_android_ocr',
     name: 'ML Kit OCR',
-    description: 'Google ML Kit 文字识别引擎，支持中英文离线识别',
     version: '1.0.0',
     author: 'Clicker',
     capabilities: [VisionCapability.ocr],

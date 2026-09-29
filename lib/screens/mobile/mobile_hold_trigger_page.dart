@@ -35,10 +35,6 @@ class MobileHoldTriggerPage extends StatelessWidget {
                   Text('暂无触发项',
                       style: TextStyle(
                           fontSize: 15, color: isDark ? Colors.white38 : Colors.black38)),
-                  const SizedBox(height: 8),
-                  Text('长按屏幕可触发自动重复操作',
-                      style: TextStyle(
-                          fontSize: 12, color: isDark ? Colors.white24 : Colors.black26)),
                 ],
               ),
             )

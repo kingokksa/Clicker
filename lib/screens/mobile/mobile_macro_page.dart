@@ -112,9 +112,6 @@ class MobileMacroPage extends StatelessWidget {
           Icon(Icons.playlist_play, size: 48, color: isDark ? Colors.grey : Colors.grey),
           const SizedBox(height: 12),
           Text('暂无宏', style: TextStyle(fontSize: 15, color: isDark ? Colors.grey : Colors.grey)),
-          const SizedBox(height: 8),
-          Text('点击 + 创建宏，或使用录制按钮录制',
-              style: TextStyle(fontSize: 13, color: isDark ? Colors.grey : Colors.grey)),
         ]),
       );
     }
@@ -340,7 +337,7 @@ class _MobileMacroEditorState extends State<_MobileMacroEditor> {
           if (_events.isEmpty)
             Center(child: Padding(
               padding: const EdgeInsets.all(32),
-              child: Text('暂无事件，点击 + 添加',
+              child: Text('暂无事件',
                   style: TextStyle(color: isDark ? Colors.grey : Colors.grey)),
             )),
 

@@ -11,7 +11,6 @@ class ImageRecognitionPlugin extends Plugin {
     name: '图像识别',
     version: '1.0.0',
     author: 'Clicker',
-    description: '模板匹配与 OCR 识别，可作点击条件触发',
     category: 'vision',
     platforms: ['windows'],
     runtime: PluginRuntime.dart,

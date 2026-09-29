@@ -23,7 +23,6 @@ class RapidOcrPlugin extends VisionPlugin {
   final VisionPluginInfo info = const VisionPluginInfo(
     id: 'rapid_ocr',
     name: 'RapidOCR 文字识别',
-    description: '内置 PP-OCRv4 中英文识别，返回逐行文本与坐标',
     version: '1.0.0',
     author: 'Clicker',
     capabilities: [VisionCapability.ocr],

@@ -10,7 +10,6 @@ class MacroPlugin extends Plugin {
     name: '宏录制与回放',
     version: '1.0.0',
     author: 'Clicker',
-    description: '录制鼠标键盘操作并按需回放，支持循环与条件',
     category: 'automation',
     platforms: ['windows', 'linux', 'macos'],
     runtime: PluginRuntime.dart,

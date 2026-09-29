@@ -10,7 +10,6 @@ class HoldTriggerPlugin extends Plugin {
     name: '按住触发',
     version: '1.0.0',
     author: 'Clicker',
-    description: '按住指定按键时自动连发，松开即停',
     category: 'click',
     platforms: ['windows', 'linux', 'macos'],
     runtime: PluginRuntime.dart,

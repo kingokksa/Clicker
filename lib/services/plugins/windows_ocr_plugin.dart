@@ -12,7 +12,6 @@ class WindowsOcrPlugin extends VisionPlugin {
   final VisionPluginInfo info = const VisionPluginInfo(
     id: 'builtin_windows_ocr',
     name: 'Windows OCR',
-    description: 'Windows 内置文字识别引擎，需安装OCR语言包',
     version: '1.0.0',
     author: 'Clicker',
     capabilities: [VisionCapability.ocr],

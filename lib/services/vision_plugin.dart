@@ -23,7 +23,7 @@ class VisionPluginInfo {
   const VisionPluginInfo({
     required this.id,
     required this.name,
-    required this.description,
+    this.description = '',
     this.version = '1.0.0',
     this.author = '',
     required this.capabilities,

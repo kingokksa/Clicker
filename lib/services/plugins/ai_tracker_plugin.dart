@@ -33,7 +33,6 @@ class AiTrackerPlugin extends Plugin {
     name: 'AI图像跟踪',
     version: '1.0.0',
     author: 'Clicker',
-    description: '基于ONNX Runtime的YOLO目标检测与跟踪',
     category: 'vision',
     platforms: ['windows', 'linux', 'android'],
     runtime: PluginRuntime.dart,

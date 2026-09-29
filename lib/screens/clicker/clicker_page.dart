@@ -286,8 +286,7 @@ class _ClickerPageState extends State<ClickerPage> {
           const Spacer(),
           HyperlinkButton(onPressed: () => state.setClickerConfig(config.copyWith(keySequence: <KeySequenceItem>[])), child: const Text('清空')),
         ]),
-      ] else
-        const Padding(padding: EdgeInsets.all(16), child: Center(child: Text('点击下方按钮添加按键', style: TextStyle(fontSize: 12)))),
+      ],
       const SizedBox(height: 8),
       SizedBox(width: double.infinity, child: Button(onPressed: () => _showSequenceKeyPicker(context, state, config), child: const Text('+ 添加按键'))),
       const SizedBox(height: 10),
@@ -355,8 +354,7 @@ class _ClickerPageState extends State<ClickerPage> {
           const Spacer(),
           HyperlinkButton(onPressed: () => state.setClickerConfig(config.copyWith(mouseSequence: <MouseActionItem>[])), child: const Text('清空')),
         ]),
-      ] else
-        const Padding(padding: EdgeInsets.all(16), child: Center(child: Text('点击下方按钮添加动作', style: TextStyle(fontSize: 12)))),
+      ],
       const SizedBox(height: 8),
       SizedBox(width: double.infinity, child: Button(onPressed: () => _showMouseActionPicker(context, state, config), child: const Text('+ 添加动作'))),
       const SizedBox(height: 10),
@@ -431,17 +429,15 @@ class _ClickerPageState extends State<ClickerPage> {
       Container(
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(color: containerBg, borderRadius: BorderRadius.circular(8)),
-        child: combo.isEmpty
-          ? const Center(child: Text('点击下方按钮添加组合键', style: TextStyle(fontSize: 12)))
-          : Wrap(spacing: 4, runSpacing: 4, children: [
-              for (int i = 0; i < combo.length; i++) ...[
-                _keyChip(combo[i], onDelete: () {
-                  final n = List<String>.from(combo)..removeAt(i);
-                  state.setClickerConfig(config.copyWith(comboKeys: n));
-                }),
-                if (i < combo.length - 1) Text('+', style: TextStyle(fontWeight: FontWeight.bold, color: FluentTheme.of(context).accentColor)),
-              ],
-            ]),
+        child: Wrap(spacing: 4, runSpacing: 4, children: [
+            for (int i = 0; i < combo.length; i++) ...[
+              _keyChip(combo[i], onDelete: () {
+                final n = List<String>.from(combo)..removeAt(i);
+                state.setClickerConfig(config.copyWith(comboKeys: n));
+              }),
+              if (i < combo.length - 1) Text('+', style: TextStyle(fontWeight: FontWeight.bold, color: FluentTheme.of(context).accentColor)),
+            ],
+          ]),
       ),
       const SizedBox(height: 8),
       const Text('常用组合', style: TextStyle(fontSize: 12)),

@@ -79,7 +79,6 @@ class MacroPage extends StatelessWidget {
             Icon(FluentIcons.video_off, size: 48),
             SizedBox(height: 12),
             Text('暂无宏', style: TextStyle(fontSize: 14)),
-            Text('点击"开始录制"、"按键序列"或"新建宏"创建宏', style: TextStyle(fontSize: 12)),
           ])))
         else
           ...macros.map((macro) => _buildMacroCard(context, macro, state)),
@@ -1759,14 +1758,12 @@ class _KeySequenceBuilderDialogState extends State<_KeySequenceBuilderDialog> {
           constraints: const BoxConstraints(maxHeight: 100),
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(color: containerBg, borderRadius: BorderRadius.circular(8)),
-          child: _entries.isEmpty
-            ? const Center(child: Text('点击下方按键添加到序列', style: TextStyle(fontSize: 12)))
-            : SingleChildScrollView(child: Wrap(spacing: 4, runSpacing: 4, children: [
-                for (int i = 0; i < _entries.length; i++) ...[
-                  _keyChip(_entries[i].key, () => _removeEntry(i)),
-                  if (i < _entries.length - 1) const Icon(FluentIcons.forward, size: 10),
-                ],
-              ])),
+          child: SingleChildScrollView(child: Wrap(spacing: 4, runSpacing: 4, children: [
+              for (int i = 0; i < _entries.length; i++) ...[
+                _keyChip(_entries[i].key, () => _removeEntry(i)),
+                if (i < _entries.length - 1) const Icon(FluentIcons.forward, size: 10),
+              ],
+            ])),
         ),
         if (_entries.isNotEmpty) ...[
           const SizedBox(height: 4),
@@ -1869,9 +1866,7 @@ class _ComboBuilderDialogState extends State<_ComboBuilderDialog> {
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(color: containerBg, borderRadius: BorderRadius.circular(8)),
-          child: _keys.isEmpty
-            ? const Center(child: Text('点击下方按键添加组合', style: TextStyle(fontSize: 12)))
-            : Wrap(spacing: 4, runSpacing: 4, children: [
+          child: Wrap(spacing: 4, runSpacing: 4, children: [
                 for (int i = 0; i < _keys.length; i++) ...[
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),

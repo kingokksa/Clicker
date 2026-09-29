@@ -138,8 +138,6 @@ class _PluginPageState extends State<PluginPage> {
             Icon(FluentIcons.puzzle, size: 48, color: isDark ? const Color(0xFF404060) : const Color(0xFFC0C0D0)),
             const SizedBox(height: 12),
             Text('还没有安装插件', style: TextStyle(fontSize: 14, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
-            const SizedBox(height: 6),
-            Text('前往「商店」标签页安装官方插件', style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF707090) : const Color(0xFFA0A0B0))),
           ]),
         )),
     ];
@@ -324,16 +322,6 @@ class _PluginPageState extends State<PluginPage> {
   List<Widget> _buildStoreGroups(bool isDark, Color accent) {
     final store = PluginStore.instance;
     final sources = PluginSourceRepository.instance.enabledSources;
-
-    if (store.plugins.isEmpty) {
-      return [
-        Center(child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 30),
-          child: Text('暂无可用插件 — 可添加第三方源或从链接导入',
-            style: TextStyle(fontSize: 13, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
-        )),
-      ];
-    }
 
     final widgets = <Widget>[];
     for (final source in sources) {
@@ -628,35 +616,11 @@ class _PluginPageState extends State<PluginPage> {
           title: const Text('添加插件源'),
           constraints: const BoxConstraints(maxWidth: 520),
           content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('输入 GitHub 仓库链接，宿主会自动探测其中的插件索引（plugin_index.json）',
-              style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
-            const SizedBox(height: 12),
             TextBox(
               controller: urlCtrl,
               placeholder: 'https://github.com/作者名/插件仓库',
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
               onChanged: (_) => setDialogState(() {}),
-            ),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF1A1A30) : const Color(0xFFF5F5FF),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('支持的链接形式：', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
-                  color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
-                const SizedBox(height: 4),
-                Text('· https://github.com/{owner}/{repo}\n'
-                  '· https://github.com/{owner}/{repo}/tree/{branch}/{dir}\n'
-                  '· https://raw.githubusercontent.com/.../plugin_index.json',
-                  style: TextStyle(fontSize: 11, fontFamily: 'Consolas, monospace',
-                    color: isDark ? const Color(0xFF70E070) : const Color(0xFF2E7D32))),
-                const SizedBox(height: 6),
-                Text('索引格式：JSON 文件，顶层包含 name 与 plugins 数组（与官方仓库 plugins/plugin_index.json 一致）',
-                  style: TextStyle(fontSize: 10.5, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
-              ]),
             ),
           ]),
           actions: [
@@ -707,27 +671,11 @@ class _PluginPageState extends State<PluginPage> {
           title: const Text('从链接导入插件'),
           constraints: const BoxConstraints(maxWidth: 520),
           content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('粘贴任意 GitHub 链接：插件包 zip 直链、插件仓库、或 Release 页面',
-              style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
-            const SizedBox(height: 12),
             TextBox(
               controller: urlCtrl,
               placeholder: 'https://github.com/作者名/插件名 或 .../releases 或 .../xxx.zip',
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
               onChanged: (_) => setDialogState(() {}),
-            ),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF1A1A30) : const Color(0xFFF5F5FF),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text('· 插件仓库：仓库根目录含 manifest.json 即视为单个插件，整包下载\n'
-                '· Release 页面：自动下载最新 Release 的 zip 资产\n'
-                '· zip 直链：直接下载安装',
-                style: TextStyle(fontSize: 11,
-                  color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
             ),
             if (resultError != null) ...[
               const SizedBox(height: 10),

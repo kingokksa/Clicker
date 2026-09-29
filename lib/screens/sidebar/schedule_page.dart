@@ -24,9 +24,6 @@ class SchedulePage extends StatelessWidget {
           const SizedBox(width: 10),
           const Text('定时任务', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
         ]),
-        const SizedBox(height: 6),
-        Text('到点自动执行动作：先配置动作与时间，再打开「启用」开关布防',
-          style: TextStyle(fontSize: 12, color: subColor)),
         const SizedBox(height: 16),
         Row(children: [
           Expanded(child: Text('共 ${tasks.length} 个任务', style: TextStyle(fontSize: 13, color: subColor))),
@@ -44,7 +41,7 @@ class SchedulePage extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 48),
             child: Center(
-              child: Text('还没有任务，点右上角「添加任务」新建一个',
+              child: Text('还没有任务',
                 style: TextStyle(fontSize: 13, color: subColor)),
             ),
           ),

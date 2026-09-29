@@ -10,7 +10,6 @@ class BackgroundExecutionPlugin extends Plugin {
     name: '后台执行',
     version: '1.0.0',
     author: 'Clicker',
-    description: '向指定窗口后台发送输入，不抢占前台焦点',
     category: 'click',
     platforms: ['windows'],
     runtime: PluginRuntime.dart,
