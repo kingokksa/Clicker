@@ -195,6 +195,49 @@ void main() {
     });
   });
 
+  group('参数别名', () {
+    test('normalizeArgs 把别名改写成规范名', () {
+      expect(normalizeArgs(aliasSchemaForTest, {'width': 100}),
+          {'regionWidth': 100});
+    });
+    test('同时传别名与规范名时规范名优先', () {
+      expect(
+          normalizeArgs(
+              aliasSchemaForTest, {'regionWidth': 1, 'width': 2}),
+          {'regionWidth': 1});
+    });
+    test('没有命中别名时原样返回同一个对象', () {
+      const args = {'regionWidth': 5};
+      expect(identical(normalizeArgs(aliasSchemaForTest, args), args), isTrue);
+    });
+    test('schema 未声明别名时原样返回', () {
+      const args = {'width': 5};
+      expect(identical(normalizeArgs(objSchemaForTest, args), args), isTrue);
+    });
+    test('aliasesFor 反查别名', () {
+      expect(aliasesFor(aliasSchemaForTest, 'regionWidth'), ['width']);
+      expect(aliasesFor(aliasSchemaForTest, 'regionX'), isEmpty);
+      expect(aliasesFor(objSchemaForTest, 'x'), isEmpty);
+    });
+    test('缺少必填参数时一并列出别名', () {
+      final errors = validateAgainstSchema(aliasSchemaForTest, const {});
+      expect(errors.first, contains('regionWidth'));
+      expect(errors.first, contains('width'));
+    });
+    test('无别名时缺失提示不含别名括号', () {
+      final errors = validateAgainstSchema(objSchemaForTest, const {});
+      expect(errors.first, contains('缺少必填参数 "x"'));
+      expect(errors.first, isNot(contains('别名')));
+    });
+    test('describeSchemaParams 列出全部参数名', () {
+      expect(describeSchemaParams(aliasSchemaForTest), 'regionWidth, width');
+    });
+    test('describeSchemaParams 对空参数表给出提示', () {
+      expect(describeSchemaParams({'properties': <String, dynamic>{}}),
+          contains('无参数'));
+    });
+  });
+
   group('ApiError', () {
     test('工厂设置对应 code', () {
       expect(ApiError.invalidArgument('m').code, 'invalid_argument');
@@ -214,6 +257,17 @@ void main() {
 }
 
 enum _Mode { single, double }
+
+final Map<String, dynamic> aliasSchemaForTest = {
+  'type': 'object',
+  'properties': {
+    'regionWidth': {'type': 'integer'},
+    'width': {'type': 'integer'},
+  },
+  'required': ['regionWidth'],
+  'additionalProperties': false,
+  'x-aliases': {'width': 'regionWidth'},
+};
 
 final Map<String, dynamic> objSchemaForTest = {
   'type': 'object',

@@ -145,6 +145,37 @@ String describeValue(dynamic v) {
   return v.toString();
 }
 
+Map<String, dynamic> normalizeArgs(
+    Map<String, dynamic> schema, Map<String, dynamic> args) {
+  final aliases = asMap(schema['x-aliases']);
+  if (aliases == null || aliases.isEmpty) return args;
+  var hit = false;
+  final out = Map<String, dynamic>.from(args);
+  for (final e in aliases.entries) {
+    if (!out.containsKey(e.key)) continue;
+    final to = e.value.toString();
+    if (!out.containsKey(to)) out[to] = out[e.key];
+    out.remove(e.key);
+    hit = true;
+  }
+  return hit ? out : args;
+}
+
+List<String> aliasesFor(Map<String, dynamic> schema, String canonical) {
+  final aliases = asMap(schema['x-aliases']);
+  if (aliases == null) return const [];
+  return [
+    for (final e in aliases.entries)
+      if (e.value.toString() == canonical) e.key,
+  ];
+}
+
+String describeSchemaParams(Map<String, dynamic> schema) {
+  final props = asMap(schema['properties']) ?? const <String, dynamic>{};
+  if (props.isEmpty) return '（无参数）';
+  return props.keys.join(', ');
+}
+
 List<String> validateAgainstSchema(
     Map<String, dynamic> schema, Map<String, dynamic> instance) {
   final errors = <String>[];
@@ -154,7 +185,10 @@ List<String> validateAgainstSchema(
     for (final e in reqRaw) {
       final key = e.toString();
       if (!instance.containsKey(key)) {
-        errors.add('缺少必填参数 "$key"');
+        final alias = aliasesFor(schema, key);
+        errors.add(alias.isEmpty
+            ? '缺少必填参数 "$key"'
+            : '缺少必填参数 "$key"（别名：${alias.join(' / ')}）');
       }
     }
   }
