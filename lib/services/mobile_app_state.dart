@@ -18,6 +18,7 @@ import '../services/hotkey_service.dart';
 import '../services/storage_service.dart';
 import '../services/platform/platform_input.dart';
 import '../services/platform/android_input.dart';
+import '../services/schedule_controller.dart';
 
 class MobileAppState extends ChangeNotifier {
   static const _platformChannel = MethodChannel('com.clicker.pro/platform');
@@ -64,6 +65,9 @@ class MobileAppState extends ChangeNotifier {
 
   // Hold trigger keys
   List<HoldTriggerKey> _holdTriggerKeys = [];
+
+  // Scheduled start/stop — 与桌面端共用 ScheduleController
+  late final ScheduleController _schedules;
 
   // Getters
   ClickerConfig get clickerConfig => _clickerConfig;
@@ -278,6 +282,10 @@ class MobileAppState extends ChangeNotifier {
       // Load hold trigger keys
       _holdTriggerKeys = _storage.loadHoldTriggerKeys();
 
+      // Scheduled auto-start / auto-stop（与桌面端共用 ScheduleController）
+      _initScheduleController();
+      _schedules.start();
+
       _isInitialized = true;
       notifyListeners();
 
@@ -310,6 +318,28 @@ class MobileAppState extends ChangeNotifier {
   }
 
   void stopClicker() => _clickService.stop();
+
+  // ─── Scheduled Start / Stop ───────────────────────────────
+  // 与桌面端共用 ScheduleController（同一份布防 / 触发逻辑）。
+
+  void _initScheduleController() {
+    _schedules = ScheduleController(
+      readSchedules: () => _clickerConfig.schedules,
+      writeSchedules: (list) =>
+          setClickerConfig(_clickerConfig.copyWith(schedules: list)),
+      actions: _MobileScheduleActions(this),
+    );
+  }
+
+  /// 新增一个定时任务（默认：启动连点，每天 08:00）。
+  void addSchedule() => _schedules.add();
+
+  /// 删除指定下标的定时任务。
+  void removeScheduleAt(int index) => _schedules.removeAt(index);
+
+  /// 更新指定下标的定时任务。[rearm] 为 true 时重新布防。
+  void updateScheduleAt(int index, ClickerSchedule ns, {bool rearm = false}) =>
+      _schedules.updateAt(index, ns, rearm: rearm);
 
   void emergencyStop() {
     _clickService.stop();
@@ -663,9 +693,38 @@ class MobileAppState extends ChangeNotifier {
 
   @override
   void dispose() {
+    _schedules.dispose();
     _clickService.dispose();
     _macroService.dispose();
     _hotkeyService.dispose();
     super.dispose();
+  }
+}
+
+/// MobileAppState 的定时任务动作出口 — 把共享调度器的动作转发到本端服务。
+class _MobileScheduleActions extends ScheduleActions {
+  const _MobileScheduleActions(this.state);
+
+  final MobileAppState state;
+
+  @override
+  void startClick() {
+    if (!state._clickService.isRunning) state._clickService.start();
+  }
+
+  @override
+  void stopClick() {
+    if (state._clickService.isRunning) state._clickService.stop();
+  }
+
+  @override
+  void playMacro(String? macroId) {
+    final macro = state._macros.where((m) => m.id == macroId).firstOrNull;
+    if (macro != null) state._macroService.playMacro(macro);
+  }
+
+  @override
+  void stopMacro() {
+    if (state._macroService.isPlaying) state._macroService.stopPlayback();
   }
 }

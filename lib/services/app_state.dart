@@ -26,6 +26,7 @@ import '../services/platform/windows_input.dart';
 import '../services/platform/android_input.dart';
 import '../services/platform/linux_input.dart';
 import '../services/system_tray_service.dart';
+import '../services/schedule_controller.dart';
 import 'package:window_manager/window_manager.dart';
 
 class AppState extends ChangeNotifier {
@@ -65,8 +66,9 @@ class AppState extends ChangeNotifier {
   String _macroError = '';
   bool _isInitialized = false;
 
-  // Scheduled start/stop
-  Timer? _scheduleTimer;
+  // Scheduled start/stop — 逻辑由 ScheduleController 承载（移动端共用），
+  // 这里只持有实例并把读写/动作回调接到本 state。
+  late final ScheduleController _schedules;
 
   /// 高频点击计数走独立 notifier — 不触发全页 notifyListeners。
   /// 连点运行时计数每 500ms 刷新，若走全局广播会让所有 watch
@@ -315,8 +317,9 @@ class AppState extends ChangeNotifier {
 
       _hotkeyService.start();
 
-      // Scheduled auto-start / auto-stop
-      _startScheduleTimer();
+      // Scheduled auto-start / auto-stop（与移动端共用 ScheduleController）
+      _initScheduleController();
+      _schedules.start();
 
       // Load hold trigger keys
       _holdTriggerKeys = _storage.loadHoldTriggerKeys();
@@ -613,94 +616,27 @@ class AppState extends ChangeNotifier {
   }
 
   // ─── Scheduled Start / Stop ───────────────────────────────
+  // 调度逻辑在 ScheduleController（移动端共用同一份），这里只做转发 + 落盘。
 
-  void _startScheduleTimer() {
-    _scheduleTimer?.cancel();
-    _scheduleTimer = Timer.periodic(
-      const Duration(seconds: 5),
-      (_) => _checkSchedules(),
+  /// 构造调度器。必须在 init 里各服务创建完成后调用。
+  void _initScheduleController() {
+    _schedules = ScheduleController(
+      readSchedules: () => _clickerConfig.schedules,
+      writeSchedules: (list) =>
+          setClickerConfig(_clickerConfig.copyWith(schedules: list)),
+      actions: _AppScheduleActions(this),
     );
   }
 
   /// 新增一个定时任务（默认：启动连点，每天 08:00）。
-  void addSchedule() {
-    final s = ClickerSchedule(
-      id: ClickerSchedule.newId(),
-      action: ScheduleAction.startClick,
-      hour: 8,
-      minute: 0,
-    );
-    setClickerConfig(_clickerConfig.copyWith(schedules: [..._clickerConfig.schedules, s]));
-  }
+  void addSchedule() => _schedules.add();
 
   /// 删除指定下标的定时任务。
-  void removeScheduleAt(int index) {
-    if (index < 0 || index >= _clickerConfig.schedules.length) return;
-    final list = [..._clickerConfig.schedules]..removeAt(index);
-    setClickerConfig(_clickerConfig.copyWith(schedules: list));
-  }
+  void removeScheduleAt(int index) => _schedules.removeAt(index);
 
-  /// 更新指定下标的定时任务。[rearm] 为 true（启用开关或改动时间）时重新布防：
-  /// clock 取下一个 hh:mm 时刻（已过则顺延到明天，不会立即触发），
-  /// countdown 取 当前时刻 + afterMinutes。
-  void updateScheduleAt(int index, ClickerSchedule ns, {bool rearm = false}) {
-    if (index < 0 || index >= _clickerConfig.schedules.length) return;
-    if (rearm && ns.enabled) {
-      ns = ns.copyWith(fireAtEpochMs: _armTime(ns));
-    }
-    final list = [..._clickerConfig.schedules];
-    list[index] = ns;
-    setClickerConfig(_clickerConfig.copyWith(schedules: list));
-  }
-
-  /// 计算布防时刻（epoch ms）。
-  int _armTime(ClickerSchedule s) {
-    final now = DateTime.now();
-    if (s.timing == ScheduleTiming.countdown) {
-      return now.millisecondsSinceEpoch + s.afterMinutes * 60000;
-    }
-    var target = DateTime(now.year, now.month, now.day, s.hour, s.minute);
-    if (!target.isAfter(now)) {
-      // 今天的时刻已过 — 顺延到明天，避免「一开开关就立即触发」
-      target = DateTime(now.year, now.month, now.day + 1, s.hour, s.minute);
-    }
-    return target.millisecondsSinceEpoch;
-  }
-
-  void _checkSchedules() {
-    for (var i = 0; i < _clickerConfig.schedules.length; i++) {
-      _checkScheduleAt(i, _clickerConfig.schedules[i]);
-    }
-  }
-
-  void _checkScheduleAt(int index, ClickerSchedule s) {
-    if (!s.enabled || s.fireAtEpochMs == 0) return;
-    if (DateTime.now().millisecondsSinceEpoch < s.fireAtEpochMs) return;
-
-    _fireSchedule(s);
-
-    if (s.timing == ScheduleTiming.countdown || s.repeat == ScheduleRepeat.once) {
-      // 一次性：触发后停用
-      updateScheduleAt(index, s.copyWith(enabled: false, fireAtEpochMs: 0));
-    } else {
-      // 每天：触发后布防到明天同一时刻
-      updateScheduleAt(index, s.copyWith(fireAtEpochMs: _armTime(s)));
-    }
-  }
-
-  void _fireSchedule(ClickerSchedule s) {
-    switch (s.action) {
-      case ScheduleAction.startClick:
-        if (!_clickService.isRunning) _clickService.start();
-      case ScheduleAction.stopClick:
-        if (_clickService.isRunning) _clickService.stop();
-      case ScheduleAction.playMacro:
-        final macro = _macros.where((m) => m.id == s.macroId).firstOrNull;
-        if (macro != null) _macroService.playMacro(macro);
-      case ScheduleAction.stopMacro:
-        if (_macroService.isPlaying) _macroService.stopPlayback();
-    }
-  }
+  /// 更新指定下标的定时任务。[rearm] 为 true（启用开关或改动时间）时重新布防。
+  void updateScheduleAt(int index, ClickerSchedule ns, {bool rearm = false}) =>
+      _schedules.updateAt(index, ns, rearm: rearm);
 
   // ─── Import / Export ──────────────────────────────────────
 
@@ -746,7 +682,7 @@ class AppState extends ChangeNotifier {
 
   @override
   void dispose() {
-    _scheduleTimer?.cancel();
+    _schedules.dispose();
     _clickService.dispose();
     _macroService.dispose();
     _hotkeyService.dispose();
@@ -866,5 +802,33 @@ class AppState extends ChangeNotifier {
 
   void _unregisterHoldTriggerKeys() {
     _platformInput.invokeMethod('unregisterHoldTriggerKeys');
+  }
+}
+
+/// AppState 的定时任务动作出口 — 把 ScheduleController 的动作转发到桌面各服务。
+class _AppScheduleActions extends ScheduleActions {
+  const _AppScheduleActions(this.state);
+
+  final AppState state;
+
+  @override
+  void startClick() {
+    if (!state._clickService.isRunning) state._clickService.start();
+  }
+
+  @override
+  void stopClick() {
+    if (state._clickService.isRunning) state._clickService.stop();
+  }
+
+  @override
+  void playMacro(String? macroId) {
+    final macro = state._macros.where((m) => m.id == macroId).firstOrNull;
+    if (macro != null) state._macroService.playMacro(macro);
+  }
+
+  @override
+  void stopMacro() {
+    if (state._macroService.isPlaying) state._macroService.stopPlayback();
   }
 }
