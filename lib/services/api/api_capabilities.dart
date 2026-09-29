@@ -740,6 +740,8 @@ List<ApiAction> _visionActions() => [
                 min: 0, max: 1, def: 0.85),
           },
           const ['x', 'y', 'width', 'height', 'name'],
+          false,
+          absoluteAliases,
         ),
         handler: (args) async {
           final x = requireInt(args, 'x');
@@ -784,7 +786,7 @@ List<ApiAction> _visionActions() => [
           'regionHeight': intField('搜索区域高度，默认整屏'),
           'threshold': numField('覆盖模板自带的匹配阈值 0~1', min: 0, max: 1),
           'scales': _scalesField(),
-        }),
+        }, const [], false, regionAliases),
         handler: (args) async {
           final template = await _resolveTemplate(args);
           final (rx, ry, rw, rh) = await _resolveRegion(args);
@@ -825,7 +827,7 @@ List<ApiAction> _visionActions() => [
           'threshold': numField('覆盖模板自带的匹配阈值 0~1', min: 0, max: 1),
           'maxResults': intField('最多返回多少个匹配', def: 10, min: 1, max: 200),
           'scales': _scalesField(),
-        }),
+        }, const [], false, regionAliases),
         handler: (args) async {
           final template = await _resolveTemplate(args);
           final (rx, ry, rw, rh) = await _resolveRegion(args);
@@ -864,7 +866,7 @@ List<ApiAction> _visionActions() => [
           'timeoutMs': intField('最长等待毫秒数', def: 10000, min: 100, max: 600000),
           'intervalMs': intField('两次查找之间的间隔毫秒数', def: 200, min: 20, max: 60000),
           'scales': _scalesField(),
-        }),
+        }, const [], false, regionAliases),
         handler: (args) async {
           final template = await _resolveTemplate(args);
           final (rx, ry, rw, rh) = await _resolveRegion(args);
@@ -904,11 +906,18 @@ List<ApiAction> _visionActions() => [
             'tolerance': intField('每个通道允许的偏差', def: 10, min: 0, max: 255),
           },
           const ['hex'],
+          false,
+          const {
+            'color': 'hex',
+            'colour': 'hex',
+            ...regionAliases,
+          },
         ),
         handler: (args) async {
           final color = _parseHexColor(requireString(args, 'hex'));
           if (color == null) {
-            throw ApiError.invalidArgument('hex 不是合法的颜色，示例：#FF0000');
+            throw ApiError.invalidArgument('hex 不是合法的颜色，示例：#FF0000',
+                hint: '也可用别名 color / colour 传入同一个值');
           }
           final (rx, ry, rw, rh) = await _resolveRegion(args);
           final hit = await VisionService.instance.findColor(
@@ -944,7 +953,7 @@ List<ApiAction> _visionActions() => [
           'width': intField('区域宽度，默认整屏'),
           'height': intField('区域高度，默认整屏'),
           'language': strField('识别语言', def: 'zh-Hans-CN'),
-        }),
+        }, const [], false, absoluteAliases),
         handler: (args) async {
           final size = await VisionService.instance.getScreenSize();
           final x = optionalInt(args, 'x', 0);
@@ -1000,6 +1009,8 @@ List<ApiAction> _visionActions() => [
         inputSchema: objSchema(
           {'x': intField('屏幕 X 坐标'), 'y': intField('屏幕 Y 坐标')},
           const ['x', 'y'],
+          false,
+          absoluteAliases,
         ),
         handler: (args) async {
           final x = requireInt(args, 'x');
@@ -1035,7 +1046,7 @@ List<ApiAction> _visionActions() => [
           'y': intField('区域左上角 Y', def: 0),
           'width': intField('区域宽度，默认整屏'),
           'height': intField('区域高度，默认整屏'),
-        }),
+        }, const [], false, absoluteAliases),
         handler: (args) async {
           final size = await VisionService.instance.getScreenSize();
           final x = optionalInt(args, 'x', 0);
@@ -1169,7 +1180,7 @@ List<ApiAction> _visionActions() => [
           'width': intField('区域宽度，默认整屏'),
           'height': intField('区域高度，默认整屏'),
           'maxWidth': intField('等比缩小到不超过这个宽度，0 表示不缩放', def: 0, min: 0, max: 8192),
-        }),
+        }, const [], false, absoluteAliases),
         handler: (args) async {
           final size = await VisionService.instance.getScreenSize();
           final png = await VisionService.instance.capturePng(
@@ -1209,7 +1220,7 @@ List<ApiAction> _visionActions() => [
           'maxElements': intField('最多编号多少个控件', def: 60, min: 1, max: 200),
           'maxWidth': intField('等比缩小到不超过这个宽度，0 表示不缩放', def: 0, min: 0, max: 8192),
           'hwnd': intField('只枚举这个窗口句柄的子树，0 表示整个桌面', def: 0),
-        }),
+        }, const [], false, absoluteAliases),
         handler: (args) async {
           final result = await VisionService.instance.setOfMark(
             x: optionalInt(args, 'x', 0),

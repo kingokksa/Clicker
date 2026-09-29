@@ -100,6 +100,55 @@ void main() {
       expect(f['required'], ['a']);
       expect(f['additionalProperties'], isFalse);
     });
+    test('objSchema 无别名时不写 x-aliases', () {
+      expect(objSchema({'x': intField('x')}).containsKey('x-aliases'), isFalse);
+    });
+    test('objSchema 把别名写进 properties 与 x-aliases', () {
+      final s = objSchema({'regionWidth': intField('区域宽度')}, const [], false,
+          const {'width': 'regionWidth'});
+      final props = s['properties'] as Map<String, dynamic>;
+      expect(props.keys, containsAll(['regionWidth', 'width']));
+      expect((props['width'] as Map)['type'], 'integer');
+      expect((props['width'] as Map)['description'], contains('别名'));
+      expect(s['x-aliases'], {'width': 'regionWidth'});
+    });
+    test('objSchema 别名不覆盖已存在的同名参数', () {
+      final s = objSchema(
+          {'width': intField('本名'), 'regionWidth': intField('区域宽度')},
+          const [],
+          false,
+          const {'width': 'regionWidth'});
+      expect((s['properties'] as Map)['width']['description'], '本名');
+    });
+    test('objSchema 别名指向不存在的参数时既不入 properties 也不入 x-aliases', () {
+      final s = objSchema({'x': intField('x')}, const [], false,
+          const {'y': 'nope'});
+      expect((s['properties'] as Map).containsKey('y'), isFalse);
+      expect(s.containsKey('x-aliases'), isFalse);
+    });
+    test('objSchema 只登记目标参数存在的别名', () {
+      final s = objSchema(
+          {'x': intField('x'), 'y': intField('y')},
+          const [],
+          false,
+          const {'regionX': 'x', 'regionY': 'y', 'regionWidth': 'width'});
+      final props = (s['properties'] as Map).cast<String, dynamic>();
+      expect(props.containsKey('regionX'), isTrue);
+      expect(props.containsKey('regionWidth'), isFalse);
+      expect(s['x-aliases'], {'regionX': 'x', 'regionY': 'y'});
+    });
+    test('regionAliases 把 x/y/width/height 指向 region*', () {
+      expect(regionAliases['x'], 'regionX');
+      expect(regionAliases['y'], 'regionY');
+      expect(regionAliases['width'], 'regionWidth');
+      expect(regionAliases['height'], 'regionHeight');
+    });
+    test('absoluteAliases 把 region* 指向 x/y/width/height', () {
+      expect(absoluteAliases['regionX'], 'x');
+      expect(absoluteAliases['regionY'], 'y');
+      expect(absoluteAliases['regionWidth'], 'width');
+      expect(absoluteAliases['regionHeight'], 'height');
+    });
   });
 
   group('ApiAction', () {
@@ -203,6 +252,45 @@ void main() {
             inputSchema: objSchema({'x': intField('x')}, ['x']),
             handler: (args) async => {'type': args['x'].runtimeType.toString()}));
       expect(await r.call('demo_run', const {'x': '7'}), {'type': 'String'});
+    });
+    test('校验失败时 hint 列出该能力接受的参数', () async {
+      final r = ApiActionRegistry()
+        ..register(_action(
+            inputSchema: objSchema({'x': intField('x')}, ['x'])));
+      final e = await _captureAsync(() => r.call('demo_run', const {}));
+      expect(e.hint, contains('demo_run'));
+      expect(e.hint, contains('x'));
+    });
+    test('别名参数被规范化后交给 handler', () async {
+      final r = ApiActionRegistry()
+        ..register(_action(
+            inputSchema: objSchema(
+                {'regionWidth': intField('宽')}, const [], false,
+                const {'width': 'regionWidth'}),
+            handler: (args) async => {
+                  'w': args['regionWidth'],
+                  'hasAlias': args.containsKey('width'),
+                }));
+      expect(await r.call('demo_run', const {'width': 42}),
+          {'w': 42, 'hasAlias': false});
+    });
+    test('别名可满足 required 校验', () async {
+      final r = ApiActionRegistry()
+        ..register(_action(
+            inputSchema: objSchema({'hex': strField('颜色')}, ['hex'], false,
+                const {'color': 'hex'}),
+            handler: (args) async => {'hex': args['hex']}));
+      expect(await r.call('demo_run', const {'color': '#FF0000'}),
+          {'hex': '#FF0000'});
+    });
+    test('同时传别名与规范名时规范名生效', () async {
+      final r = ApiActionRegistry()
+        ..register(_action(
+            inputSchema: objSchema({'hex': strField('颜色')}, ['hex'], false,
+                const {'color': 'hex'}),
+            handler: (args) async => {'hex': args['hex']}));
+      expect(await r.call('demo_run', const {'hex': '#111111', 'color': '#222222'}),
+          {'hex': '#111111'});
     });
     test('handler 抛出的 ApiError 原样上抛', () async {
       final r = ApiActionRegistry()

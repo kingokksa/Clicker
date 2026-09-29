@@ -9,13 +9,42 @@ Map<String, dynamic> objSchema(
   Map<String, dynamic> properties, [
   List<String> required = const [],
   bool allowExtra = false,
-]) =>
-    {
-      'type': 'object',
-      'properties': properties,
-      if (required.isNotEmpty) 'required': required,
-      'additionalProperties': allowExtra,
+  Map<String, String> aliases = const {},
+]) {
+  final props = Map<String, dynamic>.from(properties);
+  final effective = <String, String>{};
+  for (final e in aliases.entries) {
+    if (props.containsKey(e.key)) continue;
+    final target = props[e.value];
+    if (target is! Map) continue;
+    props[e.key] = {
+      ...target.cast<String, dynamic>(),
+      'description': '${e.value} 的别名',
     };
+    effective[e.key] = e.value;
+  }
+  return {
+    'type': 'object',
+    'properties': props,
+    if (required.isNotEmpty) 'required': required,
+    'additionalProperties': allowExtra,
+    if (effective.isNotEmpty) 'x-aliases': effective,
+  };
+}
+
+const Map<String, String> regionAliases = {
+  'x': 'regionX',
+  'y': 'regionY',
+  'width': 'regionWidth',
+  'height': 'regionHeight',
+};
+
+const Map<String, String> absoluteAliases = {
+  'regionX': 'x',
+  'regionY': 'y',
+  'regionWidth': 'width',
+  'regionHeight': 'height',
+};
 
 Map<String, dynamic> strField(String description,
         {String? def, List<String>? enumValues}) =>
@@ -160,12 +189,13 @@ class ApiActionRegistry {
       throw ApiError.notFound('未知能力 "$name"',
           hint: '调用 system_capabilities 可获取全部能力清单');
     }
-    final errors = validateAgainstSchema(action.inputSchema, args);
+    final normalized = normalizeArgs(action.inputSchema, args);
+    final errors = validateAgainstSchema(action.inputSchema, normalized);
     if (errors.isNotEmpty) {
       throw ApiError.invalidArgument(errors.join('；'),
-          hint: '参数名区分大小写；参考 system_capabilities 中 "${action.name}" 的 inputSchema');
+          hint: '${action.name} 接受的参数：${describeSchemaParams(action.inputSchema)}');
     }
-    return await action.handler(args);
+    return await action.handler(normalized);
   }
 
   Map<String, dynamic> describeAll() => {

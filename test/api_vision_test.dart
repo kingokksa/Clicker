@@ -267,4 +267,172 @@ void main() {
       }
     });
   });
+
+  group('参数别名', () {
+    const regionAliasActions = [
+      'vision_find_image',
+      'vision_find_image_all',
+      'vision_wait_image',
+      'vision_find_color',
+    ];
+    const absoluteAliasActions = [
+      'vision_capture_template',
+      'vision_ocr',
+      'vision_get_pixel',
+      'vision_screenshot',
+      'vision_screenshot_png',
+      'vision_set_of_mark',
+    ];
+
+    Map<String, dynamic> schemaOf(String n) => registry.find(n)!.inputSchema;
+
+    Map<String, String> aliasesOf(String n) =>
+        ((schemaOf(n)['x-aliases'] as Map?) ?? const {}).cast<String, String>();
+
+    Map<String, dynamic> propsOf(String n) =>
+        (schemaOf(n)['properties'] as Map).cast<String, dynamic>();
+
+    List<String> requiredOf(String n) =>
+        ((schemaOf(n)['required'] as List?) ?? const []).cast<String>();
+
+    Map<String, dynamic> extrasFor(String n, Set<String> covered) {
+      final props = propsOf(n);
+      final out = <String, dynamic>{};
+      for (final r in requiredOf(n)) {
+        if (covered.contains(r)) continue;
+        final type = (props[r] as Map?)?['type'];
+        out[r] = type == 'integer'
+            ? 1
+            : type == 'number'
+                ? 1.0
+                : type == 'boolean'
+                    ? true
+                    : 'x';
+      }
+      return out;
+    }
+
+    List<String> validateAliases(String n, Map<String, dynamic> args) {
+      final normalized = normalizeArgs(schemaOf(n), args);
+      return validateAgainstSchema(schemaOf(n),
+          {...normalized, ...extrasFor(n, normalized.keys.toSet())});
+    }
+
+    void checkAliases(String n, Map<String, String> expected) {
+      final aliases = aliasesOf(n);
+      for (final e in expected.entries) {
+        expect(aliases[e.key], e.value, reason: '$n 未声明别名 ${e.key} → ${e.value}');
+      }
+      final normalized = normalizeArgs(
+          schemaOf(n), {for (final k in expected.keys) k: 7});
+      for (final e in expected.entries) {
+        expect(normalized[e.value], 7,
+            reason: '$n: ${e.key} 未规范化为 ${e.value}');
+        expect(normalized.containsKey(e.key), isFalse,
+            reason: '$n: 别名 ${e.key} 未被消费');
+      }
+    }
+
+    test('区域类能力把 x/y/width/height 声明为 region* 的别名', () {
+      for (final n in regionAliasActions) {
+        checkAliases(n, regionAliases);
+      }
+    });
+
+    test('绝对坐标类能力把 region* 声明为 x/y/width/height 的别名', () {
+      for (final n in absoluteAliasActions) {
+        final props = propsOf(n);
+        final expected = {
+          for (final e in absoluteAliases.entries)
+            if (props.containsKey(e.value)) e.key: e.value,
+        };
+        expect(expected, isNotEmpty, reason: '$n 一个 region* 别名都没声明');
+        checkAliases(n, expected);
+      }
+    });
+
+    test('vision_find_color 把 color / colour 声明为 hex 的别名', () {
+      final schema = schemaOf('vision_find_color');
+      expect(aliasesOf('vision_find_color')['color'], 'hex');
+      expect(aliasesOf('vision_find_color')['colour'], 'hex');
+      for (final a in const ['color', 'colour']) {
+        final normalized = normalizeArgs(schema, {a: '#FF0000'});
+        expect(normalized['hex'], '#FF0000', reason: '$a 未规范化为 hex');
+        expect(validateAgainstSchema(schema, normalized), isEmpty,
+            reason: '$a 规范化后未通过校验');
+      }
+    });
+
+    test('别名参数能通过真实 schema 的校验', () {
+      for (final n in regionAliasActions) {
+        expect(
+            validateAliases(
+                n, const {'x': 1, 'y': 2, 'width': 3, 'height': 4}),
+            isEmpty,
+            reason: '$n 的 x/y/width/height 别名未通过校验');
+      }
+      expect(validateAliases('vision_get_pixel', const {'regionX': 1, 'regionY': 2}),
+          isEmpty,
+          reason: 'vision_get_pixel 的 regionX/regionY 别名未通过校验');
+      expect(
+          validateAliases('vision_ocr', const {
+            'regionX': 1,
+            'regionY': 2,
+            'regionWidth': 3,
+            'regionHeight': 4,
+          }),
+          isEmpty,
+          reason: 'vision_ocr 的 region* 别名未通过校验');
+      expect(
+          validateAliases('vision_capture_template', const {
+            'regionX': 1,
+            'regionY': 2,
+            'regionWidth': 3,
+            'regionHeight': 4,
+          }),
+          isEmpty,
+          reason: 'vision_capture_template 的 region* 别名未通过校验');
+    });
+
+    test('原始参数名仍然有效且不被改写', () {
+      for (final n in regionAliasActions) {
+        const args = {'regionX': 5, 'regionWidth': 6};
+        expect(normalizeArgs(schemaOf(n), args), args);
+        expect(validateAliases(n, args), isEmpty,
+            reason: '$n 的原始 region* 参数名失效了');
+      }
+    });
+
+    test('vision_get_pixel 不把 regionWidth 改写成未声明的 width', () {
+      final schema = schemaOf('vision_get_pixel');
+      expect(propsOf('vision_get_pixel').containsKey('width'), isFalse);
+      expect(aliasesOf('vision_get_pixel').containsKey('regionWidth'), isFalse);
+      expect(
+          normalizeArgs(schema, const {'regionX': 1})['width'], isNull);
+    });
+
+    test('校验失败时 hint 列出可接受参数（含别名）', () async {
+      try {
+        await registry.call('vision_find_image', const {'zzz': 1});
+        fail('应当抛出 ApiError');
+      } on ApiError catch (e) {
+        expect(e.code, 'invalid_argument');
+        expect(e.message.contains('未知参数'), isTrue);
+        expect(e.hint, contains('regionWidth'));
+        expect(e.hint, contains('width'));
+      }
+    });
+
+    test('用别名调用能力不会被参数校验拦下', () async {
+      try {
+        await registry.call('vision_find_color', const {'color': 'zzz'});
+        fail('应当抛出 ApiError');
+      } on ApiError catch (e) {
+        expect(e.code, 'invalid_argument');
+        expect(e.message.contains('hex'), isTrue,
+            reason: '应当报颜色非法，而不是报缺少 hex');
+        expect(e.message.contains('缺少必填参数'), isFalse);
+      }
+    });
+  });
 }
