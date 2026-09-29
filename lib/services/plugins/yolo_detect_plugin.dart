@@ -20,7 +20,7 @@ class YoloDetectPlugin extends VisionPlugin {
   final VisionPluginInfo info = const VisionPluginInfo(
     id: 'yolo_detect',
     name: 'YOLO目标检测',
-    description: '基于ONNX Runtime的YOLO11n目标检测，需下载模型',
+    description: '内置 YOLOX-Nano 目标检测（COCO 80 类），无需下载',
     version: '1.0.0',
     author: 'Clicker',
     capabilities: [VisionCapability.objectDetect],
@@ -63,7 +63,7 @@ class YoloDetectPlugin extends VisionPlugin {
 
     // 检查模型文件是否存在（不自动下载）
     if (await _findModelPathLocal() == null) {
-      debugPrint('[YoloDetectPlugin] YOLO模型文件未找到，请在高级模型中安装');
+      debugPrint('[YoloDetectPlugin] 检测模型文件未找到，请在高级模型中安装');
       _available = false;
       return false;
     }
@@ -99,12 +99,14 @@ class YoloDetectPlugin extends VisionPlugin {
     if (!modelLoaded) {
       final modelPath = await _findModelPath();
       if (modelPath == null) {
-        debugPrint('[YoloDetectPlugin] YOLO模型文件未找到');
+        debugPrint('[YoloDetectPlugin] 检测模型文件未找到');
         _available = false;
         return false;
       }
 
-      final loadParams = '{"model_path":"${modelPath.replaceAll('\\', '\\\\')}"}';
+      final bundled = modelPath.endsWith('detector.onnx');
+      final loadParams = '{"model_path":"${modelPath.replaceAll('\\', '\\\\')}"'
+          '${bundled ? ',"input_size":416,"detector":"yolox","input_scale":1.0' : ''}}';
       final loadResult = aiPlugin.executeAction('load_model', loadParams, returnOnError: true);
       if (loadResult == null || loadResult.contains('"error"')) {
         debugPrint('[YoloDetectPlugin] 模型加载失败: $loadResult');
@@ -137,16 +139,29 @@ class YoloDetectPlugin extends VisionPlugin {
     return false;
   }
 
-  /// Find model path locally (no auto-download)
+  /// Find model path locally (no auto-download).
+  /// 随包分发的 detector.onnx（YOLOX-Nano, Apache-2.0）优先于下载的 yolo11n.onnx。
   Future<String?> _findModelPathLocal() async {
+    final sep = Platform.pathSeparator;
+    final exeDir = File(Platform.resolvedExecutable).parent.path;
     final pluginDir = await AppPaths.getPluginDir('ai_tracker');
-    final modelFile = File('$pluginDir${Platform.pathSeparator}models${Platform.pathSeparator}yolo11n.onnx');
-    if (await modelFile.exists()) return modelFile.path;
 
-    final exePath = Platform.resolvedExecutable;
-    final exeDir = File(exePath).parent.path;
-    final altModel = File('$exeDir${Platform.pathSeparator}data${Platform.pathSeparator}plugins${Platform.pathSeparator}ai_tracker${Platform.pathSeparator}models${Platform.pathSeparator}yolo11n.onnx');
-    if (await altModel.exists()) return altModel.path;
+    final bundled = [
+      '$exeDir${sep}data${sep}plugins${sep}ai_tracker${sep}models${sep}detector.onnx',
+      '$exeDir${sep}plugins${sep}ai_tracker${sep}models${sep}detector.onnx',
+      '$pluginDir${sep}models${sep}detector.onnx',
+    ];
+    for (final path in bundled) {
+      if (await File(path).exists()) return path;
+    }
+
+    final downloaded = [
+      '$pluginDir${sep}models${sep}yolo11n.onnx',
+      '$exeDir${sep}data${sep}plugins${sep}ai_tracker${sep}models${sep}yolo11n.onnx',
+    ];
+    for (final path in downloaded) {
+      if (await File(path).exists()) return path;
+    }
 
     return null;
   }

@@ -16,7 +16,9 @@ import '../services/hotkey_service.dart';
 import '../services/storage_service.dart';
 import '../services/window_detect_service.dart';
 import '../services/script_engine.dart';
-import '../services/remote_control_service.dart';
+import 'api/api_action.dart';
+import 'api/api_capabilities.dart';
+import 'api/api_server.dart';
 import '../services/vision_service.dart';
 import 'plugin/plugin_api.dart';
 import 'plugin/plugin_host.dart';
@@ -43,7 +45,8 @@ class AppState extends ChangeNotifier {
   late final HotkeyService _hotkeyService;
   late final WindowDetectService _windowDetectService;
   late final ScriptEngine _scriptEngine;
-  late final RemoteControlService _remoteControlService;
+  late final ApiActionRegistry _apiRegistry;
+  late final ApiServer _apiServer;
 
   // Config
   ClickerConfig _clickerConfig = ClickerConfig();
@@ -125,12 +128,13 @@ class AppState extends ChangeNotifier {
   PlatformInput get platformInput => _platformInput;
   WindowDetectService get windowDetectService => _windowDetectService;
   ScriptEngine get scriptEngine => _scriptEngine;
-  RemoteControlService get remoteControlService => _remoteControlService;
+  ApiActionRegistry get apiRegistry => _apiRegistry;
+  ApiServer get apiServer => _apiServer;
   List<ScriptModel> get scripts => List.unmodifiable(_scripts);
   List<WindowRule> get windowRules => List.unmodifiable(_windowRules);
   List<HoldTriggerKey> get holdTriggerKeys => List.unmodifiable(_holdTriggerKeys);
   int get remoteControlPort => _remoteControlPort;
-  bool get isRemoteControlRunning => _remoteControlService.isRunning;
+  bool get isRemoteControlRunning => _apiServer.isRunning;
   bool get isWindowDetectRunning => _windowDetectService.isRunning;
   ScriptStatus get scriptStatus => _scriptEngine.status;
 
@@ -201,23 +205,8 @@ class AppState extends ChangeNotifier {
       _scriptEngine.onLog = (_) {};
       _scriptEngine.onError = (_) {};
 
-      _remoteControlService = RemoteControlService();
-      _remoteControlService.onStartClicker = () => _clickService.start();
-      _remoteControlService.onStopClicker = () => _clickService.stop();
-      _remoteControlService.onToggleClicker = () => _clickService.toggle();
-      _remoteControlService.onPlayMacro = () {
-        if (_macros.isNotEmpty && !_macroService.isPlaying) {
-          _macroService.playMacro(_macros.first);
-        }
-      };
-      _remoteControlService.onStopMacro = () => _macroService.stopPlayback();
-      _remoteControlService.onGetStatus = () => {
-        'clickerRunning': _clickerStatus == ClickerStatus.running,
-        'macroStatus': _macroStatus.name,
-        'clickCount': _clickCount,
-      };
-      _remoteControlService.onLog = (_) {};
-      _remoteControlService.onError = (_) {};
+      _apiRegistry = buildApiRegistry(this);
+      _apiServer = ApiServer(registry: _apiRegistry, port: _remoteControlPort);
 
       // Wire callbacks
       _clickService.onStatusChanged = (status, count) {
@@ -363,6 +352,10 @@ class AppState extends ChangeNotifier {
       // manual/onPage/onCommand 插件保持未激活，真正使用时才按需激活
       await PluginManager.instance.initialize();
 
+      if (_clickerConfig.remoteControlEnabled) {
+        await _apiServer.start(port: _remoteControlPort);
+      }
+
       _isInitialized = true;
       notifyListeners();
     } catch (e) {
@@ -460,9 +453,9 @@ class AppState extends ChangeNotifier {
     _clickerConfig = _clickerConfig.copyWith(remoteControlEnabled: enabled);
     _storage.saveClickerConfig(_clickerConfig);
     if (enabled) {
-      await _remoteControlService.start(port: _remoteControlPort);
+      await _apiServer.start(port: _remoteControlPort);
     } else {
-      await _remoteControlService.stop();
+      await _apiServer.stop();
     }
     notifyListeners();
   }
@@ -470,9 +463,10 @@ class AppState extends ChangeNotifier {
   /// Set remote control port
   void setRemoteControlPort(int port) {
     _remoteControlPort = port;
-    if (_remoteControlService.isRunning) {
-      _remoteControlService.stop().then((_) {
-        _remoteControlService.start(port: port);
+    _apiServer.port = port;
+    if (_apiServer.isRunning) {
+      _apiServer.stop().then((_) {
+        _apiServer.start(port: port);
       });
     }
     notifyListeners();
@@ -688,7 +682,7 @@ class AppState extends ChangeNotifier {
     _hotkeyService.dispose();
     _windowDetectService.dispose();
     _scriptEngine.dispose();
-    _remoteControlService.dispose();
+    _apiServer.dispose();
     _unregisterHoldTriggerKeys();
     super.dispose();
   }

@@ -78,6 +78,9 @@ class PluginManager extends ChangeNotifier
   final Map<String, PluginFactory> _dartFactories = {};
   final Set<String> _installedIds = {};
   final Set<String> _enabledIds = {}; // 用户启用开关
+  // 已自动启用过的内置插件。记录后不再自动打开，
+  // 这样用户显式停用的内置插件不会在下次启动被重新打开。
+  final Set<String> _knownBuiltinIds = {};
 
   /// 管理器持有的全部插件
   List<PluginDescriptor> get plugins => _plugins.values.toList();
@@ -558,6 +561,7 @@ class PluginManager extends ChangeNotifier
   Future<void> initialize() async {
     await loadState();
     await discoverExternalPlugins();
+    await _enableNewBuiltins();
     _host.pluginManagerActivator = this;
 
     for (final id in _enabledIds.toList()) {
@@ -568,6 +572,24 @@ class PluginManager extends ChangeNotifier
       }
     }
     notifyListeners();
+  }
+
+  /// 内置插件默认安装并启用，版本升级新增的内置插件无需用户手动开启。
+  /// 只处理从未记录过的插件，因此用户停用过的不会被重新打开。
+  Future<void> _enableNewBuiltins() async {
+    var changed = false;
+    for (final desc in _plugins.values) {
+      if (!desc.isBuiltin) continue;
+      if (_knownBuiltinIds.contains(desc.id)) continue;
+      _knownBuiltinIds.add(desc.id);
+      changed = true;
+      if (!_installedIds.contains(desc.id)) {
+        _installedIds.add(desc.id);
+        desc._setState(PluginState.installed);
+      }
+      _enabledIds.add(desc.id);
+    }
+    if (changed) await saveState();
   }
 
   /// 应用退出前停用全部插件
@@ -587,8 +609,10 @@ class PluginManager extends ChangeNotifier
         final json = jsonDecode(await file.readAsString());
         _installedIds.clear();
         _enabledIds.clear();
+        _knownBuiltinIds.clear();
         _installedIds.addAll((json['installed'] as List?)?.cast<String>() ?? []);
         _enabledIds.addAll((json['enabled'] as List?)?.cast<String>() ?? []);
+        _knownBuiltinIds.addAll((json['known'] as List?)?.cast<String>() ?? []);
       }
     } catch (_) {}
 
@@ -605,9 +629,10 @@ class PluginManager extends ChangeNotifier
       final file =
           File('$dir${Platform.pathSeparator}plugin_state.json');
       await file.writeAsString(jsonEncode({
-        'version': 2,
+        'version': 3,
         'installed': _installedIds.toList(),
         'enabled': _enabledIds.toList(),
+        'known': _knownBuiltinIds.toList(),
       }));
     } catch (_) {}
   }

@@ -15,6 +15,7 @@ import 'services/plugins/background_execution_plugin.dart';
 import 'services/plugins/ai_tracker_plugin.dart';
 import 'services/plugins/schedule_plugin.dart';
 import 'services/plugins/humanize_plugin.dart';
+import 'services/plugins/api_plugin.dart';
 import 'services/system_tray_service.dart';
 
 void main() async {
@@ -45,6 +46,7 @@ void _registerBuiltinPlugins() {
   pm.registerDartPlugin(AiTrackerPlugin.new);
   pm.registerDartPlugin(SchedulePlugin.new);
   pm.registerDartPlugin(HumanizePlugin.new);
+  pm.registerDartPlugin(ApiPlugin.new);
   // 原生插件声明式设置页的渲染工厂（UI 层注入）
   PluginManager.declarativePageFactory = buildDeclarativePluginPage;
 }
