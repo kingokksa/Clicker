@@ -1,6 +1,3 @@
-/// Built-in template matching plugin — uses C++ NCC algorithm via platform channel.
-/// Available on all platforms (Windows, Linux, macOS).
-library;
 
 import 'dart:io';
 import 'package:flutter/services.dart';
@@ -26,7 +23,6 @@ class TemplateMatchPlugin extends VisionPlugin {
 
   @override
   Future<bool> initialize() async {
-    // Template matching is always available via C++ platform channel
     _available = Platform.isWindows || Platform.isLinux || Platform.isMacOS;
     return _available;
   }

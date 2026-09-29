@@ -1,6 +1,3 @@
-/// Simple script engine — supports basic command sequences for automation.
-/// Commands: click, key, delay, repeat, move, scroll, type
-library;
 
 import 'dart:async';
 
@@ -67,7 +64,6 @@ class ScriptEngine {
   ScriptStatus get status => _status;
   int get currentLine => _currentLine;
 
-  // Callbacks to perform actions (set by AppState)
   Future<void> Function(int x, int y, String button)? doClick;
   Future<void> Function(int x, int y)? doMove;
   Future<void> Function(String key)? doKeyPress;
@@ -77,18 +73,6 @@ class ScriptEngine {
   Future<void> Function()? doStartClicker;
   Future<void> Function()? doStopClicker;
 
-  /// Parse a simple script text into commands
-  /// Format: one command per line
-  /// Examples:
-  ///   click 100 200 left
-  ///   key enter
-  ///   delay 500
-  ///   move 300 400
-  ///   scroll 0 3
-  ///   type Hello World 50
-  ///   repeat 3
-  ///   start_clicker
-  ///   stop_clicker
   static List<ScriptCommand> parseScript(String text) {
     final commands = <ScriptCommand>[];
     for (final line in text.split('\n')) {
@@ -155,7 +139,6 @@ class ScriptEngine {
     return commands;
   }
 
-  /// Run a script
   Future<void> run(ScriptModel script) async {
     if (_status == ScriptStatus.running) return;
     _status = ScriptStatus.running;
@@ -233,8 +216,6 @@ class ScriptEngine {
         break;
       case 'repeat':
         final count = cmd.params['count'] as int? ?? 1;
-        // Repeat the previous command N times
-        // (This is a simple repeat — just adds a delay loop)
         for (int r = 0; r < count && _status == ScriptStatus.running; r++) {
           await Future.delayed(const Duration(milliseconds: 50));
         }

@@ -1,6 +1,3 @@
-/// Home screen — Fluent NavigationView with custom title bar & glass effect.
-/// Supports window resizing via DragToResizeArea, system tray, and floating window mode.
-library;
 
 import 'dart:async';
 import 'dart:io';
@@ -19,7 +16,6 @@ import 'settings/settings_page.dart';
 import 'sidebar/plugin_page.dart';
 import 'floating_window.dart';
 
-/// 导航条目（来自已启用插件 manifest 的页面声明，静态数据零加载成本）
 class _NavItem {
   final String pageId;
   final String label;
@@ -30,7 +26,6 @@ class _NavItem {
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
-  /// Global key to access HomeScreen state for navigation
   static final GlobalKey<HomeScreenState> globalKey = GlobalKey();
 
   @override
@@ -43,24 +38,16 @@ class HomeScreenState extends State<HomeScreen> with WindowListener, TickerProvi
   bool _isMaximized = false;
   bool _isClosing = false;
 
-  /// 页面切换淡入过渡（IndexedStack 本身是瞬时切换，这里补一层柔和过渡）
   late final AnimationController _pageFade;
 
-  /// 窗口状态切换（最大化/还原）过渡动画 —— 纯 Dart 内容层，
-  /// 不触发连续 surface resize，因此不卡；受“动画效果”开关控制。
   late final AnimationController _windowTransition;
   late final Animation<double> _windowScale;
   late final Animation<double> _windowFade;
 
-  /// 插件页面 widget 缓存（激活后首次构建，切换页面不销毁）
   final Map<String, Widget> _pluginPageCache = {};
-  /// 按需激活防重入
   final Set<String> _activatingPages = {};
-  /// 导航条目缓存 — 仅在插件列表变化（启用/停用/安装）时重算，
-  /// 避免每次 build 遍历全部插件 manifest
   List<_NavItem>? _navItemsCache;
 
-  /// Navigate to a specific page by ID (e.g., 'macro', 'hold_trigger', 'settings')
   void navigateTo(String pageId) {
     if (!mounted) return;
     if (_currentPageId == pageId) return;
@@ -68,8 +55,6 @@ class HomeScreenState extends State<HomeScreen> with WindowListener, TickerProvi
     _animatePageSwitch();
   }
 
-  /// 导航条目：已启用插件 manifest 声明的页面（静态，无需激活插件）。
-  /// 点击页面时才触发插件按需激活（onPage 事件）。结果缓存。
   List<_NavItem> _navItems() {
     if (_navItemsCache != null) return _navItemsCache!;
     final pm = PluginManager.instance;
@@ -85,7 +70,6 @@ class HomeScreenState extends State<HomeScreen> with WindowListener, TickerProvi
         ));
       }
     }
-    // 按 manifest 声明的 order 排序（PageContribution 无序时保持注册顺序）
     final orders = <String, int>{};
     for (final desc in pm.plugins) {
       for (final page in desc.manifest.contributions.pages) {
@@ -118,7 +102,6 @@ class HomeScreenState extends State<HomeScreen> with WindowListener, TickerProvi
     return 'clicker';
   }
 
-  /// 页面切换入口：插件页面若未激活则触发按需激活
   void _selectPage(String pageId) {
     if (_currentPageId == pageId) return;
     setState(() => _currentPageId = pageId);
@@ -127,7 +110,6 @@ class HomeScreenState extends State<HomeScreen> with WindowListener, TickerProvi
     if (reg == null) _ensurePageActivated(pageId);
   }
 
-  /// 触发页面切换的淡入过渡；受“动画效果”开关控制。
   void _animatePageSwitch() {
     if (!context.read<AppState>().uiAnimations) return;
     _pageFade.forward(from: 0.0);
@@ -141,9 +123,6 @@ class HomeScreenState extends State<HomeScreen> with WindowListener, TickerProvi
     });
   }
 
-  /// 构建页面内容。插件页面优先从 PluginHost 取已注册 builder；
-  /// 未注册（插件未激活）时显示加载占位并触发按需激活，
-  /// 激活完成后 PluginHost 通知重建，即可渲染真实页面。
   Widget _buildPageContent(String pageId) {
     if (pageId == 'clicker') return const ClickerPage();
     if (pageId == 'plugin_center') return const PluginPage();
@@ -159,7 +138,6 @@ class HomeScreenState extends State<HomeScreen> with WindowListener, TickerProvi
       return widget;
     }
 
-    // 插件未激活 — 触发按需激活并显示占位
     _ensurePageActivated(pageId);
     return const Center(child: ProgressRing());
   }
@@ -188,7 +166,6 @@ class HomeScreenState extends State<HomeScreen> with WindowListener, TickerProvi
     windowManager.addListener(this);
     _initSystemTray();
     _checkMaximized();
-    // 插件状态/扩展点变化时重建导航
     PluginManager.instance.addListener(_onPluginStateChanged);
     PluginHost.instance.addListener(_onPluginStateChanged);
   }
@@ -206,9 +183,8 @@ class HomeScreenState extends State<HomeScreen> with WindowListener, TickerProvi
 
   void _onPluginStateChanged() {
     if (!mounted) return;
-    _navItemsCache = null;  // 插件列表/状态变化 — 导航缓存失效
+    _navItemsCache = null;
     final validIds = _navItems().map((i) => i.pageId).toSet();
-    // 插件停用后移除其页面缓存
     _pluginPageCache.removeWhere((id, _) => !validIds.contains(id));
     if (!validIds.contains(_currentPageId) &&
         _currentPageId != 'clicker' &&
@@ -236,7 +212,6 @@ class HomeScreenState extends State<HomeScreen> with WindowListener, TickerProvi
     _animateWindowTransition();
   }
 
-  /// 触发最大化/还原的内容过渡；受“动画效果”开关控制。
   void _animateWindowTransition() {
     if (!mounted) return;
     if (!context.read<AppState>().uiAnimations) return;
@@ -278,11 +253,7 @@ class HomeScreenState extends State<HomeScreen> with WindowListener, TickerProvi
     state.stopMacro();
     state.cancelRecording();
     state.platformInput.stopListening();
-    // 通知插件应用退出并释放全部资源
     unawaited(PluginManager.instance.shutdown());
-    // Use native PostQuitMessage for instant exit.
-    // windowManager.destroy() uses PostQuitMessage(0) which is correct,
-    // but we also need to destroy the window immediately.
     _platformChannel.invokeMethod('destroyWindow');
   }
 
@@ -331,7 +302,6 @@ class HomeScreenState extends State<HomeScreen> with WindowListener, TickerProvi
   Future<void> _switchToFloating() async {
     final state = context.read<AppState>();
     setState(() => _isFloatingMode = true);
-    // Use native batch method — single platform channel call instead of 5+
     windowManager.setMinimumSize(const Size(180, 60));
     await _platformChannel.invokeMethod('switchToFloatingWindow', [state.floatingAlwaysOnTop]);
   }
@@ -339,7 +309,6 @@ class HomeScreenState extends State<HomeScreen> with WindowListener, TickerProvi
   Future<void> _switchToMain() async {
     setState(() => _isFloatingMode = false);
     final state = context.read<AppState>();
-    // Use native batch method — single platform channel call instead of 6+
     windowManager.setMinimumSize(const Size(500, 680));
     await _platformChannel.invokeMethod('switchToMainWindow', [state.alwaysOnTop]);
   }
@@ -353,14 +322,10 @@ class HomeScreenState extends State<HomeScreen> with WindowListener, TickerProvi
     }
 
     final navItems = _navItems();
-    // 细粒度订阅：只监听本组件实际用到的字段（动画开关）。
-    // 此前 watch 整个 AppState — 连点计数每 500ms 刷新会触发整页
-    // （含 IndexedStack 所有页面）无差别重建，是 UI 卡顿主因之一。
     final uiAnimations = context.select<AppState, bool>((s) => s.uiAnimations);
 
     final currentIndex = _pageIdToIndex(_currentPageId, navItems);
 
-    // Build all pages in order for IndexedStack
     final allPageIds = <String>[
       'clicker',
       for (final item in navItems) item.pageId,
@@ -377,7 +342,6 @@ class HomeScreenState extends State<HomeScreen> with WindowListener, TickerProvi
         _GlassTitleBar(isDark: isDark, isMaximized: _isMaximized, onFloatingMode: _switchToFloating, animations: uiAnimations),
         Expanded(child: Row(children: [
           _buildSidebar(isDark, navItems, currentIndex),
-          // Page content — IndexedStack keeps all pages alive (no dispose on switch)
           Expanded(child: ColoredBox(
             color: FluentTheme.of(context).scaffoldBackgroundColor,
             child: FadeTransition(
@@ -404,13 +368,10 @@ class HomeScreenState extends State<HomeScreen> with WindowListener, TickerProvi
     const compactWidth = 50.0;
     final bgColor = isDark ? const Color(0xFF16162A) : const Color(0xFFF2F2FA);
 
-    // Build all sidebar items
     final items = <_SidebarItem>[
       const _SidebarItem(icon: FluentIcons.touch, label: '连点', index: 0),
-      // Plugin nav items (index 1..n)
       for (int i = 0; i < navItems.length; i++)
         _SidebarItem(icon: navItems[i].icon, label: navItems[i].label, index: i + 1),
-      // Footer items
       _SidebarItem(icon: FluentIcons.puzzle, label: '插件中心', index: navItems.length + 1),
       _SidebarItem(icon: FluentIcons.settings, label: '设置', index: navItems.length + 2),
     ];
@@ -419,7 +380,6 @@ class HomeScreenState extends State<HomeScreen> with WindowListener, TickerProvi
       width: compactWidth,
       color: bgColor.withValues(alpha: 0.75),
       child: Column(children: [
-        // Header
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 12),
           child: Text('C', style: TextStyle(
@@ -428,13 +388,11 @@ class HomeScreenState extends State<HomeScreen> with WindowListener, TickerProvi
             color: isDark ? const Color(0xFFC0C0E8) : const Color(0xFF5A5A80),
           )),
         ),
-        // Main items
         Expanded(child: ListView.builder(
           padding: EdgeInsets.zero,
-          itemCount: items.length - 2, // exclude footer items
+          itemCount: items.length - 2,
           itemBuilder: (ctx, i) => _buildSidebarItem(items[i], navItems, selectedIndex, accent, isDark),
         )),
-        // Footer items (plugin center + settings)
         ...List.generate(2, (i) => _buildSidebarItem(items[items.length - 2 + i], navItems, selectedIndex, accent, isDark)),
         const SizedBox(height: 8),
       ]),
@@ -531,7 +489,6 @@ class _SidebarItem {
   const _SidebarItem({required this.icon, required this.label, required this.index});
 }
 
-// ─── Title Bar ───────────────────────────────────────────────
 
 class _GlassTitleBar extends StatelessWidget {
   final bool isDark;
@@ -566,8 +523,6 @@ class _GlassTitleBar extends StatelessWidget {
         ),
       ),
       child: Row(children: [
-        // 拖动 + 双击最大化区域。只覆盖标题文字/空白，不含右侧按钮——
-        // 否则外层 onDoubleTap 会进入手势竞技场，拖慢按钮单击（等双击超时）响应。
         Expanded(child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onDoubleTap: toggleMaximize,
@@ -583,7 +538,6 @@ class _GlassTitleBar extends StatelessWidget {
             )),
           ]),
         )),
-        // Always-on-top toggle
         _TopMostButton(isDark: isDark, isPinned: state.alwaysOnTop, animations: animations, onToggle: () {
           final v = !state.alwaysOnTop;
           state.setAlwaysOnTop(v);
@@ -604,7 +558,6 @@ class _GlassTitleBar extends StatelessWidget {
   }
 }
 
-// ─── Window Buttons ──────────────────────────────────────────
 
 class _TopMostButton extends StatefulWidget {
   final bool isDark;
@@ -795,7 +748,6 @@ class _MaximizeButtonState extends State<_MaximizeButton> with SingleTickerProvi
   }
 }
 
-// ─── Custom Icons ────────────────────────────────────────────
 
 class _MaximizeIcon extends StatelessWidget {
   final Color color;

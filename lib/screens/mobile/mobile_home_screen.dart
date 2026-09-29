@@ -1,5 +1,3 @@
-/// Mobile home screen — Material bottom navigation with clicker, macro, hold trigger, settings tabs.
-library;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -33,7 +31,6 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
     MobileSettingsPage(),
   ];
 
-  /// 识别 tab 在底部导航中的下标 — 切到该页时重新检查无障碍服务状态。
   static const int _visionTabIndex = 5;
 
   @override
@@ -51,8 +48,6 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
         selectedIndex: _currentIndex,
         onDestinationSelected: (i) {
           setState(() => _currentIndex = i);
-          // Re-check the accessibility service each time the 识别 (vision) tab is
-          // selected, so toggling it in Settings is reflected without an app restart.
           if (i == _visionTabIndex) _visionKey.currentState?.checkAccessibility();
         },
         backgroundColor: isDark ? const Color(0xFF1A1A2E) : Colors.white,

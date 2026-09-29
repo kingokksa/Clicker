@@ -1,18 +1,3 @@
-/// 插件源管理 — 多源插件商店 + GitHub URL 智能解析。
-///
-/// 源体系（插件分发渠道，用户可自由扩展）：
-/// - 官方源（内置）：GitHub 官方插件仓库的 plugins/plugin_index.json
-/// - 第三方源：其他作者自己的 GitHub 仓库（索引格式与官方一致）
-/// - 直接导入：任意 GitHub 链接（zip 包 / 插件仓库 / Release）
-///
-/// 支持的 GitHub URL 形式：
-///   https://github.com/{owner}/{repo}                       → 探测仓库索引
-///   https://github.com/{owner}/{repo}/tree/{branch}/{dir}   → 探测子目录索引
-///   https://raw.githubusercontent.com/.../plugin_index.json → 直接的索引 URL
-///   https://github.com/{owner}/{repo}/releases/download/{tag}/{file}.zip → 插件包直链
-///   https://github.com/{owner}/{repo}/releases              → 最新 Release 的 zip
-///   https://github.com/{owner}/{repo}/archive/refs/heads/{branch}.zip    → 仓库打包
-library;
 
 import 'dart:convert';
 import 'dart:io';
@@ -21,12 +6,10 @@ import 'package:http/http.dart' as http;
 
 import '../app_paths.dart';
 
-/// GitHub API / raw 请求公共头（GitHub 要求 User-Agent）
 const Map<String, String> ghHeaders = {
   'User-Agent': 'Clicker-PluginStore',
 };
 
-/// 索引文件在仓库中的常见路径（按优先级探测）
 const List<String> indexCandidates = [
   'plugins/plugin_index.json',
   'plugin_index.json',
@@ -34,9 +17,7 @@ const List<String> indexCandidates = [
   'index.json',
 ];
 
-// ─── 源模型 ────────────────────────────────────────────────
 
-/// 源类型
 enum PluginSourceType {
   official('official'),
   thirdParty('third_party');
@@ -48,16 +29,15 @@ enum PluginSourceType {
       s == 'official' ? PluginSourceType.official : PluginSourceType.thirdParty;
 }
 
-/// 插件源 — 一个远程插件索引（GitHub 仓库或 raw URL）
 class PluginSource {
-  final String id;      // 稳定标识（官方固定 'official'，第三方按 URL 内容 hash）
-  String name;          // 显示名称（拉取后从索引 name 字段更新）
-  final String url;     // 用户输入的原始 URL
-  final String indexUrl; // 解析后的索引 raw URL
+  final String id;
+  String name;
+  final String url;
+  final String indexUrl;
   final PluginSourceType type;
   bool enabled;
-  String? error;        // 上次拉取错误（null = 成功）
-  int pluginCount = 0;  // 上次拉取到的插件数
+  String? error;
+  int pluginCount = 0;
 
   PluginSource({
     required this.id,
@@ -90,32 +70,26 @@ class PluginSource {
       );
 }
 
-// ─── GitHub URL 解析 ───────────────────────────────────────
 
-/// 解析结果：索引 URL（可作为源添加）
 class GithubIndexResolution {
   final String indexUrl;
   final String suggestedName;
   const GithubIndexResolution(this.indexUrl, this.suggestedName);
 }
 
-/// 解析结果：可直接下载安装的插件包
 class GithubZipResolution {
   final String zipUrl;
   final String suggestedName;
   const GithubZipResolution(this.zipUrl, this.suggestedName);
 }
 
-/// GitHub URL 智能解析器
 class GithubUrlResolver {
   GithubUrlResolver._();
 
-  /// 解析任意 GitHub 链接。返回索引或 zip；无法识别返回 null。
   static Future<Object?> resolve(String input) async {
     final url = input.trim().replaceAll(RegExp(r'/+$'), '');
     if (url.isEmpty) return null;
 
-    // 1. raw.githubusercontent 直链
     if (url.startsWith('https://raw.githubusercontent.com/')) {
       if (url.endsWith('.json')) {
         return GithubIndexResolution(url, _nameFromUrl(url));
@@ -126,7 +100,6 @@ class GithubUrlResolver {
       return null;
     }
 
-    // 2. Release 下载直链
     final releaseZip = RegExp(
       r'^https?://github\.com/([^/]+)/([^/]+)/releases/download/([^/]+)/([^?#]+\.zip)$',
     ).firstMatch(url);
@@ -134,7 +107,6 @@ class GithubUrlResolver {
       return GithubZipResolution(url, releaseZip.group(4)!);
     }
 
-    // 3. archive 打包直链
     final archiveZip = RegExp(
       r'^https?://github\.com/([^/]+)/([^/]+)/archive/refs/heads/([^?#]+\.zip)$',
     ).firstMatch(url);
@@ -142,7 +114,6 @@ class GithubUrlResolver {
       return GithubZipResolution(url, archiveZip.group(3)!);
     }
 
-    // 4. github.com 仓库 / 子目录 / releases 页面
     final repo = RegExp(
       r'^https?://github\.com/([^/]+)/([^/]+)((/.*)?)$',
     ).firstMatch(url);
@@ -152,12 +123,10 @@ class GithubUrlResolver {
     final repoName = repo.group(2)!;
     final path = (repo.group(3) ?? '').replaceAll(RegExp(r'^/|/$'), '');
 
-    // releases 页面 → 最新 Release 的 zip 资产
     if (path == 'releases' || path.startsWith('releases/')) {
       return _resolveLatestRelease(owner, repoName);
     }
 
-    // tree/子目录
     String subDir = '';
     String? explicitBranch;
     if (path.startsWith('tree/')) {
@@ -172,16 +141,14 @@ class GithubUrlResolver {
     final branch =
         explicitBranch ?? await _defaultBranch(owner, repoName) ?? 'main';
 
-    // 4a. 仓库/子目录本身是一个插件（有 manifest.json）→ 整包下载
     if (await _rawExists(owner, repoName, branch,
         subDir.isEmpty ? 'manifest.json' : '$subDir/manifest.json')) {
       final zipUrl = subDir.isEmpty
           ? 'https://github.com/$owner/$repoName/archive/refs/heads/$branch.zip'
-          : 'https://github.com/$owner/$repoName/archive/refs/heads/$branch.zip'; // 子目录插件也下整包，installFromZip 会取 manifest 所在层
+          : 'https://github.com/$owner/$repoName/archive/refs/heads/$branch.zip';
       return GithubZipResolution(zipUrl, repoName);
     }
 
-    // 4b. 探测索引文件
     final indexUrl =
         await _probeIndex(owner, repoName, branch, subDir);
     if (indexUrl != null) {
@@ -191,7 +158,6 @@ class GithubUrlResolver {
     return null;
   }
 
-  /// 获取仓库默认分支（GitHub API，失败回退 main/master 探测）
   static Future<String?> _defaultBranch(String owner, String repo) async {
     try {
       final res = await http
@@ -209,7 +175,6 @@ class GithubUrlResolver {
     return null;
   }
 
-  /// 探测仓库/子目录下的索引文件
   static Future<String?> _probeIndex(
       String owner, String repo, String branch, String dir) async {
     for (final candidate in indexCandidates) {
@@ -221,7 +186,6 @@ class GithubUrlResolver {
     return null;
   }
 
-  /// 检查 raw 文件是否存在
   static Future<bool> _rawExists(
       String owner, String repo, String branch, String path) async {
     try {
@@ -236,7 +200,6 @@ class GithubUrlResolver {
     }
   }
 
-  /// 最新 Release 的第一个 zip 资产
   static Future<GithubZipResolution?> _resolveLatestRelease(
       String owner, String repo) async {
     try {
@@ -255,7 +218,6 @@ class GithubUrlResolver {
           return GithubZipResolution(url, name);
         }
       }
-      // Release 没有 zip 资产 → 尝试源码包
       final tag = json['tag_name'] as String?;
       if (tag != null) {
         return GithubZipResolution(
@@ -275,14 +237,11 @@ class GithubUrlResolver {
   }
 }
 
-// ─── 源仓库（持久化）──────────────────────────────────────
 
-/// 插件源仓库 — 管理源列表，持久化到 data/plugin_sources.json
 class PluginSourceRepository {
   PluginSourceRepository._();
   static final PluginSourceRepository instance = PluginSourceRepository._();
 
-  /// 官方插件仓库（用户自己的 GitHub）
   static const String officialRepoUrl = 'https://github.com/kingokksa/Clicker';
   static const String officialRepoRaw =
       'https://raw.githubusercontent.com/kingokksa/Clicker/main/plugins/plugin_index.json';
@@ -300,7 +259,6 @@ class PluginSourceRepository {
     return null;
   }
 
-  /// 加载：官方源（固定）+ 持久化的第三方源
   Future<void> load() async {
     if (_loaded) return;
     _loaded = true;
@@ -344,9 +302,6 @@ class PluginSourceRepository {
     } catch (_) {}
   }
 
-  /// 添加第三方源。
-  /// [url] 任意 GitHub 链接；返回错误消息（null = 成功）。
-  /// [onResolved] 解析成功后回调（可用于 UI 展示解析结果）。
   Future<String?> addSource(String url,
       {void Function(String indexUrl)? onResolved}) async {
     await load();
@@ -359,7 +314,6 @@ class PluginSourceRepository {
     }
     final index = resolution as GithubIndexResolution;
 
-    // 验证索引可访问且格式合法
     final json = await fetchIndexJson(index.indexUrl);
     if (json == null) {
       return '索引文件无法访问或格式不合法（需要包含 plugins 数组）';
@@ -387,13 +341,11 @@ class PluginSourceRepository {
     return null;
   }
 
-  /// 直接移除第三方源
   Future<void> removeSource(String id) async {
     _sources.removeWhere((s) => s.id == id && !s.isOfficial);
     await save();
   }
 
-  /// 启用/禁用源
   Future<void> setEnabled(String id, bool enabled) async {
     final s = byId(id);
     if (s == null || s.isOfficial) return;
@@ -401,7 +353,6 @@ class PluginSourceRepository {
     await save();
   }
 
-  /// 拉取并校验索引 JSON；失败返回 null
   static Future<Map<String, dynamic>?> fetchIndexJson(String url) async {
     try {
       final res = await http.get(Uri.parse(url), headers: ghHeaders)
@@ -416,7 +367,6 @@ class PluginSourceRepository {
     }
   }
 
-  /// URL 内容 hash（FNV-1a 31bit，跨运行稳定）
   static String _idFromUrl(String url) {
     var h = 0x811c9dc5;
     for (final c in url.codeUnits) {

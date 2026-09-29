@@ -1,6 +1,3 @@
-/// Application state — manages all services and configuration.
-/// Single ChangeNotifier for Provider-based state management.
-library;
 
 import 'dart:async';
 import 'dart:io';
@@ -32,12 +29,10 @@ import '../services/schedule_controller.dart';
 import 'package:window_manager/window_manager.dart';
 
 class AppState extends ChangeNotifier {
-  // Emergency stop signal
   static final StreamController<void> _emergencyStopController = StreamController<void>.broadcast();
   static Stream<void> get onEmergencyStopSignal => _emergencyStopController.stream;
   static void broadcastEmergencyStop() { _emergencyStopController.add(null); }
 
-  // Services
   late final StorageService _storage;
   late final PlatformInput _platformInput;
   late final ClickService _clickService;
@@ -48,7 +43,6 @@ class AppState extends ChangeNotifier {
   late final ApiActionRegistry _apiRegistry;
   late final ApiServer _apiServer;
 
-  // Config
   ClickerConfig _clickerConfig = ClickerConfig();
   HotkeyConfig _hotkeyConfig = HotkeyConfig();
   String _themeMode = 'dark';
@@ -59,7 +53,6 @@ class AppState extends ChangeNotifier {
   bool _uiAnimations = true;
   double _uiScale = 1.15;
 
-  // Status
   ClickerStatus _clickerStatus = ClickerStatus.idle;
   MacroStatus _macroStatus = MacroStatus.idle;
   int _clickCount = 0;
@@ -69,32 +62,21 @@ class AppState extends ChangeNotifier {
   String _macroError = '';
   bool _isInitialized = false;
 
-  // Scheduled start/stop — 逻辑由 ScheduleController 承载（移动端共用），
-  // 这里只持有实例并把读写/动作回调接到本 state。
   late final ScheduleController _schedules;
 
-  /// 高频点击计数走独立 notifier — 不触发全页 notifyListeners。
-  /// 连点运行时计数每 500ms 刷新，若走全局广播会让所有 watch
-  /// AppState 的页面（IndexedStack 内全部页面）无差别重建。
   final ValueNotifier<int> clickCountNotifier = ValueNotifier<int>(0);
 
-  // Macro list
   List<MacroModel> _macros = [];
   List<String> _profiles = [];
 
-  // Script list
   final List<ScriptModel> _scripts = [];
 
-  // Window detect rules
   final List<WindowRule> _windowRules = [];
 
-  // Hold trigger keys
   List<HoldTriggerKey> _holdTriggerKeys = [];
 
-  // Remote control port
   int _remoteControlPort = 9876;
 
-  // Getters
   ClickerConfig get clickerConfig => _clickerConfig;
   HotkeyConfig get hotkeyConfig => _hotkeyConfig;
   String get themeMode => _themeMode;
@@ -143,7 +125,6 @@ class AppState extends ChangeNotifier {
       _storage = StorageService();
       await _storage.init();
 
-      // Platform-specific input
       if (Platform.isWindows) {
         _platformInput = WindowsInput();
       } else if (Platform.isLinux) {
@@ -151,10 +132,9 @@ class AppState extends ChangeNotifier {
       } else if (Platform.isAndroid) {
         _platformInput = AndroidInput();
       } else {
-        _platformInput = WindowsInput(); // fallback
+        _platformInput = WindowsInput();
       }
 
-      // Load configs
       _clickerConfig = _storage.loadClickerConfig();
       _hotkeyConfig = _storage.loadHotkeyConfig();
       _themeMode = _storage.themeMode;
@@ -166,12 +146,10 @@ class AppState extends ChangeNotifier {
       _uiScale = _storage.uiScale;
       _profiles = _storage.listProfiles();
 
-      // Apply always-on-top setting on startup
       if (_alwaysOnTop) {
         windowManager.setAlwaysOnTop(true);
       }
 
-      // Init services
       _clickService = ClickService(_platformInput);
       _clickService.updateConfig(_clickerConfig);
 
@@ -181,10 +159,8 @@ class AppState extends ChangeNotifier {
       _hotkeyService = HotkeyService(_platformInput);
       _hotkeyService.updateConfig(_hotkeyConfig);
 
-      // Init extension services
       _windowDetectService = WindowDetectService();
       _windowDetectService.onRuleMatched = (rule) {
-        // Auto-load profile when window rule matches
         loadProfile(rule.profileName);
         notifyListeners();
       };
@@ -208,23 +184,18 @@ class AppState extends ChangeNotifier {
       _apiRegistry = buildApiRegistry(this);
       _apiServer = ApiServer(registry: _apiRegistry, port: _remoteControlPort);
 
-      // Wire callbacks
       _clickService.onStatusChanged = (status, count) {
         final statusChanged = _clickerStatus != status;
         _clickerStatus = status;
         _clickCount = count;
-        // 高频计数只推 notifier（ValueListenableBuilder 精准刷新），
-        // 仅状态切换（idle⇄running）才全局广播
         clickCountNotifier.value = count;
         if (statusChanged) notifyListeners();
       };
 
-      // Native fast clicker stop callback
       _platformInput.onFastClickerStopped = (count, generation) {
         _clickService.handleNativeClickerStopped(count, generation: generation);
       };
 
-      // Wire platform input reference to system tray service for callback forwarding
       SystemTrayService().platformInput = _platformInput;
 
       _macroService.onStatusChanged = (status) {
@@ -246,7 +217,6 @@ class AppState extends ChangeNotifier {
       _macroService.onError = (message) {
         _macroError = message;
         notifyListeners();
-        // Auto-clear after 5 seconds
         Future.delayed(const Duration(seconds: 5), () {
           if (_macroError == message) {
             _macroError = '';
@@ -255,13 +225,11 @@ class AppState extends ChangeNotifier {
         });
       };
 
-      // Hotkey actions
       _hotkeyService.onStartStopClicker = () {
         _clickService.toggle();
       };
       _hotkeyService.onStartStopRecording = () async {
         if (_macroService.isRecording) {
-          // Pause hook immediately so no more events captured
           _macroService.pauseRecording();
           notifyListeners();
         } else {
@@ -306,29 +274,21 @@ class AppState extends ChangeNotifier {
 
       _hotkeyService.start();
 
-      // Scheduled auto-start / auto-stop（与移动端共用 ScheduleController）
       _initScheduleController();
       _schedules.start();
 
-      // Load hold trigger keys
       _holdTriggerKeys = _storage.loadHoldTriggerKeys();
       _registerHoldTriggerKeys();
 
-      // Key capture callback
       _platformInput.onKeyCaptured = (keyName) {
-        // Forward to any active listener
         _keyCaptureCompleter?.complete(keyName);
         _keyCaptureCompleter = null;
       };
 
-      // Load macros
       _macros = await _storage.loadAllMacros();
 
-      // Register per-macro hotkeys
       await _hotkeyService.reregisterAllMacroHotkeys(_macros);
 
-      // ── 插件系统接线：注入宿主服务 → 初始化插件管理器 ──
-      // 宿主服务是插件访问主程序能力的唯一通道（权限由 manifest 控制）
       PluginHost.instance.setServices(PluginHostServices(
         mouseDown: (x, y, button) =>
             _platformInput.mouseDown(x: x, y: y, button: button),
@@ -348,8 +308,6 @@ class AppState extends ChangeNotifier {
         writeClipboard: (text) =>
             Clipboard.setData(ClipboardData(text: text)),
       ));
-      // 初始化插件管理器：加载持久化状态 → 发现外部插件 → 激活 onStartup 插件
-      // manual/onPage/onCommand 插件保持未激活，真正使用时才按需激活
       await PluginManager.instance.initialize();
 
       if (_clickerConfig.remoteControlEnabled) {
@@ -359,13 +317,11 @@ class AppState extends ChangeNotifier {
       _isInitialized = true;
       notifyListeners();
     } catch (e) {
-      // If initialization fails, still mark as initialized so the UI renders
       _isInitialized = true;
       notifyListeners();
     }
   }
 
-  // ─── Clicker Actions ──────────────────────────────────────
 
   void setClickerConfig(ClickerConfig config) {
     _clickerConfig = config;
@@ -381,9 +337,7 @@ class AppState extends ChangeNotifier {
 
   void stopClicker() => _clickService.stop();
 
-  // ─── Extension Feature Actions ────────────────────────────
 
-  /// Toggle window auto-detect
   Future<void> setWindowAutoDetectEnabled(bool enabled) async {
     _clickerConfig = _clickerConfig.copyWith(windowAutoDetectEnabled: enabled);
     _storage.saveClickerConfig(_clickerConfig);
@@ -395,28 +349,24 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Add a window detect rule
   void addWindowRule(WindowRule rule) {
     _windowRules.add(rule);
     _windowDetectService.addRule(rule);
     notifyListeners();
   }
 
-  /// Remove a window detect rule
   void removeWindowRule(String id) {
     _windowRules.removeWhere((r) => r.id == id);
     _windowDetectService.removeRule(id);
     notifyListeners();
   }
 
-  /// Toggle image recognition
   void setImageRecognitionEnabled(bool enabled) {
     _clickerConfig = _clickerConfig.copyWith(imageRecognitionEnabled: enabled);
     _storage.saveClickerConfig(_clickerConfig);
     notifyListeners();
   }
 
-  /// Toggle script engine
   void setScriptEngineEnabled(bool enabled) {
     _clickerConfig = _clickerConfig.copyWith(scriptEngineEnabled: enabled);
     _storage.saveClickerConfig(_clickerConfig);
@@ -426,29 +376,24 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Add a script
   void addScript(ScriptModel script) {
     _scripts.add(script);
     notifyListeners();
   }
 
-  /// Remove a script
   void removeScript(String id) {
     _scripts.removeWhere((s) => s.id == id);
     notifyListeners();
   }
 
-  /// Run a script
   Future<void> runScript(ScriptModel script) async {
     await _scriptEngine.run(script);
   }
 
-  /// Stop script execution
   void stopScript() {
     _scriptEngine.stop();
   }
 
-  /// Toggle remote control
   Future<void> setRemoteControlEnabled(bool enabled) async {
     _clickerConfig = _clickerConfig.copyWith(remoteControlEnabled: enabled);
     _storage.saveClickerConfig(_clickerConfig);
@@ -460,7 +405,6 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Set remote control port
   void setRemoteControlPort(int port) {
     _remoteControlPort = port;
     _apiServer.port = port;
@@ -472,11 +416,9 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ─── Macro Actions ────────────────────────────────────────
 
   Future<void> startRecording() => _macroService.startRecording();
 
-  /// Pause recording hook immediately (stops capturing events).
   void pauseRecording() => _macroService.pauseRecording();
 
   Future<void> stopRecording({String name = '录制的宏'}) async {
@@ -530,7 +472,6 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ─── Hotkey Actions ───────────────────────────────────────
 
   void setHotkeyConfig(HotkeyConfig config) {
     _hotkeyConfig = config;
@@ -539,7 +480,6 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ─── Settings Actions ─────────────────────────────────────
 
   void setThemeMode(String mode) {
     _themeMode = mode;
@@ -584,7 +524,6 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ─── Profile Actions ──────────────────────────────────────
 
   Future<void> saveProfile(String name) async {
     await _storage.saveProfile(name, _clickerConfig);
@@ -609,10 +548,7 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ─── Scheduled Start / Stop ───────────────────────────────
-  // 调度逻辑在 ScheduleController（移动端共用同一份），这里只做转发 + 落盘。
 
-  /// 构造调度器。必须在 init 里各服务创建完成后调用。
   void _initScheduleController() {
     _schedules = ScheduleController(
       readSchedules: () => _clickerConfig.schedules,
@@ -622,17 +558,13 @@ class AppState extends ChangeNotifier {
     );
   }
 
-  /// 新增一个定时任务（默认：启动连点，每天 08:00）。
   void addSchedule() => _schedules.add();
 
-  /// 删除指定下标的定时任务。
   void removeScheduleAt(int index) => _schedules.removeAt(index);
 
-  /// 更新指定下标的定时任务。[rearm] 为 true（启用开关或改动时间）时重新布防。
   void updateScheduleAt(int index, ClickerSchedule ns, {bool rearm = false}) =>
       _schedules.updateAt(index, ns, rearm: rearm);
 
-  // ─── Import / Export ──────────────────────────────────────
 
   Future<bool> exportConfig() => _storage.exportConfigToFile(
     clickerConfig: _clickerConfig,
@@ -687,11 +619,9 @@ class AppState extends ChangeNotifier {
     super.dispose();
   }
 
-  // ─── Hold Trigger ──────────────────────────────────────
 
   Completer<String?>? _keyCaptureCompleter;
 
-  /// Start capturing a key press. Returns the key name when captured.
   Future<String?> captureKey() async {
     if (_keyCaptureCompleter != null && !_keyCaptureCompleter!.isCompleted) {
       _keyCaptureCompleter!.completeError('Cancelled');
@@ -699,7 +629,6 @@ class AppState extends ChangeNotifier {
     _keyCaptureCompleter = Completer<String?>();
     try {
       await _platformInput.invokeMethod('captureKey');
-      // Wait for onKeyCaptured callback with 10s timeout
       return await _keyCaptureCompleter!.future.timeout(
         const Duration(seconds: 10),
         onTimeout: () => null,
@@ -748,8 +677,6 @@ class AppState extends ChangeNotifier {
     }
 
     final configs = enabledKeys.map((k) {
-      // action: 0=mouseClick, 1=keyRepeat, 2=keyCombo
-      // touch actions fall back to mouse click on desktop
       int action;
       dynamic actionParam;
       switch (k.action) {
@@ -776,18 +703,18 @@ class AppState extends ChangeNotifier {
       }
 
       return [
-        k.triggerKey,       // trigger key name
-        action,             // action type
-        k.intervalMs.toInt(), // interval ms
-        actionParam,        // action-specific param
-        k.backgroundMode,   // background mode
-        k.targetHwnd,       // target hwnd
-        k.targetX,          // client x
-        k.targetY,          // client y
-        k.triggerType.name, // trigger type: "keyboard" or "mouse"
+        k.triggerKey,
+        action,
+        k.intervalMs.toInt(),
+        actionParam,
+        k.backgroundMode,
+        k.targetHwnd,
+        k.targetX,
+        k.targetY,
+        k.triggerType.name,
         k.triggerType == HoldTriggerType.mouse
           ? (k.triggerMouseButton == 'right' ? 1 : (k.triggerMouseButton == 'middle' ? 2 : 0))
-          : 0,              // mouse trigger button: 0=left, 1=right, 2=middle
+          : 0,
       ];
     }).toList();
 
@@ -799,7 +726,6 @@ class AppState extends ChangeNotifier {
   }
 }
 
-/// AppState 的定时任务动作出口 — 把 ScheduleController 的动作转发到桌面各服务。
 class _AppScheduleActions extends ScheduleActions {
   const _AppScheduleActions(this.state);
 

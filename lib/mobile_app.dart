@@ -1,5 +1,3 @@
-/// Mobile app entry point — Material Design for Android/iOS.
-library;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';

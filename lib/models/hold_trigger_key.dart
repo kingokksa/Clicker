@@ -1,50 +1,41 @@
-/// Hold trigger key model — each key can be individually configured.
-/// When the trigger key is held down, the configured action auto-repeats.
-library;
 
 import 'dart:math';
 
 enum HoldTriggerAction {
-  mouseClick,   // mouse click (left/right/middle)
-  keyRepeat,    // repeat a key press
-  keyCombo,     // key combination
-  touchTap,     // single tap (mobile)
-  touchLongPress, // long press (mobile)
+  mouseClick,
+  keyRepeat,
+  keyCombo,
+  touchTap,
+  touchLongPress,
 }
 
 enum HoldTriggerType {
-  keyboard,     // triggered by keyboard key hold
-  mouse,        // triggered by mouse button hold
+  keyboard,
+  mouse,
 }
 
 class HoldTriggerKey {
   final String id;
-  String triggerKey;       // e.g. "F5", "Q", "1"
-  HoldTriggerType triggerType; // keyboard or mouse trigger
-  String triggerMouseButton; // "left", "right", "middle" (when triggerType == mouse)
+  String triggerKey;
+  HoldTriggerType triggerType;
+  String triggerMouseButton;
   bool enabled;
 
-  // Action type
   HoldTriggerAction action;
 
-  // Mouse click settings (when action == mouseClick)
-  String mouseButton;     // "left", "right", "middle"
+  String mouseButton;
 
-  // Key repeat settings (when action == keyRepeat)
-  String keyToRepeat;     // e.g. "space", "A"
+  String keyToRepeat;
 
-  // Key combo settings (when action == keyCombo)
-  List<String> comboKeys; // e.g. ["ctrl", "A"]
+  List<String> comboKeys;
 
-  // Common settings
-  double intervalMs;      // repeat interval in ms (min 10)
-  bool backgroundMode;    // use background click if available
+  double intervalMs;
+  bool backgroundMode;
 
-  // Background mode target
-  int targetHwnd;         // target window handle
-  int targetX;            // client area x
-  int targetY;            // client area y
-  String targetWindowTitle; // target window title (for display)
+  int targetHwnd;
+  int targetX;
+  int targetY;
+  String targetWindowTitle;
 
   HoldTriggerKey({
     String? id,

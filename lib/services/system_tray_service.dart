@@ -1,4 +1,3 @@
-library;
 
 import 'dart:io';
 import 'package:flutter/services.dart';
@@ -29,7 +28,6 @@ class SystemTrayService {
   }
 
   Future<void> init() async {
-    // Always set up the method call handler (needed for overlay callbacks on all platforms)
     _channel.setMethodCallHandler(_handleMethodCall);
 
     if (_initialized) return;

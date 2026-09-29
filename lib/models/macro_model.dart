@@ -1,5 +1,3 @@
-/// Macro model — records mouse/keyboard events for playback.
-library;
 
 import 'dart:convert';
 
@@ -17,18 +15,18 @@ enum MacroEventType {
 
 class MacroEvent {
   final MacroEventType type;
-  final int timestampMs; // ms since recording started (absolute)
-  final int holdMs; // how long to hold this action (ms), e.g. mouse click duration
-  final int waitMs; // wait time after this action before next step (ms)
-  final String? button; // left | right | middle (for click)
+  final int timestampMs;
+  final int holdMs;
+  final int waitMs;
+  final String? button;
   final int? x;
   final int? y;
-  final String? key; // key name (for keyPress/keyRelease)
+  final String? key;
   final double? scrollDx;
   final double? scrollDy;
-  final int? endX; // drag/swipe end X
-  final int? endY; // drag/swipe end Y
-  final int? durationMs; // drag/swipe duration
+  final int? endX;
+  final int? endY;
+  final int? durationMs;
 
   const MacroEvent({
     required this.type,
@@ -119,17 +117,17 @@ class MacroModel {
   String id;
   String name;
   List<MacroEvent> events;
-  int repeatCount; // 0 = infinite
-  double speed; // 0.1 ~ 10.0
+  int repeatCount;
+  double speed;
   DateTime createdAt;
-  String? hotkey; // Per-macro hotkey, e.g. "Alt+F3"
-  bool backgroundMode; // Use background click (requires background_execution plugin)
-  int backgroundTargetHwnd; // Target window handle for background mode
-  int backgroundTargetX; // Client area X for background mode
-  int backgroundTargetY; // Client area Y for background mode
-  String backgroundTargetWindowTitle; // Target window title (for display)
-  bool soundEnabled; // Whether to play sound feedback for this macro
-  bool enabled; // Whether this macro is active (hotkey triggerable)
+  String? hotkey;
+  bool backgroundMode;
+  int backgroundTargetHwnd;
+  int backgroundTargetX;
+  int backgroundTargetY;
+  String backgroundTargetWindowTitle;
+  bool soundEnabled;
+  bool enabled;
 
   MacroModel({
     required this.id,

@@ -1,7 +1,3 @@
-/// Mobile vision page — 图片识别：模板管理 / 找图测试 / 视觉连点 / OCR。
-/// 原生层（截屏、NCC 匹配、OCR）已就绪，此页为移动端 UI 入口。
-/// 视觉连点由原生线程驱动：切到其他应用后仍持续工作。
-library;
 
 
 import 'package:flutter/material.dart';
@@ -29,7 +25,7 @@ class MobileVisionPageState extends State<MobileVisionPage> {
   bool _visionRunning = false;
   int _visionCount = 0;
   int _intervalMs = 500;
-  int _maxCount = 0; // 0 = unlimited
+  int _maxCount = 0;
   bool _accessibilityOk = true;
   bool _testing = false;
   String? _ocrText;
@@ -143,7 +139,6 @@ class MobileVisionPageState extends State<MobileVisionPage> {
     );
   }
 
-  // ─── 卡片 ─────────────────────────────────────────────────
 
   Widget _accessibilityCard(MobileAppState state, Color accent, bool isDark) {
     return Card(
@@ -201,7 +196,6 @@ class MobileVisionPageState extends State<MobileVisionPage> {
             Text('先截取一个模板', style: TextStyle(fontSize: 13,
                 color: isDark ? Colors.grey : Colors.black54))
           else ...[
-            // 模板选择
             Wrap(
               spacing: 6,
               runSpacing: 6,
@@ -224,7 +218,6 @@ class MobileVisionPageState extends State<MobileVisionPage> {
               }).toList(),
             ),
             const SizedBox(height: 10),
-            // 间隔
             Row(children: [
               Text('间隔', style: TextStyle(fontSize: 13, color: isDark ? Colors.white70 : Colors.black87)),
               const SizedBox(width: 10),
@@ -238,7 +231,6 @@ class MobileVisionPageState extends State<MobileVisionPage> {
                   color: isDark ? Colors.white70 : Colors.black87)),
             ]),
             const SizedBox(height: 10),
-            // 最多点击次数 (0 = 无限)
             Row(children: [
               Text('最多点击', style: TextStyle(fontSize: 13, color: isDark ? Colors.white70 : Colors.black87)),
               const Spacer(),
@@ -331,7 +323,6 @@ class MobileVisionPageState extends State<MobileVisionPage> {
         padding: const EdgeInsets.all(12),
         child: Column(children: [
           Row(children: [
-            // 缩略图
             Container(
               width: 52, height: 52,
               decoration: BoxDecoration(
@@ -350,7 +341,6 @@ class MobileVisionPageState extends State<MobileVisionPage> {
               Text('${t.width}×${t.height} · 阈值 ${t.threshold.toStringAsFixed(2)}',
                   style: TextStyle(fontSize: 11, color: isDark ? Colors.grey : Colors.black54)),
             ])),
-            // 测试查找
             _testing
                 ? const SizedBox(width: 20, height: 20,
                     child: CircularProgressIndicator(strokeWidth: 2))
@@ -366,7 +356,6 @@ class MobileVisionPageState extends State<MobileVisionPage> {
             ),
           ]),
           const SizedBox(height: 6),
-          // 阈值调节
           Row(children: [
             Text('阈值', style: TextStyle(fontSize: 12, color: isDark ? Colors.grey : Colors.black54)),
             Expanded(child: Slider(
@@ -387,10 +376,8 @@ class MobileVisionPageState extends State<MobileVisionPage> {
     );
   }
 
-  // ─── 操作 ─────────────────────────────────────────────────
 
   Future<void> _captureTemplate() async {
-    // 区域选择覆盖层 → 截屏取模板
     final area = await ScreenOverlayService.instance.startAreaSelect();
     if (area == null) return;
     final (x1, y1, x2, y2) = area;
@@ -399,13 +386,11 @@ class MobileVisionPageState extends State<MobileVisionPage> {
       _toast('区域太小');
       return;
     }
-    // 触发截屏（首次会弹系统授权）
     final tpl = await VisionService.instance.captureTemplate(x1, y1, w, h);
     if (tpl == null) {
       _toast('截屏失败，请重试');
       return;
     }
-    // 命名保存
     final name = await _promptName(context);
     if (name == null || name.isEmpty) return;
     final t = VisionTemplate(
@@ -461,7 +446,6 @@ class MobileVisionPageState extends State<MobileVisionPage> {
   }
 
   Future<void> _startVision(VisionTemplate t) async {
-    // 无障碍检查
     final state = context.read<MobileAppState>();
     final input = state.platformInput;
     if (input is AndroidInput) {
@@ -472,14 +456,12 @@ class MobileVisionPageState extends State<MobileVisionPage> {
         return;
       }
     }
-    // 截屏授权检查 — 主动请求，不再依赖"测试查找"触发
     if (!await VisionService.instance.isScreenCaptureAvailable()) {
       final granted = await VisionService.instance.requestScreenCapture();
       if (!granted) {
         _toast('请先授权屏幕录制权限');
         return;
       }
-      // Wait for the foreground service to initialise MediaProjection
       await Future.delayed(const Duration(milliseconds: 800));
     }
     final ok = await VisionService.instance.startVisionClicker(
@@ -568,7 +550,6 @@ class MobileVisionPageState extends State<MobileVisionPage> {
   }
 }
 
-/// MethodChannel 回调注册代理 — 复用 SystemTrayService 的外部处理器注册表
 class MethodChannelProxy {
   VoidCallback? _unregister;
 

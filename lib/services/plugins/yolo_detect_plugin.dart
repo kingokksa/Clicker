@@ -1,4 +1,3 @@
-library;
 
 import 'dart:convert';
 import 'dart:ffi';
@@ -37,7 +36,6 @@ class YoloDetectPlugin extends VisionPlugin {
       return false;
     }
 
-    // AI 跟踪器是本插件的依赖 — 按需激活（即需即用联动）
     final pm = PluginManager.instance;
     if (!pm.isEnabled('ai_tracker')) {
       await pm.enablePlugin('ai_tracker');
@@ -54,14 +52,12 @@ class YoloDetectPlugin extends VisionPlugin {
       return false;
     }
 
-    // 检查 onnxruntime.dll 是否存在（不自动下载）
     if (!await _checkOnnxRuntimeDll()) {
       debugPrint('[YoloDetectPlugin] ONNX Runtime DLL 不存在，请在高级模型中安装');
       _available = false;
       return false;
     }
 
-    // 检查模型文件是否存在（不自动下载）
     if (await _findModelPathLocal() == null) {
       debugPrint('[YoloDetectPlugin] 检测模型文件未找到，请在高级模型中安装');
       _available = false;
@@ -79,7 +75,6 @@ class YoloDetectPlugin extends VisionPlugin {
 
     var statusResult = aiPlugin.executeAction('get_status', '{}', returnOnError: true);
     if (statusResult == null || statusResult.contains('"available":false')) {
-      // 检查是否是版本不匹配（ort_lib=true但ort_api=false）
       final versionMismatch = statusResult != null &&
           statusResult.contains('"ort_lib":true') &&
           statusResult.contains('"ort_api":false');
@@ -120,7 +115,6 @@ class YoloDetectPlugin extends VisionPlugin {
     return true;
   }
 
-  /// Check if onnxruntime.dll exists (no auto-download)
   Future<bool> _checkOnnxRuntimeDll() async {
     final pluginDir = await AppPaths.getPluginDir('ai_tracker');
     final sep = Platform.pathSeparator;
@@ -139,8 +133,6 @@ class YoloDetectPlugin extends VisionPlugin {
     return false;
   }
 
-  /// Find model path locally (no auto-download).
-  /// 随包分发的 detector.onnx（YOLOX-Nano, Apache-2.0）优先于下载的 yolo11n.onnx。
   Future<String?> _findModelPathLocal() async {
     final sep = Platform.pathSeparator;
     final exeDir = File(Platform.resolvedExecutable).parent.path;
@@ -174,10 +166,8 @@ class YoloDetectPlugin extends VisionPlugin {
     return _checkOnnxRuntimeDll();
   }
 
-  /// Download ONNX Runtime (called from advanced models page only)
   Future<bool> downloadOnnxRuntime() => _downloadOnnxRuntime();
 
-  /// Download YOLO model (called from advanced models page only)
   Future<bool> downloadModel() => _downloadModel();
 
   Future<bool> _downloadOnnxRuntime() async {
@@ -186,7 +176,7 @@ class YoloDetectPlugin extends VisionPlugin {
       const ortVersion = '1.21.0';
       const ortUrl = 'https://github.com/microsoft/onnxruntime/releases/download/v$ortVersion/onnxruntime-win-x64-$ortVersion.zip';
       const mirrors = [
-        '', // GitHub direct
+        '',
         'https://ghfast.top/',
         'https://gh-proxy.com/',
         'https://ghproxy.net/',
@@ -198,7 +188,6 @@ class YoloDetectPlugin extends VisionPlugin {
           debugPrint('[YoloDetectPlugin] 尝试从 $url 下载 ONNX Runtime...');
           final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 120));
           if (response.statusCode == 200 && response.bodyBytes.length > 1000000) {
-            // 解压zip找到onnxruntime.dll
             final archive = ZipDecoder().decodeBytes(response.bodyBytes);
             for (final file in archive) {
               if (file.isFile && file.name.endsWith('onnxruntime.dll')) {
@@ -228,7 +217,7 @@ class YoloDetectPlugin extends VisionPlugin {
 
       const modelUrl = 'https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11n.onnx';
       const mirrors = [
-        '', // GitHub direct
+        '',
         'https://ghfast.top/',
         'https://gh-proxy.com/',
         'https://ghproxy.net/',
@@ -285,14 +274,11 @@ class YoloDetectPlugin extends VisionPlugin {
         return [];
       }
 
-      // Determine actual dimensions from pixel data
       int actualW = regionW;
       int actualH = regionH;
       final expectedLen = regionW * regionH * 4;
       if (pixels.length != expectedLen) {
-        // Try to infer dimensions from pixel data length
         final pixelCount = pixels.length ~/ 4;
-        // Try common aspect ratios
         for (int tryW = regionW - 200; tryW <= regionW + 200; tryW++) {
           if (tryW > 0 && pixelCount % tryW == 0) {
             final tryH = pixelCount ~/ tryW;

@@ -1,5 +1,3 @@
-/// Mobile macro page — Material Design macro recording, playback, and editing.
-library;
 
 import 'dart:io' show Platform;
 
@@ -58,7 +56,6 @@ class MobileMacroPage extends StatelessWidget {
         ],
       ),
       body: Column(children: [
-        // Recording indicator
         if (isRecording)
           Container(
             width: double.infinity,
@@ -72,7 +69,6 @@ class MobileMacroPage extends StatelessWidget {
             ]),
           ),
 
-        // Playback progress
         if (isPlaying)
           Container(
             width: double.infinity,
@@ -86,7 +82,6 @@ class MobileMacroPage extends StatelessWidget {
             ]),
           ),
 
-        // Error
         if (state.macroError.isNotEmpty)
           Container(
             width: double.infinity,
@@ -96,7 +91,6 @@ class MobileMacroPage extends StatelessWidget {
                 style: const TextStyle(color: Colors.orange, fontSize: 13)),
           ),
 
-        // Macro list
         Expanded(child: _buildMacroList(context, state, isDark, accent)),
       ]),
       floatingActionButton: !isRecording && !isPlaying
@@ -151,18 +145,15 @@ class MobileMacroPage extends StatelessWidget {
             style: TextStyle(fontSize: 12,
                 color: isDark ? Colors.grey : Colors.black54)),
         trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-          // Enable/disable toggle
           Switch(
             value: macro.enabled,
             activeThumbColor: accent,
             onChanged: (v) => state.updateMacro(macro.copyWith(enabled: v)),
           ),
-          // Play button
           IconButton(
             icon: Icon(Icons.play_arrow, color: accent),
             onPressed: state.isPlaying ? null : () => state.playMacro(macro),
           ),
-          // More options
           PopupMenuButton<String>(
             icon: Icon(Icons.more_vert, color: isDark ? Colors.grey : Colors.black54),
             onSelected: (action) {
@@ -195,7 +186,6 @@ class MobileMacroPage extends StatelessWidget {
     return '${ms}ms';
   }
 
-  // ─── Create Macro Dialog ──────────────────────────────────
 
   void _showCreateMacroDialog(BuildContext context, MobileAppState state) {
     Navigator.push(context, MaterialPageRoute(
@@ -203,7 +193,6 @@ class MobileMacroPage extends StatelessWidget {
     ));
   }
 
-  // ─── Edit Macro Dialog ────────────────────────────────────
 
   void _showEditMacroDialog(BuildContext context, MobileAppState state,
       MacroModel macro) {
@@ -212,7 +201,6 @@ class MobileMacroPage extends StatelessWidget {
     ));
   }
 
-  // ─── Rename Dialog ────────────────────────────────────────
 
   void _showRenameDialog(BuildContext context, MobileAppState state,
       MacroModel macro) {
@@ -238,7 +226,6 @@ class MobileMacroPage extends StatelessWidget {
     );
   }
 
-  // ─── Delete Confirmation ──────────────────────────────────
 
   void _confirmDelete(BuildContext context, MobileAppState state,
       MacroModel macro) {
@@ -262,11 +249,10 @@ class MobileMacroPage extends StatelessWidget {
   }
 }
 
-// ─── Macro Editor Page ──────────────────────────────────────
 
 class _MobileMacroEditor extends StatefulWidget {
   final MobileAppState state;
-  final MacroModel? macro; // null = new macro
+  final MacroModel? macro;
 
   const _MobileMacroEditor({required this.state, this.macro});
 
@@ -313,7 +299,6 @@ class _MobileMacroEditorState extends State<_MobileMacroEditor> {
       body: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         children: [
-          // Name
           TextField(
             decoration: InputDecoration(
               labelText: '宏名称',
@@ -325,7 +310,6 @@ class _MobileMacroEditorState extends State<_MobileMacroEditor> {
           ),
           const SizedBox(height: 12),
 
-          // Settings row
           Row(children: [
             Expanded(child: _settingCard('重复次数', _repeatCount == 0 ? '无限' : '$_repeatCount', isDark, () {
               _showRepeatDialog(isDark);
@@ -341,7 +325,6 @@ class _MobileMacroEditorState extends State<_MobileMacroEditor> {
           ]),
           const SizedBox(height: 16),
 
-          // Add event button
           Row(children: [
             Text('事件列表', style: TextStyle(fontWeight: FontWeight.w600,
                 fontSize: 15, color: isDark ? Colors.white : Colors.black87)),
@@ -354,7 +337,6 @@ class _MobileMacroEditorState extends State<_MobileMacroEditor> {
 
           const SizedBox(height: 4),
 
-          // Event list
           if (_events.isEmpty)
             Center(child: Padding(
               padding: const EdgeInsets.all(32),
@@ -488,7 +470,6 @@ class _MobileMacroEditorState extends State<_MobileMacroEditor> {
     }
   }
 
-  // 顶层 const 映射 — 保证 icon tree-shaking 能静态分析（字体只打包用到的图标）
   static const Map<MacroEventType, IconData> _eventIcons = {
     MacroEventType.mouseDown: Icons.touch_app,
     MacroEventType.mouseUp: Icons.touch_app,
@@ -503,7 +484,6 @@ class _MobileMacroEditorState extends State<_MobileMacroEditor> {
 
   IconData _eventIcon(MacroEventType type) => _eventIcons[type] ?? Icons.mouse;
 
-  // ─── Add Event ────────────────────────────────────────────
 
   void _addEvent(bool isDark, Color accent) {
     String actionType = 'click';
@@ -520,7 +500,6 @@ class _MobileMacroEditorState extends State<_MobileMacroEditor> {
           title: const Text('添加事件'),
           content: SingleChildScrollView(
             child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-              // Event type
               Wrap(spacing: 6, children: [
                 _dialogChip('点击', actionType == 'click', accent, () => setDialogState(() => actionType = 'click')),
                 _dialogChip('按键', actionType == 'keyPress', accent, () => setDialogState(() => actionType = 'keyPress')),
@@ -605,7 +584,6 @@ class _MobileMacroEditorState extends State<_MobileMacroEditor> {
     );
   }
 
-  // ─── Edit Event ───────────────────────────────────────────
 
   void _editEvent(int index, bool isDark, Color accent) {
     final e = _events[index];
@@ -688,7 +666,6 @@ class _MobileMacroEditorState extends State<_MobileMacroEditor> {
     );
   }
 
-  // ─── Repeat Dialog ────────────────────────────────────────
 
   void _showRepeatDialog(bool isDark) {
     final ctrl = TextEditingController(text: _repeatCount == 0 ? '' : _repeatCount.toString());
@@ -717,7 +694,6 @@ class _MobileMacroEditorState extends State<_MobileMacroEditor> {
     );
   }
 
-  // ─── Speed Dialog ─────────────────────────────────────────
 
   void _showSpeedDialog(bool isDark, Color accent) {
     double speed = _speed;
@@ -750,7 +726,6 @@ class _MobileMacroEditorState extends State<_MobileMacroEditor> {
     );
   }
 
-  // ─── Save ─────────────────────────────────────────────────
 
   void _save() {
     if (_name.isEmpty) _name = '未命名宏';

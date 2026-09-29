@@ -1,10 +1,6 @@
-/// 插件图标解析 — manifest 的 icon 字符串名映射到 FluentIcons。
-/// 原生插件用字符串声明图标，宿主渲染时解析为 IconData。
-library;
 
 import 'package:fluent_ui/fluent_ui.dart';
 
-/// 常用图标映射表（与 FluentIcons 字段名一致）
 final Map<String, IconData> pluginIconMap = {
   'puzzle': FluentIcons.puzzle,
   'touch': FluentIcons.touch,
@@ -35,7 +31,6 @@ final Map<String, IconData> pluginIconMap = {
   'accounts': FluentIcons.accounts,
 };
 
-/// 解析图标名；未知名回退到 puzzle
 IconData resolvePluginIcon(String? name) {
   if (name == null) return FluentIcons.puzzle;
   return pluginIconMap[name] ?? FluentIcons.puzzle;

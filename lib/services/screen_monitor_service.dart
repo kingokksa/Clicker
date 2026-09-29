@@ -1,6 +1,3 @@
-/// Screen monitoring service — pixel color checking, screen capture, change detection.
-/// Uses platform channel to access Windows GDI APIs.
-library;
 
 import 'dart:async';
 import 'package:flutter/services.dart';
@@ -24,7 +21,6 @@ class ScreenMonitorService {
   int get checkIntervalMs => _checkIntervalMs;
   double get sensitivity => _sensitivity;
 
-  /// Get pixel color at screen coordinates
   Future<Color?> getPixelColor(int x, int y) async {
     try {
       final result = await _channel.invokeMethod<Map>('getPixelColor', [x, y]);
@@ -40,7 +36,6 @@ class ScreenMonitorService {
     return null;
   }
 
-  /// Capture a screen rectangle as raw BGRA pixel data
   Future<Uint8List?> captureScreenRect(int x, int y, int w, int h) async {
     try {
       final result = await _channel.invokeMethod<dynamic>('captureScreenRect', [x, y, w, h]);
@@ -53,7 +48,6 @@ class ScreenMonitorService {
     }
   }
 
-  /// Get screen size
   Future<({int width, int height})?> getScreenSize() async {
     try {
       final result = await _channel.invokeMethod<Map>('getScreenSize');
@@ -66,17 +60,14 @@ class ScreenMonitorService {
     return null;
   }
 
-  /// Add a monitoring region
   void addRegion(MonitorRegion region) {
     _regions.add(region);
   }
 
-  /// Remove a monitoring region
   void removeRegion(String id) {
     _regions.removeWhere((r) => r.id == id);
   }
 
-  /// Update check interval
   void setCheckInterval(int ms) {
     _checkIntervalMs = ms.clamp(100, 5000);
     if (_isMonitoring) {
@@ -85,12 +76,10 @@ class ScreenMonitorService {
     }
   }
 
-  /// Update sensitivity
   void setSensitivity(double value) {
     _sensitivity = value.clamp(0.1, 1.0);
   }
 
-  /// Start monitoring
   void startMonitoring() {
     if (_isMonitoring) return;
     _isMonitoring = true;
@@ -99,7 +88,6 @@ class ScreenMonitorService {
     _addLog('监控已启动', MonitorLogLevel.info);
   }
 
-  /// Stop monitoring
   void stopMonitoring() {
     if (!_isMonitoring) return;
     _isMonitoring = false;
@@ -108,7 +96,6 @@ class ScreenMonitorService {
     _addLog('监控已停止', MonitorLogLevel.info);
   }
 
-  /// Clear logs
   void clearLogs() {
     _logs.clear();
   }
@@ -130,21 +117,17 @@ class ScreenMonitorService {
       if (!region.enabled) continue;
 
       try {
-        // Sample key pixels in the region
         final color = await getPixelColor(region.x + region.w ~/ 2, region.y + region.h ~/ 2);
         if (color == null) continue;
 
-        // Check if color matches the target
         if (region.targetColor != null) {
           final diff = _colorDifference(color, region.targetColor!);
           if (diff < (1.0 - _sensitivity)) {
-            // Color matches — trigger action
             _addLog('区域 "${region.name}" 检测到目标颜色 RGB(${(color.r * 255.0).round().clamp(0, 255)},${(color.g * 255.0).round().clamp(0, 255)},${(color.b * 255.0).round().clamp(0, 255)})', MonitorLogLevel.detected);
             region.onDetected?.call();
           }
         }
 
-        // Check for change from last capture
         if (region.lastCenterColor != null) {
           final diff = _colorDifference(color, region.lastCenterColor!);
           if (diff > _sensitivity * 0.3) {
@@ -155,7 +138,6 @@ class ScreenMonitorService {
 
         region.lastCenterColor = color;
       } on PlatformException {
-        // Ignore errors during monitoring
       }
     }
   }

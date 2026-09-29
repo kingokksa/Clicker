@@ -1,15 +1,3 @@
-/// 插件管理器 — 状态机、发现、安装、激活/停用、持久化。
-///
-/// 状态流转：
-///   discovered（发现，仅 manifest） → installed（安装，用户可用）
-///   installed → activating → active（激活，资源已分配）
-///   active → deactivating → installed（停用，资源已释放）
-///
-/// 真实即需即用：
-/// - Dart 插件：工厂惰性实例化，激活才创建对象、停用即丢弃
-/// - 原生插件：激活才 DynamicLibrary.open，停用调用原生 dispose
-/// - activationEvents 控制何时激活：onStartup / manual / onCommand:<id> / onPage:<id>
-library;
 
 import 'dart:convert';
 import 'dart:io';
@@ -27,17 +15,15 @@ import 'plugin_manifest.dart';
 import 'plugin_storage.dart';
 import 'native_plugin_runtime.dart';
 
-/// 插件运行状态
 enum PluginState {
-  discovered,  // 已发现（仅清单）
-  installed,   // 已安装未激活
-  activating,  // 激活中
-  active,      // 激活中（资源已分配）
-  deactivating,// 停用中
-  error,       // 激活失败
+  discovered,
+  installed,
+  activating,
+  active,
+  deactivating,
+  error,
 }
 
-/// 插件描述符 — 管理器中每个插件的完整状态
 class PluginDescriptor {
   final PluginManifest manifest;
   final bool isBuiltin;
@@ -47,12 +33,10 @@ class PluginDescriptor {
 
   String? errorMessage;
 
-  // Dart 运行时
   Plugin? dartInstance;
   PluginContext? activeContext;
   CachedPluginStorage? cachedStorage;
 
-  // Native 运行时
   NativePluginInstance? nativeInstance;
 
   PluginDescriptor({required this.manifest, required this.isBuiltin});
@@ -67,7 +51,6 @@ class PluginDescriptor {
   }
 }
 
-/// 插件管理器（单例）
 class PluginManager extends ChangeNotifier
     implements PluginManagerCommandActivator {
   PluginManager._();
@@ -77,19 +60,14 @@ class PluginManager extends ChangeNotifier
   final Map<String, PluginDescriptor> _plugins = {};
   final Map<String, PluginFactory> _dartFactories = {};
   final Set<String> _installedIds = {};
-  final Set<String> _enabledIds = {}; // 用户启用开关
-  // 已自动启用过的内置插件。记录后不再自动打开，
-  // 这样用户显式停用的内置插件不会在下次启动被重新打开。
+  final Set<String> _enabledIds = {};
   final Set<String> _knownBuiltinIds = {};
 
-  /// 管理器持有的全部插件
   List<PluginDescriptor> get plugins => _plugins.values.toList();
 
-  /// 已安装插件
   List<PluginDescriptor> get installedPlugins =>
       _plugins.values.where((p) => p.isInstalled).toList();
 
-  /// 激活中的插件
   List<PluginDescriptor> get activePlugins =>
       _plugins.values.where((p) => p.isActive).toList();
 
@@ -98,16 +76,10 @@ class PluginManager extends ChangeNotifier
   bool isInstalled(String id) => _installedIds.contains(id);
   bool isEnabled(String id) => _enabledIds.contains(id);
 
-  /// 插件根目录路径（外部插件安装位置）
   Future<String> get pluginsDirPath => AppPaths.getPluginsDir();
 
-  // ─── Dart 插件注册 ────────────────────────────────────
 
-  /// 注册内置 Dart 插件（只保存工厂，激活才实例化）
   void registerDartPlugin(PluginFactory factory) {
-    // 需要读取 manifest 判断 id，但实例化违背惰性原则——
-    // 因此内置插件在注册时创建一次"轻量探针"实例仅取 manifest，
-    // 随后丢弃；正式激活时重新通过工厂创建。
     final probe = factory();
     final manifest = probe.manifest;
     final id = manifest.id;
@@ -116,9 +88,7 @@ class PluginManager extends ChangeNotifier
     notifyListeners();
   }
 
-  // ─── 外部插件发现 ─────────────────────────────────────
 
-  /// 扫描插件目录，注册外部原生插件（只读 manifest，零加载）
   Future<void> discoverExternalPlugins() async {
     try {
       final pluginsDir = await AppPaths.getPluginsDir();
@@ -140,17 +110,12 @@ class PluginManager extends ChangeNotifier
             isBuiltin: false,
           );
         } catch (_) {
-          // 非法 manifest 跳过
         }
       }
       notifyListeners();
     } catch (_) {}
   }
 
-  /// 从 zip 安装外部插件。
-  ///
-  /// [beforeRegister] 在插件注册（进入 installed 状态）之前回调，用于
-  /// 写入安装留痕（包体 SHA256 等）。返回 false 可中止注册。
   Future<bool> installFromZip(String zipPath,
       {Future<bool> Function(PluginManifest)? beforeRegister}) async {
     final manifest = await _extractZipToPluginsDir(zipPath);
@@ -158,7 +123,6 @@ class PluginManager extends ChangeNotifier
     return _registerExternal(manifest, beforeRegister: beforeRegister);
   }
 
-  /// 从目录安装外部插件。
   Future<bool> installFromDirectory(String sourceDir,
       {Future<bool> Function(PluginManifest)? beforeRegister}) async {
     try {
@@ -172,7 +136,6 @@ class PluginManager extends ChangeNotifier
           Directory('$pluginsDir${Platform.pathSeparator}${manifest.id}');
       if (await destDir.exists()) await destDir.delete(recursive: true);
       await _copyDirectory(Directory(sourceDir), destDir);
-      // 文件已整体替换，旧的库指纹锚点不再有效，下次激活重新建立。
       await PluginIntegrity.instance.dropNativeLibAnchor(manifest.id);
       return _registerExternal(manifest, beforeRegister: beforeRegister);
     } catch (_) {
@@ -209,7 +172,6 @@ class PluginManager extends ChangeNotifier
           await Directory(path).create(recursive: true);
         }
       }
-      // zip 可能带顶层目录
       String root = extractDir.path;
       final items = await extractDir.list().toList();
       if (items.length == 1 && items.first is Directory) root = items.first.path;
@@ -222,7 +184,6 @@ class PluginManager extends ChangeNotifier
           Directory('$pluginsDir${Platform.pathSeparator}${manifest.id}');
       if (await destDir.exists()) await destDir.delete(recursive: true);
       await _copyDirectory(Directory(root), destDir);
-      // 文件已整体替换，旧的库指纹锚点不再有效，下次激活重新建立。
       await PluginIntegrity.instance.dropNativeLibAnchor(manifest.id);
       try { await extractDir.delete(recursive: true); } catch (_) {}
       return manifest;
@@ -231,9 +192,7 @@ class PluginManager extends ChangeNotifier
     }
   }
 
-  // ─── 安装 / 卸载 ──────────────────────────────────────
 
-  /// 安装（内置=标记；外部=已复制目录后标记）
   Future<void> installPlugin(String id) async {
     final desc = _plugins[id];
     if (desc == null || desc.isInstalled) return;
@@ -243,7 +202,6 @@ class PluginManager extends ChangeNotifier
     notifyListeners();
   }
 
-  /// 卸载
   Future<void> uninstallPlugin(String id) async {
     final desc = _plugins[id];
     if (desc == null || !desc.isInstalled) return;
@@ -254,7 +212,6 @@ class PluginManager extends ChangeNotifier
     if (!desc.isBuiltin) {
       final pluginsDir = await AppPaths.getPluginsDir();
       final dir = Directory('$pluginsDir${Platform.pathSeparator}$id');
-      // DLL 可能仍被进程持有，重试几次
       for (int i = 0; i < 3; i++) {
         try {
           if (await dir.exists()) await dir.delete(recursive: true);
@@ -271,11 +228,7 @@ class PluginManager extends ChangeNotifier
     notifyListeners();
   }
 
-  // ─── 启用 / 禁用（用户开关）────────────────────────────
 
-  /// 启用（用户开关）。
-  /// 仅 onStartup 插件立即激活；manual/onPage/onCommand 插件保持未激活，
-  /// 待页面打开或命令调用时按需激活（真实即需即用）。
   Future<bool> enablePlugin(String id) async {
     final desc = _plugins[id];
     if (desc == null) return false;
@@ -290,7 +243,6 @@ class PluginManager extends ChangeNotifier
     return ok;
   }
 
-  /// 禁用并停用
   Future<void> disablePlugin(String id) async {
     final desc = _plugins[id];
     if (desc == null) return;
@@ -308,9 +260,7 @@ class PluginManager extends ChangeNotifier
     }
   }
 
-  // ─── 激活 / 停用（核心状态机）─────────────────────────
 
-  /// 激活插件。[reason] 为激活事件（'manual'/'onStartup'/'onCommand:x'/'onPage:x'）。
   Future<bool> activatePlugin(String id, {String reason = 'manual'}) async {
     final desc = _plugins[id];
     if (desc == null || desc.isActive || desc.state == PluginState.activating) {
@@ -368,8 +318,6 @@ class PluginManager extends ChangeNotifier
       return false;
     }
 
-    // 加载前复核原生库指纹。库被换（供应链/文件被篡改）时拒绝激活，
-    // 避免「装上就信一辈子」——第一次激活留下的指纹就是信任锚。
     final verdict = await PluginIntegrity.instance.checkNativeLib(desc.id, libPath);
     if (verdict == IntegrityVerdict.changed) {
       desc.errorMessage = '插件库已发生变化（SHA256 不匹配），已拒绝加载；请重新安装该插件';
@@ -386,7 +334,6 @@ class PluginManager extends ChangeNotifier
       return false;
     }
 
-    // 存储缓存加载（激活前完成，供 C 回调同步读取）
     final storage = PluginStorage.forPlugin(pluginsDir, desc.id);
     await storage.applyDefaults(desc.manifest.contributions.settings);
     final cached = CachedPluginStorage(storage);
@@ -418,12 +365,10 @@ class PluginManager extends ChangeNotifier
     }
     desc.nativeInstance = instance;
 
-    // 注册 manifest 声明的贡献
     _registerNativeContributions(desc, instance, cached);
     return true;
   }
 
-  /// 原生插件的贡献注册（命令包装 + 声明式页面 + 视觉）
   void _registerNativeContributions(
     PluginDescriptor desc,
     NativePluginInstance instance,
@@ -432,7 +377,6 @@ class PluginManager extends ChangeNotifier
     final contribs = desc.manifest.contributions;
     final host = _host;
 
-    // 命令
     for (final cmd in contribs.commands) {
       final commandId = cmd.id.contains('.') ? cmd.id : '${desc.id}.${cmd.id}';
       host.registerCommand(desc.id, CommandRegistration(
@@ -450,7 +394,6 @@ class PluginManager extends ChangeNotifier
       ));
     }
 
-    // 页面：宿主渲染的声明式设置页（由 UI 层构建，这里注册元数据）
     for (final page in contribs.pages) {
       final pageId = resolveFullPageId(desc.id, page.id);
       host.registerPage(desc.id, PageRegistration(
@@ -468,7 +411,6 @@ class PluginManager extends ChangeNotifier
     }
   }
 
-  /// 声明式页面构建回调（由 UI 层注入实现，渲染 manifest 声明的设置界面）
   static Widget Function(PluginDescriptor desc, CachedPluginStorage storage)?
       declarativePageFactory;
 
@@ -491,7 +433,6 @@ class PluginManager extends ChangeNotifier
     );
   }
 
-  /// 停用插件（释放资源、移除贡献、取消订阅）
   Future<void> deactivatePlugin(String id) async {
     final desc = _plugins[id];
     if (desc == null || !desc.isActive) return;
@@ -517,11 +458,9 @@ class PluginManager extends ChangeNotifier
     await _host.events.emit(PluginEvents.pluginDeactivated, {'pluginId': id});
   }
 
-  // ─── 按需激活入口 ─────────────────────────────────────
 
   @override
   Future<bool> activateForCommand(String commandId) async {
-    // 1. 已注册命令的插件正在响应（不会走到这）；查找声明了该命令的未激活插件
     for (final desc in _plugins.values) {
       if (desc.isActive || !_enabledIds.contains(desc.id)) continue;
       final commands = desc.manifest.contributions.commands;
@@ -537,8 +476,6 @@ class PluginManager extends ChangeNotifier
     return false;
   }
 
-  /// 页面打开时按需激活（onPage:<id>）。
-  /// 匹配已启用但未激活插件声明的页面（manifest 静态数据，零加载成本）。
   Future<bool> ensurePageActivated(String pageId) async {
     for (final desc in _plugins.values) {
       if (desc.isActive || !_enabledIds.contains(desc.id)) continue;
@@ -554,10 +491,7 @@ class PluginManager extends ChangeNotifier
     return false;
   }
 
-  // ─── 初始化 / 持久化 ──────────────────────────────────
 
-  /// 启动流程：加载状态 → 发现外部插件 → 仅激活声明 onStartup 的已启用插件。
-  /// manual/onPage/onCommand 插件保持未激活，真正使用时才分配资源。
   Future<void> initialize() async {
     await loadState();
     await discoverExternalPlugins();
@@ -574,8 +508,6 @@ class PluginManager extends ChangeNotifier
     notifyListeners();
   }
 
-  /// 内置插件默认安装并启用，版本升级新增的内置插件无需用户手动开启。
-  /// 只处理从未记录过的插件，因此用户停用过的不会被重新打开。
   Future<void> _enableNewBuiltins() async {
     var changed = false;
     for (final desc in _plugins.values) {
@@ -592,7 +524,6 @@ class PluginManager extends ChangeNotifier
     if (changed) await saveState();
   }
 
-  /// 应用退出前停用全部插件
   Future<void> shutdown() async {
     await _host.events.emit(PluginEvents.appQuitting);
     for (final desc in activePlugins.toList()) {
@@ -637,7 +568,6 @@ class PluginManager extends ChangeNotifier
     } catch (_) {}
   }
 
-  /// 在系统文件管理器中打开插件目录
   Future<void> openPluginsDir() async {
     final path = await AppPaths.getPluginsDir();
     try {

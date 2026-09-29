@@ -1,5 +1,3 @@
-/// Mobile settings page — Material Design theme, sound, profiles, import/export.
-library;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -46,7 +44,6 @@ class _MobileSettingsPageState extends State<MobileSettingsPage> {
       body: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         children: [
-          // ─── Appearance ────────────────────────────────────
           _sectionTitle('外观', isDark),
           Card(
             color: isDark ? const Color(0xFF22223A) : Colors.white,
@@ -80,7 +77,6 @@ class _MobileSettingsPageState extends State<MobileSettingsPage> {
           ),
           const SizedBox(height: 16),
 
-          // ─── Sound ─────────────────────────────────────────
           _sectionTitle('音效', isDark),
           Card(
             color: isDark ? const Color(0xFF22223A) : Colors.white,
@@ -108,7 +104,6 @@ class _MobileSettingsPageState extends State<MobileSettingsPage> {
           ),
           const SizedBox(height: 16),
 
-          // ─── Profiles ──────────────────────────────────────
           _sectionTitle('配置方案', isDark),
           Card(
             color: isDark ? const Color(0xFF22223A) : Colors.white,
@@ -134,7 +129,6 @@ class _MobileSettingsPageState extends State<MobileSettingsPage> {
           ),
           const SizedBox(height: 16),
 
-          // ─── Data ──────────────────────────────────────────
           _sectionTitle('数据', isDark),
           Card(
             color: isDark ? const Color(0xFF22223A) : Colors.white,
@@ -170,7 +164,6 @@ class _MobileSettingsPageState extends State<MobileSettingsPage> {
           ),
           const SizedBox(height: 16),
 
-          // ─── About ─────────────────────────────────────────
           _sectionTitle('关于', isDark),
           Card(
             color: isDark ? const Color(0xFF22223A) : Colors.white,

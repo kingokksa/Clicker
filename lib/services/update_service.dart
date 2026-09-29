@@ -1,6 +1,3 @@
-/// Update service — checks GitHub releases for new versions,
-/// downloads and applies updates with restart.
-library;
 
 import 'dart:convert';
 import 'dart:io';
@@ -41,7 +38,6 @@ class UpdateService extends ChangeNotifier {
     _currentVersion = version.replaceAll('+', '-build-');
   }
 
-  /// Check GitHub for the latest release
   Future<void> checkForUpdates() async {
     if (_checking) return;
     _checking = true;
@@ -65,7 +61,6 @@ class UpdateService extends ChangeNotifier {
       _latestVersion = (json['tag_name'] as String?)?.replaceFirst(RegExp(r'^v'), '') ?? '';
       _releaseNotes = (json['body'] as String?) ?? '';
 
-      // Find Windows zip asset
       final assets = json['assets'] as List<dynamic>? ?? [];
       String? zipUrl;
       for (final asset in assets) {
@@ -75,7 +70,6 @@ class UpdateService extends ChangeNotifier {
           break;
         }
       }
-      // Fallback: any zip
       if (zipUrl == null) {
         for (final asset in assets) {
           final name = (asset['name'] as String?) ?? '';
@@ -101,7 +95,6 @@ class UpdateService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Download and apply the update, then restart
   Future<bool> downloadAndInstall() async {
     if (_downloading || _downloadUrl.isEmpty) return false;
     _downloading = true;
@@ -115,7 +108,6 @@ class UpdateService extends ChangeNotifier {
       final zipPath = '$tempDir${Platform.pathSeparator}update.zip';
       final extractDir = '$tempDir${Platform.pathSeparator}update_extract';
 
-      // Download with progress
       final request = http.Request('GET', Uri.parse(_downloadUrl));
       final response = await request.send();
       if (response.statusCode != 200) {
@@ -142,7 +134,6 @@ class UpdateService extends ChangeNotifier {
       _downloadProgress = 1.0;
       notifyListeners();
 
-      // Extract zip
       final extractDirObj = Directory(extractDir);
       if (await extractDirObj.exists()) {
         await extractDirObj.delete(recursive: true);
@@ -161,24 +152,16 @@ class UpdateService extends ChangeNotifier {
         }
       }
 
-      // Find the actual content directory (might be nested)
       String sourceDir = extractDir;
       final topItems = Directory(extractDir).listSync();
       if (topItems.length == 1 && topItems.first is Directory) {
         sourceDir = topItems.first.path;
       }
 
-      // Create a batch script that:
-      // 1. Waits for the app to exit
-      // 2. Copies all files (overwriting existing)
-      // 3. Restarts the app
-      // 4. Cleans up
       final scriptPath = '$tempDir${Platform.pathSeparator}apply_update.bat';
       final exeName = Platform.resolvedExecutable.split(Platform.pathSeparator).last;
       final exePath = '$appDir\\$exeName';
 
-      // Use batch file to avoid PowerShell execution policy issues
-      // and ensure proper process termination
       final script = '''@echo off
 chcp 65001 >nul
 echo Applying update...
@@ -219,18 +202,13 @@ exit /b
 ''';
       await File(scriptPath).writeAsString(script);
 
-      // First, try to close the window gracefully via window_manager
-      // This triggers the onWindowClose handler which saves state
       try {
         await windowManager.close();
       } catch (_) {
-        // If window_manager close fails, force exit
       }
 
-      // Give a brief moment for graceful shutdown, then launch the updater
       await Future.delayed(const Duration(milliseconds: 500));
 
-      // Launch the update script in a detached process
       await Process.start(
         'cmd',
         ['/c', 'start', '/min', '', scriptPath],
@@ -238,7 +216,6 @@ exit /b
         runInShell: true,
       );
 
-      // Force exit the app
       exit(0);
     } catch (e) {
       _updateError = '更新失败: $e';

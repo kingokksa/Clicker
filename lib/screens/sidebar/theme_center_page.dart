@@ -1,5 +1,3 @@
-/// Theme center page — actually applies theme, accent color, and visual effects.
-library;
 
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:provider/provider.dart';
@@ -39,7 +37,6 @@ class ThemeCenterPage extends StatelessWidget {
     return ScaffoldPage.scrollable(
       padding: const EdgeInsets.all(20),
       children: [
-        // Header
         Row(children: [
           Icon(FluentIcons.color, size: 20, color: accent),
           const SizedBox(width: 10),
@@ -47,7 +44,6 @@ class ThemeCenterPage extends StatelessWidget {
         ]),
         const SizedBox(height: 20),
 
-        // ── Dark/Light mode ──────────────────────────────────
         _sectionTitle('外观模式', isDark),
         const SizedBox(height: 8),
         Row(children: [
@@ -58,7 +54,6 @@ class ThemeCenterPage extends StatelessWidget {
 
         const SizedBox(height: 20),
 
-        // ── Theme presets ────────────────────────────────────
         _sectionTitle('主题预设', isDark),
         const SizedBox(height: 8),
         Wrap(spacing: 10, runSpacing: 10, children: [
@@ -68,7 +63,6 @@ class ThemeCenterPage extends StatelessWidget {
 
         const SizedBox(height: 20),
 
-        // ── Accent color ────────────────────────────────────
         _sectionTitle('强调色', isDark),
         const SizedBox(height: 8),
         Wrap(spacing: 8, runSpacing: 8, children: [
@@ -78,7 +72,6 @@ class ThemeCenterPage extends StatelessWidget {
 
         const SizedBox(height: 20),
 
-        // ── Custom color ─────────────────────────────────────
         _sectionTitle('自定义颜色', isDark),
         const SizedBox(height: 8),
         _buildCustomColorCard(isDark, state),

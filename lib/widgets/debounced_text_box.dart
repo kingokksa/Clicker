@@ -1,6 +1,3 @@
-/// Fluent UI TextBox that doesn't lose focus when parent rebuilds.
-/// Only commits value on submit or focus loss, not on every keystroke.
-library;
 
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/services.dart';

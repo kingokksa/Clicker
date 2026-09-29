@@ -1,4 +1,3 @@
-library;
 
 import 'dart:io';
 import 'package:flutter/services.dart';
@@ -40,7 +39,6 @@ class WindowsOcrPlugin extends VisionPlugin {
         return true;
       }
     } on PlatformException {
-      // checkOcrAvailable not implemented, try a small OCR test
     }
     try {
       final result = await _channel.invokeMethod<Map>('ocrRegion', [0, 0, 10, 10, 'en']);

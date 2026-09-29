@@ -1,5 +1,3 @@
-/// Settings page — hotkeys, theme, profiles. Fluent UI design.
-library;
 
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/services.dart';
@@ -32,7 +30,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _loadVersion() async {
     final info = await PackageInfo.fromPlatform();
-    final version = info.version; // reads from pubspec.yaml automatically
+    final version = info.version;
     if (mounted) setState(() => _appVersion = version);
     UpdateService.instance.setCurrentVersion(version);
   }
@@ -106,7 +104,6 @@ class _SettingsPageState extends State<SettingsPage> {
     });
   }
 
-  // ─── Hotkeys ──────────────────────────────────────────────
 
   Widget _buildHotkeyRow(BuildContext context, AppState state, FluentThemeData theme, {
     required String label, required String value, required String field, required IconData icon,
@@ -159,7 +156,6 @@ class _SettingsPageState extends State<SettingsPage> {
     ));
   }
 
-  // ─── Window ───────────────────────────────────────────────
 
   Widget _buildWindowOptions(AppState state) {
     final uiScale = _uiScalePreview ?? state.uiScale;
@@ -205,7 +201,6 @@ class _SettingsPageState extends State<SettingsPage> {
     ]);
   }
 
-  // ─── Auto Start ───────────────────────────────────────────
 
   Widget _buildAutoStartSection(AppState state) {
     final config = state.clickerConfig;
@@ -235,7 +230,6 @@ class _SettingsPageState extends State<SettingsPage> {
     } catch (_) {}
   }
 
-  // ─── Profiles ─────────────────────────────────────────────
 
   Widget _buildProfileSection(BuildContext context, AppState state) {
     final profiles = state.profiles;
@@ -261,7 +255,6 @@ class _SettingsPageState extends State<SettingsPage> {
       const SizedBox(height: 16),
       const Divider(),
       const SizedBox(height: 12),
-      // Import / Export
       Row(children: [
         Expanded(child: FilledButton(
           onPressed: () => _exportConfig(context, state),
@@ -308,7 +301,6 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  // ─── About Section ────────────────────────────────────────
 
   Widget _buildAboutSection() {
     final update = UpdateService.instance;
@@ -319,7 +311,6 @@ class _SettingsPageState extends State<SettingsPage> {
       listenable: update,
       builder: (context, _) {
         return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          // Version & Author
           Row(children: [
             const Text('版本:', style: TextStyle(fontSize: 13)),
             const SizedBox(width: 8),
@@ -344,7 +335,6 @@ class _SettingsPageState extends State<SettingsPage> {
           const Divider(),
           const SizedBox(height: 12),
 
-          // Check for updates
           if (update.checking) ...[
             const Row(children: [
               SizedBox(width: 16, height: 16, child: ProgressRing(strokeWidth: 2)),
@@ -407,7 +397,6 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  // ──── Sound Feedback Section ────
 
   Widget _buildSoundFeedbackSection(BuildContext context, AppState state) {
     final config = state.clickerConfig;
@@ -473,7 +462,6 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(width: 8),
         Text(label, style: const TextStyle(fontSize: 13)),
         const Spacer(),
-        // Quick toggle: enable/disable this module
         ToggleSwitch(
           checked: config.enabled,
           onChanged: (v) => onChanged(SoundConfig(
@@ -485,7 +473,6 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
       ]),
       content: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // Start sound
         _buildSoundItemRow(
           context: context,
           label: '开始音效',
@@ -497,7 +484,6 @@ class _SettingsPageState extends State<SettingsPage> {
         const SizedBox(height: 8),
         const Divider(style: DividerThemeData(horizontalMargin: EdgeInsets.zero)),
         const SizedBox(height: 8),
-        // End sound
         _buildSoundItemRow(
           context: context,
           label: '结束音效',
@@ -529,7 +515,6 @@ class _SettingsPageState extends State<SettingsPage> {
         Text(label, style: const TextStyle(fontSize: 12)),
         const Spacer(),
         if (enabled) ...[
-          // File picker button
           HyperlinkButton(
             onPressed: () => _pickSoundFile(onPathChanged),
             child: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -588,7 +573,6 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 }
 
-// ─── Hotkey Picker Dialog ────────────────────────────────────
 
 class _HotkeyPickerDialog extends StatefulWidget {
   final String currentValue;
@@ -619,7 +603,6 @@ class _HotkeyPickerDialogState extends State<_HotkeyPickerDialog> {
       content: SizedBox(width: 420, child: Column(mainAxisSize: MainAxisSize.min, children: [
         Text('选择修饰键和功能键', style: TextStyle(fontSize: 12, color: FluentTheme.of(context).brightness == Brightness.dark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
         const SizedBox(height: 16),
-        // Preview
         Center(child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
           decoration: BoxDecoration(
@@ -631,7 +614,6 @@ class _HotkeyPickerDialogState extends State<_HotkeyPickerDialog> {
           )),
         )),
         const SizedBox(height: 16),
-        // Modifiers
         const Text('修饰键', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
         const SizedBox(height: 6),
         Wrap(spacing: 6, children: HotkeyConfig.modifiers.map((mod) {
@@ -647,7 +629,6 @@ class _HotkeyPickerDialogState extends State<_HotkeyPickerDialog> {
           });
         }).toList()),
         const SizedBox(height: 12),
-        // Keys
         const Text('功能键', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
         const SizedBox(height: 6),
         Wrap(spacing: 4, runSpacing: 4, children: HotkeyConfig.keys.map((key) {

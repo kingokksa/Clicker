@@ -1,6 +1,3 @@
-/// Local JSON file storage — replaces SharedPreferences.
-/// All data is stored in {appDir}/data/config.json alongside the executable.
-library;
 
 import 'dart:convert';
 import 'dart:io';
@@ -36,7 +33,6 @@ class LocalStorage {
     await file.writeAsString(const JsonEncoder.withIndent('  ').convert(_data));
   }
 
-  // ─── Getters ──────────────────────────────────────────────
 
   String? getString(String key) => _data[key]?.toString();
 
@@ -52,7 +48,6 @@ class LocalStorage {
     return null;
   }
 
-  // ─── Setters ──────────────────────────────────────────────
 
   Future<void> setString(String key, String value) async {
     _data[key] = value;

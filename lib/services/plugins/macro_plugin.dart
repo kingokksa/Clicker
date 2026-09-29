@@ -1,5 +1,3 @@
-/// Macro plugin — 宏录制与回放
-library;
 
 import '../plugin/plugin_api.dart';
 import '../plugin/plugin_manifest.dart';
@@ -34,6 +32,5 @@ class MacroPlugin extends Plugin {
 
   @override
   Future<void> onDeactivate() async {
-    // MacroService 由 AppState 持有，这里无需清理
   }
 }

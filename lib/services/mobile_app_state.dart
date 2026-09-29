@@ -1,7 +1,3 @@
-/// Mobile app state — manages services and configuration for Android/iOS.
-/// Reuses core services (ClickService, MacroService, StorageService) but
-/// removes desktop-only dependencies (window_manager, system_tray, etc.).
-library;
 
 import 'dart:async';
 import 'dart:io';
@@ -22,7 +18,6 @@ import '../services/schedule_controller.dart';
 
 class MobileAppState extends ChangeNotifier {
   static const _platformChannel = MethodChannel('com.clicker.pro/platform');
-  // Emergency stop signal
   static final StreamController<void> _emergencyStopController =
       StreamController<void>.broadcast();
   static Stream<void> get onEmergencyStopSignal =>
@@ -31,14 +26,12 @@ class MobileAppState extends ChangeNotifier {
     _emergencyStopController.add(null);
   }
 
-  // Services
   late final StorageService _storage;
   late final PlatformInput _platformInput;
   late final ClickService _clickService;
   late final MacroService _macroService;
   late final HotkeyService _hotkeyService;
 
-  // Config
   ClickerConfig _clickerConfig = ClickerConfig(
     clickMode: ClickMode.touch,
     positionMode: PositionMode.pick,
@@ -48,7 +41,6 @@ class MobileAppState extends ChangeNotifier {
   Color _accentColor = const Color(0xFF7C4DFF);
   bool _uiAnimations = true;
 
-  // Status
   ClickerStatus _clickerStatus = ClickerStatus.idle;
   MacroStatus _macroStatus = MacroStatus.idle;
   int _clickCount = 0;
@@ -59,17 +51,13 @@ class MobileAppState extends ChangeNotifier {
   String _clickError = '';
   bool _isInitialized = false;
 
-  // Macro list
   List<MacroModel> _macros = [];
   List<String> _profiles = [];
 
-  // Hold trigger keys
   List<HoldTriggerKey> _holdTriggerKeys = [];
 
-  // Scheduled start/stop — 与桌面端共用 ScheduleController
   late final ScheduleController _schedules;
 
-  // Getters
   ClickerConfig get clickerConfig => _clickerConfig;
   HotkeyConfig get hotkeyConfig => _hotkeyConfig;
   String get themeMode => _themeMode;
@@ -97,7 +85,6 @@ class MobileAppState extends ChangeNotifier {
   bool get isPlaying => _macroStatus == MacroStatus.playing;
   PlatformInput get platformInput => _platformInput;
 
-  // Floating panel state
   bool _floatingPanelVisible = false;
 
   void clearMacroError() {
@@ -115,8 +102,6 @@ class MobileAppState extends ChangeNotifier {
       _storage = StorageService();
       await _storage.init();
 
-      // Listen for native method calls (floating panel toggle, etc.)
-      // Use SystemTrayService's external handler registry to avoid overwriting the channel handler
       SystemTrayService().registerExternalHandler((call) async {
         switch (call.method) {
           case 'onFloatingToggle':
@@ -159,16 +144,14 @@ class MobileAppState extends ChangeNotifier {
         return null;
       });
 
-      // Platform input
       if (Platform.isAndroid) {
         _platformInput = AndroidInput();
       } else if (Platform.isIOS) {
-        _platformInput = AndroidInput(); // reuse AndroidInput for iOS for now
+        _platformInput = AndroidInput();
       } else {
         _platformInput = AndroidInput();
       }
 
-      // Load configs — force touch mode on mobile
       _clickerConfig = _storage.loadClickerConfig().copyWith(
         clickMode: ClickMode.touch,
       );
@@ -178,7 +161,6 @@ class MobileAppState extends ChangeNotifier {
       _uiAnimations = _storage.uiAnimations;
       _profiles = _storage.listProfiles();
 
-      // Init services
       _clickService = ClickService(_platformInput);
       _clickService.updateConfig(_clickerConfig);
 
@@ -188,7 +170,6 @@ class MobileAppState extends ChangeNotifier {
       _hotkeyService = HotkeyService(_platformInput);
       _hotkeyService.updateConfig(_hotkeyConfig);
 
-      // Wire callbacks
       _clickService.onStatusChanged = (status, count) {
         _clickerStatus = status;
         _clickCount = count;
@@ -238,7 +219,6 @@ class MobileAppState extends ChangeNotifier {
         });
       };
 
-      // Native floating stop button during Android recording.
       _macroService.onRecordingStopRequest = () async {
         if (_macroService.recordingEvents.isNotEmpty) {
           await stopRecording(name: '录制的宏');
@@ -247,7 +227,6 @@ class MobileAppState extends ChangeNotifier {
         }
       };
 
-      // Hotkey actions (volume keys on mobile)
       _hotkeyService.onStartStopClicker = () {
         _clickService.toggle();
       };
@@ -275,21 +254,17 @@ class MobileAppState extends ChangeNotifier {
 
       _hotkeyService.start();
 
-      // Load macros
       _macros = await _storage.loadAllMacros();
       await _hotkeyService.reregisterAllMacroHotkeys(_macros);
 
-      // Load hold trigger keys
       _holdTriggerKeys = _storage.loadHoldTriggerKeys();
 
-      // Scheduled auto-start / auto-stop（与桌面端共用 ScheduleController）
       _initScheduleController();
       _schedules.start();
 
       _isInitialized = true;
       notifyListeners();
 
-      // Restore floating panel if it was visible before
       if (Platform.isAndroid && _storage.floatingPanelVisible) {
         Future.delayed(const Duration(milliseconds: 500), () {
           showFloatingPanel();
@@ -301,7 +276,6 @@ class MobileAppState extends ChangeNotifier {
     }
   }
 
-  // ─── Clicker Actions ──────────────────────────────────────
 
   void setClickerConfig(ClickerConfig config) {
     _clickerConfig = config;
@@ -313,14 +287,11 @@ class MobileAppState extends ChangeNotifier {
   void toggleClicker() {
     if (!_clickerConfig.autoClickEnabled && !_clickService.isRunning) return;
     _clickService.toggle();
-    // Ensure floating panel UI updates even if status didn't change
     _updateFloatingPanel();
   }
 
   void stopClicker() => _clickService.stop();
 
-  // ─── Scheduled Start / Stop ───────────────────────────────
-  // 与桌面端共用 ScheduleController（同一份布防 / 触发逻辑）。
 
   void _initScheduleController() {
     _schedules = ScheduleController(
@@ -331,13 +302,10 @@ class MobileAppState extends ChangeNotifier {
     );
   }
 
-  /// 新增一个定时任务（默认：启动连点，每天 08:00）。
   void addSchedule() => _schedules.add();
 
-  /// 删除指定下标的定时任务。
   void removeScheduleAt(int index) => _schedules.removeAt(index);
 
-  /// 更新指定下标的定时任务。[rearm] 为 true 时重新布防。
   void updateScheduleAt(int index, ClickerSchedule ns, {bool rearm = false}) =>
       _schedules.updateAt(index, ns, rearm: rearm);
 
@@ -347,7 +315,6 @@ class MobileAppState extends ChangeNotifier {
     broadcastEmergencyStop();
   }
 
-  // ─── Floating Panel ──────────────────────────────────────
 
   Future<bool> checkOverlayPermission() async {
     try {
@@ -389,7 +356,6 @@ class MobileAppState extends ChangeNotifier {
       await _platformChannel.invokeMethod('updateFloatingPanel', {
         'running': isClickerRunning,
       });
-      // Sync full config to floating panel
       await _platformChannel.invokeMethod('updateFloatingPanelConfig', {
         'touchAction': _clickerConfig.touchAction.name,
         'intervalMs': _clickerConfig.intervalMs.round(),
@@ -432,14 +398,12 @@ class MobileAppState extends ChangeNotifier {
 
   void _handleFloatingPickResult(int x, int y) {
     var config = _clickerConfig;
-    // Update the appropriate coordinates based on current touch action
     switch (config.touchAction) {
       case TouchAction.tap:
       case TouchAction.longPress:
         config = config.copyWith(fixedX: x, fixedY: y);
         break;
       case TouchAction.drag:
-        // First pick sets start, second pick sets end
         if (config.dragStartX == 0 && config.dragStartY == 0) {
           config = config.copyWith(dragStartX: x, dragStartY: y);
         } else {
@@ -478,7 +442,6 @@ class MobileAppState extends ChangeNotifier {
         );
         break;
       default:
-        // For tap/longPress, use center of area
         config = config.copyWith(
           fixedX: (x1 + x2) ~/ 2, fixedY: (y1 + y2) ~/ 2,
         );
@@ -492,7 +455,6 @@ class MobileAppState extends ChangeNotifier {
     }
   }
 
-  // ─── Macro Actions ────────────────────────────────────────
 
   Future<void> startRecording() => _macroService.startRecording();
 
@@ -500,8 +462,6 @@ class MobileAppState extends ChangeNotifier {
 
   Future<void> stopRecording({String name = '录制的宏'}) async {
     final macro = _macroService.stopRecording(name: name);
-    // Don't silently save an empty recording (e.g. on Android where capture
-    // wasn't wired up). Surface a clear message instead.
     if (macro.events.isEmpty) {
       _macroError = '未捕获到任何操作，宏未保存';
       notifyListeners();
@@ -560,7 +520,6 @@ class MobileAppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ─── Hotkey Actions ───────────────────────────────────────
 
   void setHotkeyConfig(HotkeyConfig config) {
     _hotkeyConfig = config;
@@ -569,7 +528,6 @@ class MobileAppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ─── Settings Actions ─────────────────────────────────────
 
   void setThemeMode(String mode) {
     _themeMode = mode;
@@ -590,7 +548,6 @@ class MobileAppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ─── Profile Actions ──────────────────────────────────────
 
   Future<void> saveProfile(String name) async {
     await _storage.saveProfile(name, _clickerConfig);
@@ -615,7 +572,6 @@ class MobileAppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ─── Import / Export ──────────────────────────────────────
 
   Future<bool> exportConfig() => _storage.exportConfigToFile(
         clickerConfig: _clickerConfig,
@@ -653,7 +609,6 @@ class MobileAppState extends ChangeNotifier {
     return result;
   }
 
-  // ─── Hold Trigger Actions ─────────────────────────────────
 
   void setHoldTriggerKeys(List<HoldTriggerKey> keys) {
     _holdTriggerKeys = keys;
@@ -682,7 +637,6 @@ class MobileAppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ─── Key Capture ──────────────────────────────────────────
 
   Completer<String?>? _keyCaptureCompleter;
 
@@ -701,7 +655,6 @@ class MobileAppState extends ChangeNotifier {
   }
 }
 
-/// MobileAppState 的定时任务动作出口 — 把共享调度器的动作转发到本端服务。
 class _MobileScheduleActions extends ScheduleActions {
   const _MobileScheduleActions(this.state);
 

@@ -1,5 +1,3 @@
-/// Hold trigger plugin — 按住自动连发
-library;
 
 import '../plugin/plugin_api.dart';
 import '../plugin/plugin_manifest.dart';

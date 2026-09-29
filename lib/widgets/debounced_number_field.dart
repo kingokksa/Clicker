@@ -1,7 +1,3 @@
-/// A text field that doesn't lose focus when the parent widget rebuilds.
-/// Uses a TextEditingController that persists across rebuilds and
-/// only notifies the parent on submit or focus loss (not on every keystroke).
-library;
 
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -45,8 +41,6 @@ class _DebouncedNumberFieldState extends State<DebouncedNumberField> {
   @override
   void didUpdateWidget(DebouncedNumberField oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Only update controller text if the field is NOT focused
-    // (i.e. the value was changed externally, not by user typing)
     if (!_focusNode.hasFocus && widget.value != oldWidget.value) {
       _controller.text = widget.value.toString();
     }
@@ -59,9 +53,6 @@ class _DebouncedNumberFieldState extends State<DebouncedNumberField> {
   }
 
   void _onTyping(String _) {
-    // Commit a short while after the user stops typing, so the value is
-    // written back to the parent config even if the user never blurs the field
-    // (e.g. taps the Start button straight after entering the last coordinate).
     _commitDebounce?.cancel();
     _commitDebounce = Timer(const Duration(milliseconds: 600), _commitValue);
   }

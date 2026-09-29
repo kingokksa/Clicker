@@ -1,8 +1,3 @@
-/// 拟人模式页面 — 集中管理所有拟人化 / 反检测设置：
-/// 拟人化节奏（±40% 抖动、贝塞尔轨迹、随机暂停）、智能延迟、
-/// 随机偏移、随机延迟范围、按键抖动。底层行为仍由 ClickService 消费
-/// [ClickerConfig] 字段实现，此页面只负责配置。
-library;
 
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:provider/provider.dart';
@@ -60,7 +55,6 @@ class HumanizePage extends StatelessWidget {
     );
   }
 
-  // ─── 拟人模式（总开关 + 贝塞尔轨迹 + 随机暂停） ─────────
 
   Widget _buildHumanLike(BuildContext context, ClickerConfig config, AppState state) {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -127,7 +121,6 @@ class HumanizePage extends StatelessWidget {
     ]);
   }
 
-  // ─── 随机延迟 ─────────────────────────────────────────────
 
   Widget _buildRandomDelay(BuildContext context, ClickerConfig config, AppState state) {
     final enabled = config.randomDelayMinMs > 0 || config.randomDelayMaxMs > 0;
@@ -161,7 +154,6 @@ class HumanizePage extends StatelessWidget {
     ]);
   }
 
-  // ─── 随机偏移 ─────────────────────────────────────────────
 
   Widget _buildRandomOffset(BuildContext context, ClickerConfig config, AppState state) {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -194,7 +186,6 @@ class HumanizePage extends StatelessWidget {
     ]);
   }
 
-  // ─── 按键抖动 ─────────────────────────────────────────────
 
   Widget _buildJitter(BuildContext context, ClickerConfig config, AppState state) {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

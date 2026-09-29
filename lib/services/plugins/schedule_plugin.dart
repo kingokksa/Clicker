@@ -1,5 +1,3 @@
-/// 定时任务插件 — 定时自动开始 / 停止连点。
-library;
 
 import '../plugin/plugin_api.dart';
 import '../plugin/plugin_manifest.dart';

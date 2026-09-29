@@ -1,5 +1,3 @@
-/// Theme center plugin — 主题与外观定制
-library;
 
 import '../plugin/plugin_api.dart';
 import '../plugin/plugin_manifest.dart';

@@ -1,6 +1,3 @@
-/// Mobile clicker page — Material Design auto-clicker controls.
-/// Touch-oriented: tap, long press, drag, swipe. No mouse/keyboard options.
-library;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -28,7 +25,6 @@ class _MobileClickerPageState extends State<MobileClickerPage> {
     final isRunning = state.isClickerRunning;
     final floatingVisible = state.isFloatingPanelVisible;
 
-    // Show permission dialog when accessibility error first appears
     final currentError = state.clickError;
     if (currentError.contains('无障碍服务未开启') &&
         currentError != _lastHandledError) {
@@ -52,28 +48,22 @@ class _MobileClickerPageState extends State<MobileClickerPage> {
         child: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         children: [
-          // ─── Click Error ───────────────────────────────────
           if (state.clickError.isNotEmpty)
             Padding(padding: const EdgeInsets.only(bottom: 12), child: _buildErrorCard(state)),
-          // ─── Big Start/Stop Button ─────────────────────────
           _buildBigButton(state, isRunning, accent),
           const SizedBox(height: 16),
 
-          // ─── Status ────────────────────────────────────────
           if (isRunning || state.clickCount > 0)
             _buildStatusCard(state, accent, isDark),
           if (isRunning || state.clickCount > 0) const SizedBox(height: 12),
 
-          // ─── Touch Action Type ─────────────────────────────
           _sectionTitle('操作类型', isDark),
           _touchActionSelector(state, config, accent, isDark),
           const SizedBox(height: 12),
 
-          // ─── Action-specific settings ──────────────────────
           _buildActionSettings(context, state, config, accent, isDark),
           const SizedBox(height: 12),
 
-          // ─── Position ──────────────────────────────────────
           if (config.touchAction == TouchAction.tap ||
               config.touchAction == TouchAction.longPress) ...[
             _sectionTitle('点击位置', isDark),
@@ -81,12 +71,10 @@ class _MobileClickerPageState extends State<MobileClickerPage> {
             const SizedBox(height: 12),
           ],
 
-          // ─── Interval ──────────────────────────────────────
           _sectionTitle('操作间隔', isDark),
           _intervalSlider(state, config, accent, isDark),
           const SizedBox(height: 12),
 
-          // ─── Random Offset (tap/longPress only) ────────────
           if (config.touchAction == TouchAction.tap ||
               config.touchAction == TouchAction.longPress) ...[
             _sectionTitle('随机偏移', isDark),
@@ -94,17 +82,15 @@ class _MobileClickerPageState extends State<MobileClickerPage> {
             const SizedBox(height: 12),
           ],
 
-          // ─── Random Delay ──────────────────────────────────
           _sectionTitle('随机延迟', isDark),
           _randomDelayCard(state, config, accent, isDark),
           const SizedBox(height: 12),
 
-          // ─── Repeat ────────────────────────────────────────
           _sectionTitle('重复模式', isDark),
           _repeatModeSelector(state, config, accent, isDark),
           const SizedBox(height: 8),
           _repeatConfig(state, config, isDark),
-          const SizedBox(height: 80), // space for FAB
+          const SizedBox(height: 80),
         ],
       ),
       ),
@@ -123,7 +109,6 @@ class _MobileClickerPageState extends State<MobileClickerPage> {
       await state.hideFloatingPanel();
       return;
     }
-    // Check overlay permission first
     final hasPermission = await state.checkOverlayPermission();
     if (!hasPermission) {
       if (context.mounted) {
@@ -134,17 +119,14 @@ class _MobileClickerPageState extends State<MobileClickerPage> {
           ),
         );
       }
-      // Request permission (opens system settings)
       await state.requestOverlayPermission();
       return;
     }
     await state.showFloatingPanel();
   }
 
-  // ─── Big Button ───────────────────────────────────────────
 
   Widget _buildBigButton(MobileAppState state, bool isRunning, Color accent) {
-    // Allow stopping even if autoClickEnabled is false (user may have started via floating panel)
     final canStart = state.clickerConfig.autoClickEnabled;
     return SizedBox(
       width: double.infinity,
@@ -234,9 +216,7 @@ class _MobileClickerPageState extends State<MobileClickerPage> {
     );
   }
 
-  // ─── Touch Action Selector ────────────────────────────────
 
-  // const 列表保证 icon tree-shaking 生效（record 类型可能使常量求值器放弃）
   static const List<(TouchAction, String, IconData)> _touchActions = [
     (TouchAction.tap, '点击', Icons.touch_app),
     (TouchAction.longPress, '长按', Icons.back_hand),
@@ -278,7 +258,6 @@ class _MobileClickerPageState extends State<MobileClickerPage> {
     );
   }
 
-  // ─── Action-specific Settings ─────────────────────────────
 
   Widget _buildActionSettings(BuildContext context, MobileAppState state,
       ClickerConfig config, Color accent, bool isDark) {
@@ -314,7 +293,6 @@ class _MobileClickerPageState extends State<MobileClickerPage> {
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Column(children: [
-                // Start point
                 Row(children: [
                   Text('起点', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
                       color: isDark ? Colors.white70 : Colors.black87)),
@@ -324,7 +302,6 @@ class _MobileClickerPageState extends State<MobileClickerPage> {
                   _pickButton('选择起点', accent, () => _pickDragStart(context, state, config)),
                 ]),
                 const Divider(height: 20),
-                // End point
                 Row(children: [
                   Text('终点', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
                       color: isDark ? Colors.white70 : Colors.black87)),
@@ -334,7 +311,6 @@ class _MobileClickerPageState extends State<MobileClickerPage> {
                   _pickButton('选择终点', accent, () => _pickDragEnd(context, state, config)),
                 ]),
                 const Divider(height: 20),
-                // Duration
                 Row(children: [
                   Text('拖动时长', style: TextStyle(fontSize: 13,
                       color: isDark ? Colors.white70 : Colors.black87)),
@@ -412,7 +388,6 @@ class _MobileClickerPageState extends State<MobileClickerPage> {
     }
   }
 
-  // ─── Position Selector ────────────────────────────────────
 
   Widget _positionSelector(BuildContext context, MobileAppState state,
       ClickerConfig config, Color accent, bool isDark) {
@@ -423,7 +398,6 @@ class _MobileClickerPageState extends State<MobileClickerPage> {
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(children: [
-          // Position mode chips
           Row(children: [
             _chip('当前位置', config.positionMode == PositionMode.current, accent, isDark,
                 () => state.setClickerConfig(config.copyWith(positionMode: PositionMode.current))),
@@ -434,7 +408,6 @@ class _MobileClickerPageState extends State<MobileClickerPage> {
             _chip('固定坐标', config.positionMode == PositionMode.fixed, accent, isDark,
                 () => state.setClickerConfig(config.copyWith(positionMode: PositionMode.fixed))),
           ]),
-          // Pick button or coordinate input
           if (config.positionMode == PositionMode.pick) ...[
             const SizedBox(height: 10),
             Row(children: [
@@ -523,7 +496,6 @@ class _MobileClickerPageState extends State<MobileClickerPage> {
     }
   }
 
-  // ─── Interval ─────────────────────────────────────────────
 
   Widget _intervalSlider(MobileAppState state, ClickerConfig config,
       Color accent, bool isDark) {
@@ -559,7 +531,6 @@ class _MobileClickerPageState extends State<MobileClickerPage> {
     ]);
   }
 
-  // ─── Random Offset ─────────────────────────────────────────
 
   Widget _randomOffsetCard(MobileAppState state, ClickerConfig config,
       Color accent, bool isDark) {
@@ -633,7 +604,6 @@ class _MobileClickerPageState extends State<MobileClickerPage> {
     );
   }
 
-  // ─── Random Delay ──────────────────────────────────────────
 
   Widget _randomDelayCard(MobileAppState state, ClickerConfig config,
       Color accent, bool isDark) {
@@ -702,7 +672,6 @@ class _MobileClickerPageState extends State<MobileClickerPage> {
     );
   }
 
-  // ─── Repeat ───────────────────────────────────────────────
 
   Widget _repeatModeSelector(MobileAppState state, ClickerConfig config,
       Color accent, bool isDark) {
@@ -740,7 +709,6 @@ class _MobileClickerPageState extends State<MobileClickerPage> {
     return const SizedBox.shrink();
   }
 
-  // ─── Helpers ──────────────────────────────────────────────
 
   Widget _sectionTitle(String title, bool isDark) {
     return Padding(

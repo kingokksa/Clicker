@@ -1,5 +1,3 @@
-/// Auto-clicker page — Fluent UI design.
-library;
 
 import 'package:fluent_ui/fluent_ui.dart';
 import '../../widgets/debounced_text_box.dart';
@@ -16,11 +14,9 @@ class ClickerPage extends StatefulWidget {
   State<ClickerPage> createState() => _ClickerPageState();
 }
 
-/// 点击间隔滑块的显示单位
 enum _IntervalUnit { ms, s, min }
 
 class _ClickerPageState extends State<ClickerPage> {
-  /// 点击间隔滑块的显示单位（值始终以毫秒存储，仅滑块刻度/分档变化）
   _IntervalUnit _intervalUnit = _IntervalUnit.ms;
   final _textTypeController = TextEditingController();
 
@@ -38,7 +34,6 @@ class _ClickerPageState extends State<ClickerPage> {
     final isKeyboard = config.clickMode == ClickMode.keyboard;
     final isWide = MediaQuery.of(context).size.width >= 700;
 
-    // Sync controller text with config (only when different to avoid cursor reset)
     if (_textTypeController.text != config.textToType) {
       final sel = _textTypeController.selection;
       _textTypeController.text = config.textToType;
@@ -113,14 +108,12 @@ class _ClickerPageState extends State<ClickerPage> {
           const SizedBox(height: 12),
           _buildStatusBar(state, theme),
         ],
-        // Bottom padding for FAB
         const SizedBox(height: 70),
       ],
     );
 
     return Stack(children: [
       pageContent,
-      // Floating action button
       Positioned(
         right: 24, bottom: 24,
         child: _buildFAB(state, theme),
@@ -129,8 +122,6 @@ class _ClickerPageState extends State<ClickerPage> {
   }
 
   static const _spacing = SizedBox(height: 10);
-
-  // ─── Section Card ─────────────────────────────────────────
 
   Widget _section({required String title, required IconData icon, required Widget child}) {
     return Builder(builder: (context) {
@@ -151,8 +142,6 @@ class _ClickerPageState extends State<ClickerPage> {
     });
   }
 
-  // ─── Inline Section (no card border, compact) ─────────────
-
   Widget _inlineSection({required String title, required Widget child}) {
     return Builder(builder: (context) {
       final isDark = FluentTheme.of(context).brightness == Brightness.dark;
@@ -171,8 +160,6 @@ class _ClickerPageState extends State<ClickerPage> {
       );
     });
   }
-
-  // ─── Selectable Chip (no checkmark) ───────────────────────
 
   Widget _selectChip(String label, bool selected, VoidCallback onTap, {IconData? icon}) {
     return Builder(builder: (context) {
@@ -210,8 +197,6 @@ class _ClickerPageState extends State<ClickerPage> {
     });
   }
 
-  // ─── Mode Selector ────────────────────────────────────────
-
   Widget _buildModeSelector(BuildContext context, ClickerConfig config, AppState state, FluentThemeData theme) {
     return Row(children: [
       Expanded(child: _selectChip('鼠标', config.clickMode == ClickMode.mouse,
@@ -221,8 +206,6 @@ class _ClickerPageState extends State<ClickerPage> {
         () => state.setClickerConfig(config.copyWith(clickMode: ClickMode.keyboard)), icon: FluentIcons.keyboard_classic)),
     ]);
   }
-
-  // ─── Key Action Mode ──────────────────────────────────────
 
   Widget _buildKeyActionSelector(ClickerConfig config, AppState state, FluentThemeData theme) {
     final modes = [
@@ -237,8 +220,6 @@ class _ClickerPageState extends State<ClickerPage> {
         () => state.setClickerConfig(config.copyWith(keyActionMode: m.$1)), icon: m.$2),
     ).toList());
   }
-
-  // ─── Key Selector ─────────────────────────────────────────
 
   Widget _buildKeySelector(BuildContext context, ClickerConfig config, AppState state, FluentThemeData theme) {
     final accent = theme.accentColor;
@@ -279,8 +260,6 @@ class _ClickerPageState extends State<ClickerPage> {
       onConfirm: (key) { state.setClickerConfig(config.copyWith(keyToRepeat: key)); Navigator.pop(ctx); },
     ));
   }
-
-  // ─── Key Sequence Editor ──────────────────────────────────
 
   Widget _buildKeySequenceEditor(BuildContext context, ClickerConfig config, AppState state, FluentThemeData theme) {
     final seq = config.keySequence;
@@ -350,8 +329,6 @@ class _ClickerPageState extends State<ClickerPage> {
       Navigator.pop(ctx);
     }));
   }
-
-  // ─── Mouse Sequence Editor ────────────────────────────────
 
   Widget _buildMouseSequenceEditor(BuildContext context, ClickerConfig config, AppState state, FluentThemeData theme) {
     final seq = config.mouseSequence;
@@ -446,8 +423,6 @@ class _ClickerPageState extends State<ClickerPage> {
     }));
   }
 
-  // ─── Combo Key Editor ─────────────────────────────────────
-
   Widget _buildComboKeyEditor(BuildContext context, ClickerConfig config, AppState state, FluentThemeData theme) {
     final combo = config.comboKeys;
     final isDark = theme.brightness == Brightness.dark;
@@ -502,8 +477,6 @@ class _ClickerPageState extends State<ClickerPage> {
     }));
   }
 
-  // ─── Text Type Editor ─────────────────────────────────────
-
   Widget _buildTextTypeEditor(BuildContext context, ClickerConfig config, AppState state, FluentThemeData theme) {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       TextBox(maxLines: 4, placeholder: '在此输入文本内容...', controller: _textTypeController,
@@ -532,8 +505,6 @@ class _ClickerPageState extends State<ClickerPage> {
     return _selectChip(label, false, () => state.setClickerConfig(config.copyWith(textToType: text)));
   }
 
-  // ─── Mouse Action Type (click / drag / swipe) ────────────
-
   Widget _buildMouseActionSelector(ClickerConfig config, AppState state, FluentThemeData theme) {
     return Wrap(spacing: 6, runSpacing: 6, children: [
       _selectChip('单击', config.clickType == ClickType.single,
@@ -548,8 +519,6 @@ class _ClickerPageState extends State<ClickerPage> {
         () => state.setClickerConfig(config.copyWith(clickType: ClickType.sequence)), icon: FluentIcons.bulleted_list),
     ]);
   }
-
-  // ─── Mouse Drag Path ──────────────────────────────────────
 
   Widget _buildMouseDragPathSelector(BuildContext context, ClickerConfig config, AppState state, FluentThemeData theme) {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -572,8 +541,6 @@ class _ClickerPageState extends State<ClickerPage> {
       ]),
     ]);
   }
-
-  // ─── Mouse Swipe Path ─────────────────────────────────────
 
   Widget _buildMouseSwipePathSelector(BuildContext context, ClickerConfig config, AppState state, FluentThemeData theme) {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -617,8 +584,6 @@ class _ClickerPageState extends State<ClickerPage> {
     ]);
   }
 
-  // ─── Mouse Button ─────────────────────────────────────────
-
   Widget _buildMouseButtonSelector(ClickerConfig config, AppState state, FluentThemeData theme) {
     final labels = {
       MouseButton.left: '左键', MouseButton.right: '右键', MouseButton.middle: '中键',
@@ -630,8 +595,6 @@ class _ClickerPageState extends State<ClickerPage> {
         () => state.setClickerConfig(config.copyWith(mouseButton: btn))),
     ).toList());
   }
-
-  // ─── Position ─────────────────────────────────────────────
 
   Widget _buildPositionSelector(BuildContext context, ClickerConfig config, AppState state, FluentThemeData theme) {
     final isFixed = config.positionMode == PositionMode.fixed;
@@ -674,12 +637,9 @@ class _ClickerPageState extends State<ClickerPage> {
     }
   }
 
-  // ─── Interval ─────────────────────────────────────────────
-
   Widget _buildIntervalSlider(ClickerConfig config, AppState state, FluentThemeData theme) {
     final ms = config.intervalMs;
 
-    // 每个单位下的快捷档位（毫秒值 + 标签）
     final (List<double> chipMs, List<String> chipLabels) =
       switch (_intervalUnit) {
         _IntervalUnit.ms  => (const [1, 10, 50, 100, 500, 1000], const ['1ms', '10ms', '50ms', '100ms', '500ms', '1s']),
@@ -697,7 +657,6 @@ class _ClickerPageState extends State<ClickerPage> {
         label = '${(ms / 60000).toStringAsFixed(2)}min';
     }
 
-    // 左侧输入框的数值 = 实际毫秒 ÷ 单位倍率：输 100，选「秒」= 100 秒，选「毫秒」= 100 毫秒
     final factor = switch (_intervalUnit) {
       _IntervalUnit.ms => 1.0,
       _IntervalUnit.s => 1000.0,
@@ -707,7 +666,6 @@ class _ClickerPageState extends State<ClickerPage> {
     return Column(children: [
       Text(label, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
       const SizedBox(height: 4),
-      // ── 当前单位下的快捷档位 ──
       Wrap(spacing: 4, runSpacing: 4, children: [
         for (var i = 0; i < chipMs.length; i++)
           _selectChip(
@@ -716,7 +674,6 @@ class _ClickerPageState extends State<ClickerPage> {
             () => state.setClickerConfig(config.copyWith(intervalMs: chipMs[i]))),
       ]),
       const SizedBox(height: 8),
-      // ── 精确输入框 + 单位下拉框（居中）──
       Row(mainAxisAlignment: MainAxisAlignment.center, children: [
         SizedBox(width: 140, child: _DebouncedIntervalTextBox(
           value: ms / factor,
@@ -735,8 +692,6 @@ class _ClickerPageState extends State<ClickerPage> {
       ]),
     ]);
   }
-
-  // ─── Repeat Mode ──────────────────────────────────────────
 
   Widget _buildRepeatModeSelector(ClickerConfig config, AppState state, FluentThemeData theme) {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -774,10 +729,6 @@ class _ClickerPageState extends State<ClickerPage> {
     ]);
   }
 
-  // ─── Hold Trigger ─────────────────────────────────────────
-
-  // ─── Background Click (from plugin) ────────────────────────
-
   Widget _buildHotkeySelector(BuildContext context, {required String currentKey, required void Function(String) onChanged}) {
     final parsed = HotkeyConfig.splitHotkey(currentKey);
     final selectedMods = parsed.mods;
@@ -800,8 +751,6 @@ class _ClickerPageState extends State<ClickerPage> {
       ),
     ]);
   }
-
-  // ─── Floating Action Button ───────────────────────────────
 
   Widget _buildFAB(AppState state, FluentThemeData theme) {
     final isRunning = state.isClickerRunning;
@@ -844,8 +793,6 @@ class _ClickerPageState extends State<ClickerPage> {
     );
   }
 
-  // ─── Status Bar ───────────────────────────────────────────
-
   Widget _buildStatusBar(AppState state, FluentThemeData theme) {
     final isKeyboard = state.clickerConfig.clickMode == ClickMode.keyboard;
     final showStats = state.clickerConfig.statsEnabled;
@@ -857,7 +804,6 @@ class _ClickerPageState extends State<ClickerPage> {
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(color: const Color(0xFF00E676).withValues(alpha: 0.08), borderRadius: BorderRadius.circular(8),
         border: Border.all(color: const Color(0xFF00E676).withValues(alpha: 0.3))),
-      // 计数/CPS/耗时走独立 notifier 精准刷新，避免全页重建
       child: ValueListenableBuilder<int>(
         valueListenable: state.clickCountNotifier,
         builder: (_, count, __) => Row(children: [
@@ -877,8 +823,6 @@ class _ClickerPageState extends State<ClickerPage> {
     ));
   }
 }
-
-// ─── Key Picker Dialog ───────────────────────────────────────
 
 class _KeyPickerDialog extends StatefulWidget {
   final String currentKey;
@@ -937,8 +881,6 @@ class _KeyPickerDialogState extends State<_KeyPickerDialog> {
     );
   }
 }
-
-// ─── Sequence Key Picker Dialog ──────────────────────────────
 
 class _SequenceKeyPickerDialog extends StatefulWidget {
   final void Function(String key, int delayMs) onConfirm;
@@ -1003,8 +945,6 @@ class _SequenceKeyPickerDialogState extends State<_SequenceKeyPickerDialog> {
   }
 }
 
-// ─── Combo Key Picker Dialog ─────────────────────────────────
-
 class _ComboKeyPickerDialog extends StatefulWidget {
   final bool isModifier;
   final ValueChanged<String> onConfirm;
@@ -1068,8 +1008,6 @@ class _ComboKeyPickerDialogState extends State<_ComboKeyPickerDialog> {
     );
   }
 }
-
-// ─── Mouse Action Picker Dialog ──────────────────────────────
 
 class _MouseActionPickerDialog extends StatefulWidget {
   final ValueChanged<MouseActionItem> onConfirm;
@@ -1149,7 +1087,6 @@ class _MouseActionPickerDialogState extends State<_MouseActionPickerDialog> {
   }
 }
 
-/// Debounced interval TextBox for double values (ms).
 class _DebouncedIntervalTextBox extends StatefulWidget {
   final double value;
   final ValueChanged<double> onChanged;

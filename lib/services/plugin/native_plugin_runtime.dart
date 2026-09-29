@@ -1,23 +1,3 @@
-/// 原生插件运行时 v2 — 动态加载 .dll/.so/.dylib 并提供宿主 C 回调函数表。
-///
-/// 真实即需即用：
-/// - 安装后只解析 manifest.json（零加载开销）
-/// - 激活时才 DynamicLibrary.open 并调用 plugin_initialize(host_api)
-/// - 停用时调用 plugin_deactivate + plugin_dispose 释放原生资源
-///
-/// v2 C API（推荐，见 sdk/clicker_plugin.h）：
-///   plugin_initialize_v2(const ClickerHostApi* host, const char* plugin_dir)
-///   plugin_activate_v2(const char* event)
-///   plugin_deactivate_v2()
-///   plugin_dispose_v2()
-///   plugin_execute_command_v2(id, params_json, out, out_size)
-///
-/// v1 兼容（旧插件如 ai_tracker）：plugin_initialize() / plugin_dispose() /
-/// plugin_execute_action() / plugin_template_match() / plugin_ocr()
-///
-/// 宿主回调只能在宿主发起的调用栈内同步使用（isolateLocal），
-/// 即插件在 plugin_execute_command 等函数执行期间调用是安全的。
-library;
 
 import 'dart:async';
 import 'dart:convert';
@@ -31,17 +11,13 @@ import 'plugin_api.dart';
 import 'plugin_manifest.dart';
 import 'plugin_storage.dart';
 
-// ─── C 结构体定义（与 sdk/clicker_plugin.h 严格一致）────────
 
-/// 宿主 API 函数表（C 侧）
 final class ClickerHostApiC extends Struct {
   @Uint32()
   external int structSize;
 
-  // 日志
   external Pointer<NativeFunction<Void Function(Int32, Pointer<Utf8>, Pointer<Utf8>)>> log;
 
-  // 输入（需 input 权限）
   external Pointer<NativeFunction<Void Function(Int32, Int32, Int32)>> sendMouseDown;
   external Pointer<NativeFunction<Void Function(Int32, Int32, Int32)>> sendMouseUp;
   external Pointer<NativeFunction<Void Function(Uint16)>> sendKeyDown;
@@ -49,26 +25,20 @@ final class ClickerHostApiC extends Struct {
   external Pointer<NativeFunction<Void Function(Int32, Int32)>> moveCursor;
   external Pointer<NativeFunction<Void Function(Double, Double)>> scroll;
 
-  // 屏幕（需 screen 权限）
   external Pointer<NativeFunction<Int32 Function(Int32, Int32, Int32, Int32, Pointer<Uint8>, Int32)>> captureScreen;
 
-  // 存储（需 storage 权限）
   external Pointer<NativeFunction<Int32 Function(Pointer<Utf8>, Pointer<Utf8>, Int32)>> storageGet;
   external Pointer<NativeFunction<Int32 Function(Pointer<Utf8>, Pointer<Utf8>)>> storageSet;
 
-  // 事件 / 通知
   external Pointer<NativeFunction<Void Function(Pointer<Utf8>, Pointer<Utf8>)>> emitEvent;
   external Pointer<NativeFunction<Void Function(Pointer<Utf8>, Pointer<Utf8>)>> showNotification;
 
-  // 剪贴板（需 clipboard 权限）
   external Pointer<NativeFunction<Int32 Function(Pointer<Utf8>, Int32)>> readClipboard;
   external Pointer<NativeFunction<Void Function(Pointer<Utf8>)>> writeClipboard;
 
-  // 内存
   external Pointer<NativeFunction<Void Function(Pointer<Void>)>> freeBuffer;
 }
 
-/// PluginInfo v2（C 侧）
 final class PluginInfoV2C extends Struct {
   @Uint32()
   external int apiVersion;
@@ -83,9 +53,7 @@ final class PluginInfoV2C extends Struct {
   external int capabilities;
 }
 
-// ─── 符号签名 ──────────────────────────────────────────────
 
-// v2
 typedef GetInfoV2Native = Pointer<PluginInfoV2C> Function();
 typedef GetInfoV2Dart = Pointer<PluginInfoV2C> Function();
 
@@ -103,7 +71,6 @@ typedef ExecuteCommandV2Native = Int32 Function(
 typedef ExecuteCommandV2Dart = int Function(
     Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, int);
 
-// v1 兼容
 typedef InitializeV1Native = Int32 Function();
 typedef InitializeV1Dart = int Function();
 typedef DisposeV1Native = Void Function();
@@ -113,7 +80,6 @@ typedef ExecuteActionNative = Int32 Function(
 typedef ExecuteActionDart = int Function(
     Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, int);
 
-// 视觉（v1/v2 通用）
 typedef TemplateMatchNative = Int32 Function(
     Pointer<Uint8>, Int32, Int32, Pointer<Uint8>, Int32, Int32,
     Double, Pointer<NativeTemplateMatchResult>, Int32);
@@ -151,9 +117,7 @@ final class NativeOcrResult extends Struct {
   @Int32() external int totalHeight;
 }
 
-// ─── 宿主 API 实现 ─────────────────────────────────────────
 
-/// 为单个原生插件构建宿主函数表
 class NativeHostApiTable {
   final String pluginId;
   final PluginManifest manifest;
@@ -176,7 +140,6 @@ class NativeHostApiTable {
 
   bool get isCreated => _table != null;
 
-  /// 分配并填充函数表
   Pointer<ClickerHostApiC> create() {
     if (_table != null) return _table!;
     _table = calloc<ClickerHostApiC>();
@@ -251,7 +214,6 @@ class NativeHostApiTable {
         }
         final need = w * h * 4;
         if (capacity < need) return -2;
-        // captureScreen 是异步签名；此处为同步 C 回调，采用同步执行 Future
         final data = _captureSync(x, y, w, h);
         if (data == null) return -3;
         out.asTypedList(need).setAll(0, data);
@@ -343,7 +305,6 @@ class NativeHostApiTable {
     return _table!;
   }
 
-  /// 同步屏幕捕获（原生回调场景）
   Uint8List? _captureSync(int x, int y, int w, int h) {
     return _syncCaptureHook?.call(x, y, w, h);
   }
@@ -351,7 +312,6 @@ class NativeHostApiTable {
   String? _clipboardSync() => _clipboardHook?.call();
   void _writeClipboardSync(String text) => _writeClipboardHook?.call(text);
 
-  /// 同步捕获钩子（由宿主注入，避免异步 Future）
   static Future<Uint8List?> Function(int, int, int, int)? asyncCapture;
   static Future<String?> Function()? asyncClipboardRead;
   static Future<void> Function(String)? asyncClipboardWrite;
@@ -370,7 +330,6 @@ class NativeHostApiTable {
     _writeClipboardHook = writeClipboard;
   }
 
-  /// 释放函数表与全部 callable
   void dispose() {
     for (final close in _closers) {
       try { close(); } catch (_) {}
@@ -396,9 +355,7 @@ class NativeHostApiTable {
   static String _vkToName(int vk) => 'vk:$vk';
 }
 
-// ─── 原生插件实例 ──────────────────────────────────────────
 
-/// 已加载的原生插件实例
 class NativePluginInstance {
   final PluginManifest manifest;
   final String libraryPath;
@@ -411,7 +368,6 @@ class NativePluginInstance {
   bool _activated = false;
   NativeHostApiTable? _hostTable;
 
-  // 符号
   GetInfoV2Dart? _getInfoV2;
   InitializeV2Dart? _initializeV2;
   ActivateV2Dart? _activateV2;
@@ -436,7 +392,6 @@ class NativePluginInstance {
   bool get supportsTemplateMatch => _templateMatch != null;
   bool get supportsOcr => _ocr != null;
 
-  /// 打开动态库并绑定符号（不初始化）
   bool open() {
     if (_loaded) return true;
     try {
@@ -445,7 +400,6 @@ class NativePluginInstance {
       return false;
     }
     final lib = _lib!;
-    // v2 探测
     _getInfoV2 = _lookupOpt(lib, 'plugin_get_info_v2', _bindGetInfoV2);
     _initializeV2 = _lookupOpt(lib, 'plugin_initialize_v2', _bindInitV2);
     _activateV2 = _lookupOpt(lib, 'plugin_activate_v2', _bindActivateV2);
@@ -454,7 +408,6 @@ class NativePluginInstance {
     _executeCommandV2 = _lookupOpt(lib, 'plugin_execute_command_v2', _bindExecCmdV2);
     _isV2 = _initializeV2 != null;
 
-    // v1 兼容符号
     _initializeV1 = _lookupOpt(lib, 'plugin_initialize', _bindInitV1);
     _disposeV1 = _lookupOpt(lib, 'plugin_dispose', _bindDisposeV1);
     _executeActionV1 = _lookupOpt(lib, 'plugin_execute_action', _bindExecActionV1);
@@ -465,13 +418,11 @@ class NativePluginInstance {
     return true;
   }
 
-  /// 初始化：v2 传入宿主函数表；v1 直接调用
   bool initialize(NativeHostApiTable hostTable) {
     if (!_loaded || _initialized) return _initialized;
     _hostTable = hostTable;
     try {
       if (_isV2) {
-        // 身份校验：库声明的 id 必须与 manifest 一致（防止目录伪装）
         final info = _getInfoV2?.call();
         if (info != null && info.ref.id != nullptr) {
           final libId = info.ref.id.toDartString();
@@ -497,7 +448,6 @@ class NativePluginInstance {
     }
   }
 
-  /// 激活
   bool activate(String activationEvent) {
     if (!_initialized || _activated) return _activated;
     if (_isV2 && _activateV2 != null) {
@@ -508,19 +458,16 @@ class NativePluginInstance {
         calloc.free(evPtr);
       }
     }
-    // v1 无激活概念，初始化即激活
     _activated = true;
     return true;
   }
 
-  /// 停用（释放原生资源；动态库句柄保留以便重新激活）
   void deactivate() {
     if (!_activated) return;
     try { _deactivateV2?.call(); } catch (_) {}
     _activated = false;
   }
 
-  /// 卸载前清理
   void dispose() {
     deactivate();
     try { _disposeV2?.call(); } catch (_) {}
@@ -543,7 +490,6 @@ class NativePluginInstance {
     _ocr = null;
   }
 
-  /// 执行命令。返回 JSON 字符串结果；失败返回 null / [error]
   ({bool ok, String? result, String? error}) executeCommand(
     String commandId,
     Map<String, dynamic> params,
@@ -570,7 +516,6 @@ class NativePluginInstance {
     }
   }
 
-  /// 模板匹配（视觉插件）
   List<({int x, int y, int width, int height, double score})>? templateMatch(
     Uint8List regionPixels, int regionW, int regionH,
     Uint8List tplPixels, int tplW, int tplH,
@@ -598,7 +543,6 @@ class NativePluginInstance {
     }
   }
 
-  /// OCR（视觉插件）
   ({String text, int x, int y, int w, int h})? ocr(
     Uint8List pixels, int w, int h, String language,
   ) {
@@ -612,7 +556,6 @@ class NativePluginInstance {
       final r = result.ref;
       final lines = <String>[];
       for (int i = 0; i < r.lineCount.clamp(0, 64); i++) {
-        // lines 是 NativeOcrResult 首字段（偏移 0）；text 是 NativeOcrLine 首字段（偏移 0）
         final textPtr = Pointer<Uint8>.fromAddress(
             result.address + i * sizeOf<NativeOcrLine>());
         final bytes = textPtr.asTypedList(256);
@@ -629,7 +572,6 @@ class NativePluginInstance {
     }
   }
 
-  // ─── 符号绑定辅助 ─────────────────────────────────────
 
   GetInfoV2Dart? _bindGetInfoV2(DynamicLibrary lib) =>
       lib.lookupFunction<GetInfoV2Native, GetInfoV2Dart>('plugin_get_info_v2');
@@ -661,7 +603,6 @@ class NativePluginInstance {
   }
 }
 
-/// 解析原生库路径
 String? resolveNativeLibraryPath(PluginManifest manifest, String pluginDir) {
   final rel = manifest.entry[currentPluginPlatform];
   if (rel == null) return null;

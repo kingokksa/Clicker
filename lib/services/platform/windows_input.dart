@@ -1,6 +1,3 @@
-/// Windows platform input using win32 FFI (SendInput + SetCursorPos).
-/// Uses RegisterHotKey via MethodChannel for system-level hotkey priority.
-library;
 
 import 'dart:async';
 import 'dart:ffi';
@@ -20,16 +17,13 @@ class WindowsInput extends PlatformInput {
   static const _recordChannel = MethodChannel('com.clicker.pro/record');
   static const _platformChannel = MethodChannel('com.clicker.pro/platform');
 
-  // Track registered hotkey field -> ID mapping
   final Map<String, int> _registeredHotkeys = {};
 
-  // Background mode state — when enabled, mouse operations use PostMessage
   bool _backgroundMode = false;
   int _backgroundHwnd = 0;
   int _backgroundX = 0;
   int _backgroundY = 0;
 
-  /// Enable background mode: all mouse clicks go to target window via PostMessage
   void setBackgroundMode(bool enabled, {int hwnd = 0, int x = 0, int y = 0}) {
     _backgroundMode = enabled;
     _backgroundHwnd = hwnd;
@@ -39,13 +33,11 @@ class WindowsInput extends PlatformInput {
 
   bool get isBackgroundMode => _backgroundMode;
 
-  /// Check if the background target window still exists
   bool isBackgroundWindowValid() {
     if (_backgroundHwnd == 0) return false;
     return IsWindow(_backgroundHwnd) != 0;
   }
 
-  // Recording callback
   void Function(Map<String, dynamic> event)? onRecordEvent;
   void Function()? onRecordingCancelled;
 
@@ -75,7 +67,6 @@ class WindowsInput extends PlatformInput {
     }
   }
 
-  // ── Recording ────────────────────────────────────────────
 
   Future<bool> startJournalRecording() async {
     try {
@@ -90,11 +81,9 @@ class WindowsInput extends PlatformInput {
     try {
       await _recordChannel.invokeMethod<void>('stopRecording');
     } on PlatformException {
-      // ignore
     }
   }
 
-  // ── Mouse ────────────────────────────────────────────────
 
   @override
   bool get isSupported => Platform.isWindows;
@@ -112,16 +101,14 @@ class WindowsInput extends PlatformInput {
     String button = 'left',
     bool doubleClick = false,
   }) async {
-    // Handle scroll buttons
     if (button == 'scrollUp' || button == 'scrollDown') {
       if (x >= 0 && y >= 0) SetCursorPos(x, y);
       final dy = button == 'scrollUp' ? 120.0 : -120.0;
       await mouseScroll(dy: dy);
       return;
     }
-    // Handle X buttons (side buttons)
     if (button == 'x1' || button == 'x2') {
-      if (_backgroundMode && _backgroundHwnd != 0) return; // X buttons not supported in background mode
+      if (_backgroundMode && _backgroundHwnd != 0) return;
       if (x >= 0 && y >= 0) SetCursorPos(x, y);
       final xData = _xButtonData(button);
       _sendMouseInput(_down(button), mouseData: xData);
@@ -130,7 +117,6 @@ class WindowsInput extends PlatformInput {
     }
     if (_backgroundMode && _backgroundHwnd != 0) {
       final btn = button == 'right' ? 1 : (button == 'middle' ? 2 : 0);
-      // Use event coordinates if provided, otherwise fall back to fixed background position
       final cx = (x > 0 || y > 0) ? x : _backgroundX;
       final cy = (x > 0 || y > 0) ? y : _backgroundY;
       await _platformChannel.invokeMethod('backgroundClick', [
@@ -160,7 +146,6 @@ class WindowsInput extends PlatformInput {
 
   @override
   void syncClick({required int x, required int y, String button = 'left'}) {
-    // Handle scroll buttons
     if (button == 'scrollUp' || button == 'scrollDown') {
       if (x >= 0 && y >= 0) SetCursorPos(x, y);
       final dy = button == 'scrollUp' ? 120.0 : -120.0;
@@ -172,7 +157,6 @@ class WindowsInput extends PlatformInput {
       calloc.free(p);
       return;
     }
-    // Handle X buttons
     if (button == 'x1' || button == 'x2') {
       if (_backgroundMode && _backgroundHwnd != 0) return;
       if (x >= 0 && y >= 0) SetCursorPos(x, y);
@@ -265,7 +249,6 @@ class WindowsInput extends PlatformInput {
 
   @override
   Future<void> touchLongPress({required int x, required int y, int durationMs = 500}) async {
-    // On desktop, long press = mouse down, wait, mouse up
     await mouseDown(x: x, y: y);
     await Future.delayed(Duration(milliseconds: durationMs));
     await mouseUp(x: x, y: y);
@@ -277,10 +260,8 @@ class WindowsInput extends PlatformInput {
     required int endX, required int endY,
     int durationMs = 300,
   }) async {
-    // On desktop, drag = move to start, mouse down, move to end, mouse up
     await mouseMove(startX, startY);
     await mouseDown(x: startX, y: startY);
-    // Animate movement in steps
     final steps = (durationMs / 16).ceil().clamp(1, 60);
     final stepDelay = Duration(milliseconds: (durationMs / steps).round());
     for (int i = 1; i <= steps; i++) {
@@ -299,7 +280,6 @@ class WindowsInput extends PlatformInput {
     required int endX, required int endY,
     int durationMs = 200,
   }) async {
-    // Swipe is the same as drag but faster
     await touchDrag(
       startX: startX, startY: startY,
       endX: endX, endY: endY,
@@ -323,17 +303,12 @@ class WindowsInput extends PlatformInput {
         _ => const MOUSE_EVENT_FLAGS(MOUSEEVENTF_LEFTUP),
       };
 
-  /// Get the X button mouseData value for XDOWN/XUP events
   int _xButtonData(String b) => b == 'x2' ? 2 : 1;
 
   void _sendMouseInput(MOUSE_EVENT_FLAGS flags, {int mouseData = 0}) {
     final p = calloc<INPUT>();
     p.ref.type = INPUT_MOUSE;
     p.ref.mi.mouseData = mouseData;
-    // Fullscreen / borderless games usually read raw input and ignore
-    // SetCursorPos + a bare SendInput that has no explicit MOVE. Mirror the
-    // native fast clicker (and the macro player's sendClick) by tagging the
-    // current cursor position as an absolute move on every input.
     final cursor = calloc<POINT>();
     if (GetCursorPos(cursor) != 0) {
       final int flagValue = flags;
@@ -363,7 +338,6 @@ class WindowsInput extends PlatformInput {
     _mouseEventPtr(flags, 0, 0, mouseData, 0);
   }
 
-  // ── Keyboard ─────────────────────────────────────────────
 
   static const _vk = <String, int>{
     'enter': 0x0D,
@@ -438,34 +412,26 @@ class WindowsInput extends PlatformInput {
 
   @override
   Future<void> keyType(String text, {int delayMs = 30}) async {
-    // Use clipboard paste for reliable full-text input
     await _pasteText(text);
   }
 
-  /// Paste text via clipboard: save clipboard, set text, Ctrl+V, restore clipboard
   Future<void> _pasteText(String text) async {
-    // Save current clipboard
     String? savedClip;
     try {
       savedClip = await Clipboard.getData(Clipboard.kTextPlain).then((d) => d?.text);
     } catch (_) {}
 
-    // Set clipboard text
     await Clipboard.setData(ClipboardData(text: text));
-    // Small delay for clipboard to settle
     await Future.delayed(const Duration(milliseconds: 30));
 
-    // Send Ctrl+V
     _sendKey(VK_CONTROL, const KEYBD_EVENT_FLAGS(0));
-    _sendKey(0x56, const KEYBD_EVENT_FLAGS(0)); // V key
+    _sendKey(0x56, const KEYBD_EVENT_FLAGS(0));
     await Future.delayed(const Duration(milliseconds: 10));
     _sendKey(0x56, const KEYBD_EVENT_FLAGS(KEYEVENTF_KEYUP));
     _sendKey(VK_CONTROL, const KEYBD_EVENT_FLAGS(KEYEVENTF_KEYUP));
 
-    // Wait for paste to complete
     await Future.delayed(const Duration(milliseconds: 50));
 
-    // Restore clipboard
     try {
       if (savedClip != null && savedClip.isNotEmpty) {
         await Clipboard.setData(ClipboardData(text: savedClip));
@@ -473,7 +439,6 @@ class WindowsInput extends PlatformInput {
     } catch (_) {}
   }
 
-  /// Release all modifier keys to prevent them from interfering with text input
   void _releaseModifiers() {
     const modifiers = [VK_SHIFT, VK_CONTROL, VK_MENU, VK_LWIN, VK_RWIN];
     final p = calloc<INPUT>();
@@ -497,7 +462,6 @@ class WindowsInput extends PlatformInput {
     calloc.free(p);
   }
 
-  // ── Hotkeys (System-level via RegisterHotKey) ────────────
 
   @override
   Stream<String> get globalKeyEvents => _keyController.stream;
@@ -506,8 +470,6 @@ class WindowsInput extends PlatformInput {
   void startListening() {
     if (_listening) return;
     _listening = true;
-    // Hotkeys are registered via registerHotkey() method, not here.
-    // This method is kept for interface compatibility.
   }
 
   @override
@@ -516,12 +478,7 @@ class WindowsInput extends PlatformInput {
     unregisterAllHotkeys();
   }
 
-  /// Register a system-level hotkey using RegisterHotKey Win32 API.
-  /// [field] is the hotkey field name (e.g., 'startStopClicker').
-  /// [hotkeyStr] is the hotkey string (e.g., 'Alt+F6').
-  /// Returns true if registration succeeded.
   Future<bool> registerHotkey(String field, String hotkeyStr) async {
-    // Support both named fields and numeric IDs (for per-macro hotkeys)
     int id;
     final numericId = int.tryParse(field);
     if (numericId != null) {
@@ -531,7 +488,6 @@ class WindowsInput extends PlatformInput {
       if (id == 0) return false;
     }
 
-    // Unregister previous hotkey for this field if any
     if (_registeredHotkeys.containsKey(field)) {
       await unregisterHotkey(field);
     }
@@ -552,7 +508,6 @@ class WindowsInput extends PlatformInput {
     }
   }
 
-  /// Unregister a system-level hotkey.
   Future<bool> unregisterHotkey(String field) async {
     final id = _registeredHotkeys[field];
     if (id == null) return true;
@@ -567,45 +522,39 @@ class WindowsInput extends PlatformInput {
     }
   }
 
-  /// Unregister all system-level hotkeys.
   Future<void> unregisterAllHotkeys() async {
     if (_registeredHotkeys.isEmpty) return;
     try {
       await _channel.invokeMethod<void>('unregisterAll');
       _registeredHotkeys.clear();
     } on PlatformException {
-      // ignore
     }
   }
 
-  /// Check if the hotkey is still physically held down.
-  /// Uses GetAsyncKeyState to poll the physical key state.
   Future<bool> isHotkeyStillHeld(String hotkeyStr) async {
     final parsed = HotkeyConfig.parseHotkey(hotkeyStr);
     final vk = parsed.vk;
     if (vk == 0) return false;
 
-    // Check the main key
     final keyState = GetAsyncKeyState(vk);
     final keyHeld = (keyState & 0x8000) != 0;
 
-    // Check modifiers
     final mods = parsed.modifiers;
     bool modsHeld = true;
-    if (mods & 0x0001 != 0) { // MOD_ALT
-      final altState = GetAsyncKeyState(0x12); // VK_MENU
+    if (mods & 0x0001 != 0) {
+      final altState = GetAsyncKeyState(0x12);
       if ((altState & 0x8000) == 0) modsHeld = false;
     }
-    if (mods & 0x0002 != 0) { // MOD_CONTROL
-      final ctrlState = GetAsyncKeyState(0x11); // VK_CONTROL
+    if (mods & 0x0002 != 0) {
+      final ctrlState = GetAsyncKeyState(0x11);
       if ((ctrlState & 0x8000) == 0) modsHeld = false;
     }
-    if (mods & 0x0004 != 0) { // MOD_SHIFT
-      final shiftState = GetAsyncKeyState(0x10); // VK_SHIFT
+    if (mods & 0x0004 != 0) {
+      final shiftState = GetAsyncKeyState(0x10);
       if ((shiftState & 0x8000) == 0) modsHeld = false;
     }
-    if (mods & 0x0008 != 0) { // MOD_WIN
-      final winState = GetAsyncKeyState(0x5B); // VK_LWIN
+    if (mods & 0x0008 != 0) {
+      final winState = GetAsyncKeyState(0x5B);
       if ((winState & 0x8000) == 0) modsHeld = false;
     }
 

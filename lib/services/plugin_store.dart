@@ -1,12 +1,3 @@
-/// Plugin store — 多源插件商店聚合。
-///
-/// 源体系见 plugin_sources.dart：
-/// - 官方源（GitHub 官方仓库）
-/// - 第三方源（其他作者自己的 GitHub 仓库，用户可添加）
-/// - 直接导入（GitHub zip / 插件仓库 / Release 链接）
-///
-/// 拉取流程：本地内置索引（秒开）→ 遍历所有启用的源聚合远程索引。
-library;
 
 import 'dart:convert';
 import 'dart:io';
@@ -18,7 +9,6 @@ import 'plugin/plugin_manifest.dart' show currentPluginPlatform;
 import 'plugin/plugin_integrity.dart';
 import 'plugin/plugin_sources.dart';
 
-/// Remote plugin entry from a store index
 class StorePluginEntry {
   final String id;
   final String name;
@@ -27,23 +17,19 @@ class StorePluginEntry {
   final String description;
   final String category;
   final List<String> platforms;
-  final String type;        // "dart" or "native"
-  final String? dartPluginId; // For dart plugins: the id used by PluginManager
+  final String type;
+  final String? dartPluginId;
   final String? icon;
-  final int size;           // Download size in bytes (0 for dart plugins)
-  final String? downloadUrl; // For native plugins: zip download URL
+  final int size;
+  final String? downloadUrl;
   final int minAppVersion;
 
-  /// 包体 SHA256（十六进制小写）。缺失时无法做完整性校验，
-  /// 安装流程会提示"未校验"而非静默放行。
   final String? sha256;
 
-  /// 原生库相对路径（相对 manifest.json）。原生插件加载 DLL 前据此核对指纹。
   final String? nativeLib;
 
-  // 来源信息（多源聚合）
-  final String sourceId;    // 所属源 id（'official' / 'src_xxx'）
-  final String sourceName;  // 所属源显示名
+  final String sourceId;
+  final String sourceName;
 
   const StorePluginEntry({
     required this.id,
@@ -88,8 +74,6 @@ class StorePluginEntry {
     );
   }
 
-  /// 包体指纹：索引里直接写了 sha256 字段则用它，
-  /// 否则从 entry（含 sha256 的文件表）里提取当前平台的原生库指纹。
   String? get expectedSha256 => _resolveHash();
 
   String? _resolveHash() {
@@ -101,7 +85,6 @@ class StorePluginEntry {
   static String? _normHash(String? raw) {
     final s = raw?.trim().toLowerCase();
     if (s == null || s.isEmpty) return null;
-    // 容忍 64 位十六进制的宽松写法：去空格、去前缀
     final cleaned = s.replaceAll(RegExp(r'[^0-9a-f]'), '');
     return cleaned.length == 64 ? cleaned : null;
   }
@@ -112,18 +95,15 @@ class StorePluginEntry {
     return _normHash(v is String ? v : null);
   }
 
-  /// Whether this plugin supports the current platform
   bool get supportsCurrentPlatform {
     return platforms.contains(currentPluginPlatform);
   }
 
-  /// Whether this plugin is already installed locally
   bool get isInstalled {
     final desc = PluginManager.instance.byId(dartPluginId ?? id);
     return desc != null && desc.isInstalled;
   }
 
-  /// Whether this plugin is already enabled
   bool get isEnabled {
     final pid = dartPluginId ?? id;
     final pm = PluginManager.instance;
@@ -131,7 +111,6 @@ class StorePluginEntry {
   }
 }
 
-/// Plugin store — aggregates remote plugin indexes from multiple sources
 class PluginStore extends ChangeNotifier {
   PluginStore._();
   static final PluginStore instance = PluginStore._();
@@ -144,11 +123,9 @@ class PluginStore extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get error => _error;
 
-  /// Available plugins (not yet installed)
   List<StorePluginEntry> get availablePlugins =>
     _plugins.where((p) => !p.isInstalled && p.supportsCurrentPlatform).toList();
 
-  /// Updatable plugins (installed but newer version available)
   List<StorePluginEntry> get updatablePlugins {
     return _plugins.where((p) {
       if (!p.isInstalled) return false;
@@ -158,18 +135,14 @@ class PluginStore extends ChangeNotifier {
     }).toList();
   }
 
-  /// Fetch indexes from all enabled sources.
-  /// Always loads local bundled index first, then aggregates remote sources.
   Future<void> fetchIndex() async {
     _isLoading = true;
     _error = null;
     notifyListeners();
 
-    // 1. Always load local bundled index first (instant, always available)
     await _loadBundledIndex();
     notifyListeners();
 
-    // 2. Aggregate all enabled remote sources
     try {
       await PluginSourceRepository.instance.load();
       final sources =
@@ -187,7 +160,6 @@ class PluginStore extends ChangeNotifier {
         }
         anyOk = true;
         source.error = null;
-        // 用索引里的 name 更新源显示名
         final idxName = json['name'] as String?;
         if (idxName != null && idxName.isNotEmpty) source.name = idxName;
         final list = (json['plugins'] as List? ?? []);
@@ -204,7 +176,6 @@ class PluginStore extends ChangeNotifier {
       }
 
       if (anyOk && remote.isNotEmpty) {
-        // 同 id 去重：官方源优先，然后按源顺序
         final seen = <String>{};
         _plugins = remote.where((p) {
           final key = p.dartPluginId ?? p.id;
@@ -214,12 +185,10 @@ class PluginStore extends ChangeNotifier {
         }).toList();
         _error = null;
       } else if (!anyOk && sources.isNotEmpty) {
-        // 所有远程源都失败 — 保留本地索引
         _error = '所有远程源均无法访问';
       }
       await PluginSourceRepository.instance.save();
     } catch (e) {
-      // Remote failed — keep local index, just note the error
       _error = e.toString();
     } finally {
       _isLoading = false;
@@ -227,16 +196,13 @@ class PluginStore extends ChangeNotifier {
     }
   }
 
-  /// Load the bundled plugin index from the plugins/ directory
   Future<void> _loadBundledIndex() async {
     try {
       final exePath = Platform.resolvedExecutable;
       final exeDir = File(exePath).parent.path;
-      // Try multiple paths: next to exe, project root, relative
       final candidates = [
         '$exeDir${Platform.pathSeparator}plugins${Platform.pathSeparator}plugin_index.json',
         'plugins${Platform.pathSeparator}plugin_index.json',
-        // When running from project root in dev mode
         '$exeDir${Platform.pathSeparator}..${Platform.pathSeparator}..${Platform.pathSeparator}..${Platform.pathSeparator}..${Platform.pathSeparator}plugins${Platform.pathSeparator}plugin_index.json',
       ];
       for (final path in candidates) {
@@ -251,14 +217,12 @@ class PluginStore extends ChangeNotifier {
           return;
         }
       }
-      // No local index found — generate from registered Dart plugins
       _generateBundledIndex();
     } catch (_) {
       _generateBundledIndex();
     }
   }
 
-  /// Generate index from currently registered built-in plugins as last resort
   void _generateBundledIndex() {
     _plugins = PluginManager.instance.plugins
       .where((d) => d.isBuiltin)
@@ -279,7 +243,6 @@ class PluginStore extends ChangeNotifier {
       }).toList();
   }
 
-  /// Install a plugin from the store
   Future<bool> installPlugin(StorePluginEntry entry) async {
     if (entry.type == 'dart') {
       return _installDartPlugin(entry);
@@ -288,8 +251,6 @@ class PluginStore extends ChangeNotifier {
     }
   }
 
-  /// Install a Dart plugin — install + enable（onStartup 插件立即激活，
-  /// 按需插件待页面/命令触发时激活）
   Future<bool> _installDartPlugin(StorePluginEntry entry) async {
     final pm = PluginManager.instance;
     final dartId = entry.dartPluginId ?? entry.id;
@@ -308,7 +269,6 @@ class PluginStore extends ChangeNotifier {
     return true;
   }
 
-  /// Install a native plugin — download zip and extract
   Future<bool> _installNativePlugin(StorePluginEntry entry) async {
     if (entry.downloadUrl == null) return false;
     return installFromZipUrl(entry.downloadUrl!,
@@ -317,9 +277,6 @@ class PluginStore extends ChangeNotifier {
     );
   }
 
-  /// 从 GitHub 链接直接导入安装插件。
-  /// 支持：zip 直链 / 插件仓库 / Release 页面。
-  /// 返回 null = 成功；否则为错误消息。
   Future<String?> installFromGithubUrl(String url) async {
     final resolution = await GithubUrlResolver.resolve(url);
     if (resolution == null) {
@@ -340,11 +297,6 @@ class PluginStore extends ChangeNotifier {
     return '插件包下载或安装失败';
   }
 
-  /// 下载 zip 并安装。
-  ///
-  /// [expectedSha256] 为商店索引/来源声明的包体指纹。提供时下载完成后
-  /// 会严格比对，不匹配则拒绝安装（不再静默返回 false）。缺失时不做
-  /// 校验，并在返回结果里通过 [installReport] 标记为「未校验」。
   Future<bool> installFromZipUrl(String zipUrl,
       {String? expectedSha256, String source = 'url'}) async {
     String? tempPath;
@@ -353,14 +305,12 @@ class PluginStore extends ChangeNotifier {
           .timeout(const Duration(seconds: 120));
       if (response.statusCode != 200) return false;
 
-      // Save to temp file
       final tempDir = await AppPaths.getTempDir();
       final zipName = zipUrl.split('/').last.replaceAll(RegExp(r'[^\w.\-]+'), '_');
       tempPath =
           '$tempDir${Platform.pathSeparator}import_${DateTime.now().millisecondsSinceEpoch}_$zipName';
       await File(tempPath).writeAsBytes(response.bodyBytes);
 
-      // 1) 落盘后立刻比对指纹——这是唯一可靠的校验点（网络字节不可信）
       final hash = await PluginIntegrity.instance.sha256FileOrNull(tempPath);
       final want = (expectedSha256 ?? '').toLowerCase();
       if (want.isNotEmpty && want.length == 64 && hash.toLowerCase() != want) {
@@ -369,7 +319,6 @@ class PluginStore extends ChangeNotifier {
         return false;
       }
 
-      // 2) 安装
       final success = await PluginManager.instance.installFromZip(tempPath,
         beforeRegister: (manifest) async {
           await PluginIntegrity.instance.recordInstall(
@@ -389,21 +338,18 @@ class PluginStore extends ChangeNotifier {
       notifyListeners();
       return false;
     } finally {
-      // Cleanup temp file
       if (tempPath != null) {
         try { await File(tempPath).delete(); } catch (_) {}
       }
     }
   }
 
-  /// Uninstall a plugin
   Future<void> uninstallPlugin(StorePluginEntry entry) async {
     final dartId = entry.dartPluginId ?? entry.id;
     await PluginManager.instance.uninstallPlugin(dartId);
     notifyListeners();
   }
 
-  /// Compare version strings (returns >0 if a > b)
   int _compareVersions(String a, String b) {
     final partsA = a.split('.').map(int.parse).toList();
     final partsB = b.split('.').map(int.parse).toList();

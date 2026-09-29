@@ -1,7 +1,3 @@
-/// Hotkey service — maps global key events to app actions.
-/// Uses RegisterHotKey on Windows for system-level priority,
-/// uses volume button combo on Android.
-library;
 
 import 'dart:async';
 import 'dart:io';
@@ -15,18 +11,14 @@ class HotkeyService {
   HotkeyConfig _config = HotkeyConfig();
   StreamSubscription<String>? _subscription;
 
-  // Hold-trigger state
   bool _holdTriggerActive = false;
   Timer? _holdTriggerPollTimer;
   DateTime? _lastHoldTriggerTime;
 
-  // Per-macro hotkeys: field id → macro id
   final Map<int, String> _macroHotkeyIds = {};
-  // Per-macro hotkeys: macro id → hotkey string
   final Map<String, String> _macroHotkeys = {};
-  static const int _macroHotkeyBaseId = 100; // IDs 100+ reserved for macro hotkeys
+  static const int _macroHotkeyBaseId = 100;
 
-  // Action callbacks
   void Function()? onStartStopClicker;
   void Function()? onStartStopRecording;
   void Function()? onEmergencyStop;
@@ -98,8 +90,6 @@ class HotkeyService {
     }
   }
 
-  /// Hold-trigger: when the hotkey fires, start clicking and poll key state.
-  /// When the key is released, stop clicking.
   void _handleHoldTrigger() {
     _lastHoldTriggerTime = DateTime.now();
 

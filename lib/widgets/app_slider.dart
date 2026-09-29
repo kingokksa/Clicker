@@ -1,10 +1,5 @@
 import 'package:fluent_ui/fluent_ui.dart';
 
-/// Drop-in replacement for fluent_ui Slider that avoids the
-/// `showValueIndicator` NoSuchMethodError in fluent_ui 4.x.
-///
-/// Usage: same API as Slider but renders the label next to the slider
-/// instead of using the broken overlay.
 class AppSlider extends StatelessWidget {
   final double value;
   final double min;
@@ -27,7 +22,6 @@ class AppSlider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // If there's a label, show it as a trailing text instead of overlay
     if (label != null) {
       return Row(
         mainAxisSize: MainAxisSize.min,

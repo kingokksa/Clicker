@@ -1,4 +1,3 @@
-library;
 
 import 'dart:async';
 import 'dart:io';
@@ -15,14 +14,10 @@ class AndroidInput extends PlatformInput {
 
   bool _listening = false;
 
-  /// Receives touch-gesture events captured by the native recording overlay
-  /// while a macro is being recorded. Maps to MacroService's record handler.
   void Function(Map<String, dynamic> event)? onRecordEvent;
 
-  /// Called when the user taps the native floating stop button during recording.
   void Function()? onStopRecordingRequested;
 
-  /// Start capturing touch gestures via the native recording overlay.
   Future<void> startRecording() async {
     _recordChannel.setMethodCallHandler((call) async {
       if (call.method == 'onRecordEvent') {
@@ -39,7 +34,6 @@ class AndroidInput extends PlatformInput {
     } catch (_) {}
   }
 
-  /// Stop capturing touch gestures and remove the recording overlay.
   Future<void> stopRecording() async {
     _recordChannel.setMethodCallHandler(null);
     try {
@@ -47,7 +41,6 @@ class AndroidInput extends PlatformInput {
     } catch (_) {}
   }
 
-  /// Check if accessibility service is enabled
   Future<bool> isAccessibilityServiceEnabled() async {
     try {
       final result = await _platformChannel.invokeMethod<bool>('isAccessibilityEnabled');
@@ -57,7 +50,6 @@ class AndroidInput extends PlatformInput {
     }
   }
 
-  /// Open accessibility settings
   Future<void> openAccessibilitySettings() async {
     try {
       await _platformChannel.invokeMethod('openAccessibilitySettings');

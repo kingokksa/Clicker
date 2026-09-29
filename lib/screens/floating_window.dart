@@ -1,6 +1,3 @@
-/// Floating mini-window — compact overlay with full clicker controls.
-/// Always-on-top, draggable, auto-hide at screen edges.
-library;
 
 import 'dart:async';
 import 'dart:ui' as ui;
@@ -14,8 +11,8 @@ const _kCollapsedW = 280;
 const _kCollapsedH = 95;
 const _kExpandedW = 280;
 const _kExpandedH = 170;
-const _kEdgeHideThreshold = 6; // pixels from edge to trigger auto-hide
-const _kEdgePeekSize = 4; // pixels visible when hidden at edge
+const _kEdgeHideThreshold = 6;
+const _kEdgePeekSize = 4;
 
 class FloatingWindow extends StatefulWidget {
   final VoidCallback onSwitchToMain;
@@ -29,7 +26,6 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener, Si
   late AnimationController _animCtrl;
   bool _expanded = false;
 
-  // Edge auto-hide state
   bool _isEdgeHidden = false;
   Edge? _hiddenEdge;
   Offset _lastPosition = Offset.zero;
@@ -84,7 +80,6 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener, Si
     });
   }
 
-  // ── Edge auto-hide logic ──
 
   Future<void> _checkEdgeHide(Offset pos) async {
     if (_isDragging || _isEdgeHidden) return;
@@ -173,7 +168,6 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener, Si
     _isDragging = false;
   }
 
-  /// After mouse leaves the window, check if it's near an edge and auto-hide.
   void _scheduleEdgeHideCheck() {
     if (_isEdgeHidden) return;
     _edgeHideTimer?.cancel();
@@ -198,7 +192,6 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener, Si
     });
   }
 
-  // ── Build ──
 
   @override
   Widget build(BuildContext context) {
@@ -240,7 +233,6 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener, Si
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ── Title bar ──
               GestureDetector(
                 onPanStart: (_) => _onDragStart(),
                 onPanEnd: (_) => _onDragEnd(),
@@ -271,7 +263,6 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener, Si
                       )),
                       if (isRunning) ...[
                         const SizedBox(width: 4),
-                        // 计数走独立 notifier 精准刷新
                         ValueListenableBuilder<int>(
                           valueListenable: state.clickCountNotifier,
                           builder: (_, count, __) => Text('$count', style: TextStyle(
@@ -313,14 +304,12 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener, Si
                 ),
               ),
 
-              // ── Main controls (always visible) ──
               Padding(
                 padding: const EdgeInsets.fromLTRB(10, 6, 10, 8),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Row 1: Start/Stop + Emergency + Mode chips
                     Row(
                       children: [
                         SizedBox(
@@ -372,7 +361,6 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener, Si
 
                     const SizedBox(height: 4),
 
-                    // Row 2: Interval
                     Row(
                       children: [
                         Text('间隔', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: textSecondary,
@@ -395,7 +383,6 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener, Si
                       ],
                     ),
 
-                    // ── Expanded controls ──
                     SizeTransition(
                       sizeFactor: _animCtrl,
                       axisAlignment: -1.0,
@@ -408,7 +395,6 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener, Si
                             child: Container(height: 0.5, color: borderColor),
                           ),
 
-                          // Mouse mode options
                           if (config.clickMode == ClickMode.mouse) ...[
                             Row(
                               children: [
@@ -449,7 +435,6 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener, Si
                             ),
                           ],
 
-                          // Keyboard mode options
                           if (config.clickMode == ClickMode.keyboard) ...[
                             Row(
                               children: [
@@ -474,7 +459,6 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener, Si
 
                           const SizedBox(height: 4),
 
-                          // Repeat mode
                           Row(
                             children: [
                               Text('重复', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: textSecondary,
@@ -630,7 +614,6 @@ class _FloatingWindowState extends State<FloatingWindow> with WindowListener, Si
 
 enum Edge { left, right, top }
 
-/// Custom slider to avoid fluent_ui Slider showValueIndicator bug
 class _SimpleSlider extends StatefulWidget {
   final double value;
   final double min;
@@ -774,14 +757,12 @@ class _KeyPickerOverlayState extends State<_KeyPickerOverlay> {
 
     return Stack(
       children: [
-        // Click anywhere to dismiss
         Positioned.fill(
           child: GestureDetector(
             onTap: widget.onDismiss,
             child: Container(color: Colors.black.withValues(alpha: 0.2)),
           ),
         ),
-        // Panel
         Center(
           child: Container(
             width: 300,
@@ -797,7 +778,6 @@ class _KeyPickerOverlayState extends State<_KeyPickerOverlay> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Header row - outside scroll area
                 Padding(
                   padding: const EdgeInsets.only(right: 4),
                   child: Row(children: [
@@ -817,7 +797,6 @@ class _KeyPickerOverlayState extends State<_KeyPickerOverlay> {
                   ]),
                 ),
                 const SizedBox(height: 8),
-                // Scrollable keys area
                 Flexible(
                   child: Scrollbar(
                     controller: _scrollCtrl,

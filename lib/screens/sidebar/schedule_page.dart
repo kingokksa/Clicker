@@ -1,10 +1,3 @@
-/// 定时任务页面 — 可增删的定时任务列表，每个任务到点自动执行一个动作
-/// （启动/停止连点、播放/停止宏）。
-/// 所有选项常显：先配动作和时间，再开「启用」开关布防。
-/// 布防时刻由 AppState.updateScheduleAt(rearm) 统一计算：
-/// 时间点模式取下一个 hh:mm（已过顺延到明天），倒计时取 当前 + N 分钟，
-/// 因此「一开开关」绝不会立即触发。
-library;
 
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:provider/provider.dart';
@@ -122,7 +115,6 @@ class _ScheduleCard extends StatelessWidget {
         ]),
         const SizedBox(height: 12),
 
-        // ── 动作 + 启用 ──
         Row(children: [
           const SizedBox(width: 60, child: Text('动作', style: TextStyle(fontSize: 13))),
           Expanded(child: ComboBox<ScheduleAction>(
@@ -141,7 +133,6 @@ class _ScheduleCard extends StatelessWidget {
         ]),
         const SizedBox(height: 6),
 
-        // ── 播放宏：选宏 ──
         if (task.action == ScheduleAction.playMacro) ...[
           Row(children: [
             const SizedBox(width: 60, child: Text('宏', style: TextStyle(fontSize: 13))),
@@ -157,7 +148,6 @@ class _ScheduleCard extends StatelessWidget {
           const SizedBox(height: 6),
         ],
 
-        // ── 时间模式 ──
         Row(children: [
           const SizedBox(width: 60, child: Text('时间', style: TextStyle(fontSize: 13))),
           _chip(context, '时间点', task.timing == ScheduleTiming.clock, () => update(task.copyWith(timing: ScheduleTiming.clock), rearm: true)),
@@ -172,7 +162,6 @@ class _ScheduleCard extends StatelessWidget {
         ]),
         const SizedBox(height: 10),
 
-        // ── 具体时间 / 倒计时分钟 ──
         if (task.timing == ScheduleTiming.clock)
           Row(children: [
             const SizedBox(width: 60),
@@ -199,7 +188,6 @@ class _ScheduleCard extends StatelessWidget {
             const Text(' 分钟后触发', style: TextStyle(fontSize: 13)),
           ]),
 
-        // ── 下次触发提示 ──
         if (task.enabled) ...[
           const SizedBox(height: 10),
           Row(children: [
@@ -222,7 +210,6 @@ class _ScheduleCard extends StatelessWidget {
     child: Text(text, style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
   );
 
-  // 复用共享逻辑（移动端同一份实现），避免两端文案漂移。
   String _formatFireAt(int epochMs) => ScheduleController.formatFireAt(epochMs);
 
   Widget _chip(BuildContext context, String label, bool selected, VoidCallback onTap) {

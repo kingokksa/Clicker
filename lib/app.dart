@@ -1,5 +1,3 @@
-/// App entry point — initialises state and launches FluentApp.
-library;
 
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:provider/provider.dart';
@@ -70,8 +68,6 @@ class _ClickerAppState extends State<ClickerApp> {
             ),
             themeMode: isDark ? ThemeMode.dark : ThemeMode.light,
             builder: (context, child) {
-              // 统一放大所有文本：全局 textScaler 会同时作用于主题排版
-              // 和各页面硬编码的 fontSize，一次生效、无需逐组件改字号。
               final media = MediaQuery.of(context);
               return MediaQuery(
                 data: media.copyWith(textScaler: TextScaler.linear(uiScale)),
@@ -86,7 +82,6 @@ class _ClickerAppState extends State<ClickerApp> {
   }
 }
 
-/// Helper to create AccentColor from a Color value for FluentThemeData.
 AccentColor _toAccent(Color c) {
   return AccentColor.swatch({
     'darkest': c,

@@ -7,3 +7,4 @@ linter:
     sort_child_properties_last: true
     use_key_in_widget_constructors: true
     avoid_print: false
+    empty_catches: false

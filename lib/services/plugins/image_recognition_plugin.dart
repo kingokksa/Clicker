@@ -1,5 +1,3 @@
-/// Image recognition plugin — 模板匹配、OCR、条件触发
-library;
 
 import '../plugin/plugin_api.dart';
 import '../plugin/plugin_manifest.dart';
@@ -28,7 +26,6 @@ class ImageRecognitionPlugin extends Plugin {
 
   @override
   Future<void> onActivate(PluginContext context) async {
-    // 联动安装 AI 跟踪器（检测能力提供者）
     final manager = PluginManager.instance;
     final aiTracker = manager.byId('ai_tracker');
     if (aiTracker != null && !aiTracker.isInstalled) {

@@ -1,8 +1,3 @@
-/// 移动端拟人模式页面 — 与桌面端 HumanizePage 功能对齐：
-/// 拟人化节奏（±40% 抖动、贝塞尔轨迹、随机暂停）、随机延迟、随机偏移、按键抖动。
-/// 底层行为由 ClickService 消费 [ClickerConfig] 字段实现（与桌面端同一份引擎），
-/// 本页只负责 Material 风格的 UI；所有改动走 MobileAppState.setClickerConfig。
-library;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -74,7 +69,6 @@ class MobileHumanizePage extends StatelessWidget {
     );
   }
 
-  // ─── 拟人模式（总开关 + 贝塞尔轨迹 + 随机暂停） ─────────
 
   Widget _buildHumanLike(
       ClickerConfig config, MobileAppState state, bool isDark, Color accent) {
@@ -133,14 +127,12 @@ class MobileHumanizePage extends StatelessWidget {
     ]);
   }
 
-  // ─── 随机延迟 ─────────────────────────────────────────────
 
   Widget _buildRandomDelay(
       ClickerConfig config, MobileAppState state, bool isDark) {
     final enabled = config.randomDelayMinMs > 0 || config.randomDelayMaxMs > 0;
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       _switchRow('启用随机延迟', enabled, state.accentColor, (v) {
-        // 开：落到默认 10~50ms；关：清零（关闭判定即 min/max 均为 0）
         state.setClickerConfig(config.copyWith(
           randomDelayMinMs: v ? 10 : 0,
           randomDelayMaxMs: v ? 50 : 0,
@@ -164,7 +156,6 @@ class MobileHumanizePage extends StatelessWidget {
     ]);
   }
 
-  // ─── 随机偏移 ─────────────────────────────────────────────
 
   Widget _buildRandomOffset(
       ClickerConfig config, MobileAppState state, bool isDark, Color accent) {
@@ -204,7 +195,6 @@ class MobileHumanizePage extends StatelessWidget {
     ]);
   }
 
-  // ─── 按键抖动 ─────────────────────────────────────────────
 
   Widget _buildJitter(ClickerConfig config, MobileAppState state, bool isDark) {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -228,7 +218,6 @@ class MobileHumanizePage extends StatelessWidget {
     ]);
   }
 
-  // ─── 复用控件 ─────────────────────────────────────────────
 
   Widget _switchRow(String label, bool value, Color accent, ValueChanged<bool> onChanged) {
     return Row(children: [

@@ -1,6 +1,3 @@
-/// Fullscreen position picker overlay — covers entire screen for picking.
-/// Uses MouseRegion for smooth hover tracking, Listener for click.
-library;
 
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:flutter/material.dart' hide Colors, Icon, Tooltip;
@@ -82,7 +79,6 @@ class _PositionPickerOverlayState extends State<PositionPickerOverlay> {
             children: [
               Container(color: Colors.black.withValues(alpha: 0.54)),
 
-              // Crosshair
               Positioned.fill(
                 child: CustomPaint(
                   painter: _CrosshairPainter(
@@ -93,7 +89,6 @@ class _PositionPickerOverlayState extends State<PositionPickerOverlay> {
                 ),
               ),
 
-              // Top instruction bar
               Positioned(
                 top: 40, left: 0, right: 0,
                 child: Center(
@@ -116,7 +111,6 @@ class _PositionPickerOverlayState extends State<PositionPickerOverlay> {
                 ),
               ),
 
-              // Live coordinate near cursor
               if (_hasMouse && _pickedPos == null)
                 Positioned(
                   left: (_mousePos.dx + 20).clamp(0.0, screenSize.width - 180),
@@ -135,7 +129,6 @@ class _PositionPickerOverlayState extends State<PositionPickerOverlay> {
                   ),
                 ),
 
-              // Picked position confirmation
               if (_pickedPos != null)
                 Positioned(
                   left: (_pickedPos!.dx + 20).clamp(0.0, screenSize.width - 200),

@@ -1,6 +1,3 @@
-/// Persistent storage service using local JSON file.
-/// All data is stored in {appDir}/data/config.json alongside the executable.
-library;
 
 import 'dart:convert';
 import 'dart:typed_data';
@@ -37,7 +34,6 @@ class StorageService {
 
   LocalStorage get _prefs => LocalStorage.instance;
 
-  // ─── Clicker Config ───────────────────────────────────────
 
   ClickerConfig loadClickerConfig() {
     final json = _prefs.getString(_keyClicker);
@@ -51,7 +47,6 @@ class StorageService {
     await _prefs.setString(_keyClicker, jsonEncode(config.toJson()));
   }
 
-  // ─── Hotkey Config ────────────────────────────────────────
 
   HotkeyConfig loadHotkeyConfig() {
     final json = _prefs.getString(_keyHotkeys);
@@ -65,7 +60,6 @@ class StorageService {
     await _prefs.setString(_keyHotkeys, jsonEncode(config.toJson()));
   }
 
-  // ─── Hold Trigger Keys ──────────────────────────────────
 
   List<HoldTriggerKey> loadHoldTriggerKeys() {
     final json = _prefs.getString(_keyHoldTriggerKeys);
@@ -81,7 +75,6 @@ class StorageService {
     await _prefs.setString(_keyHoldTriggerKeys, jsonEncode(list));
   }
 
-  // ─── Theme ────────────────────────────────────────────────
 
   String get themeMode => _prefs.getString(_keyTheme) ?? 'dark';
 
@@ -89,7 +82,6 @@ class StorageService {
     await _prefs.setString(_keyTheme, mode);
   }
 
-  // ─── Always On Top ────────────────────────────────────────
 
   bool get alwaysOnTop => _prefs.getBool(_keyAlwaysOnTop) ?? true;
 
@@ -97,7 +89,6 @@ class StorageService {
     await _prefs.setBool(_keyAlwaysOnTop, value);
   }
 
-  // ─── Minimize To Tray ─────────────────────────────────────
 
   bool get minimizeToTray => _prefs.getBool(_keyMinimizeToTray) ?? false;
 
@@ -108,7 +99,6 @@ class StorageService {
     await _prefs.setBool('hasAskedMinimizeToTray', true);
   }
 
-  // ─── Floating Always On Top ───────────────────────────────
 
   bool get floatingAlwaysOnTop => _prefs.getBool(_keyFloatingAlwaysOnTop) ?? true;
 
@@ -116,7 +106,6 @@ class StorageService {
     await _prefs.setBool(_keyFloatingAlwaysOnTop, value);
   }
 
-  // ─── Floating Panel Visible ───────────────────────────────
 
   bool get floatingPanelVisible => _prefs.getBool(_keyFloatingPanelVisible) ?? false;
 
@@ -124,7 +113,6 @@ class StorageService {
     await _prefs.setBool(_keyFloatingPanelVisible, value);
   }
 
-  // ─── Accent Color ─────────────────────────────────────────
 
   int get accentColorValue => _prefs.getInt(_keyAccentColor) ?? 0xFF7C4DFF;
 
@@ -144,7 +132,6 @@ class StorageService {
     await _prefs.setDouble(_keyUiScale, value);
   }
 
-  // ─── Profiles ─────────────────────────────────────────────
 
   List<String> listProfiles() {
     final json = _prefs.getString(_keyProfiles);
@@ -178,7 +165,6 @@ class StorageService {
     await _prefs.remove('profile_$name');
   }
 
-  // ─── Macros ───────────────────────────────────────────────
 
   Future<List<String>> listMacroFiles() async {
     final dir = Directory(_macrosDir);
@@ -224,10 +210,7 @@ class StorageService {
     return macros;
   }
 
-  // ─── Import / Export ──────────────────────────────────────
 
-  /// Export all configuration as a JSON string.
-  /// v2：加入长按键、主题色、动画设置 — 桌面/移动端通用的全量备份格式。
   Future<String> exportConfig({
     required ClickerConfig clickerConfig,
     required HotkeyConfig hotkeyConfig,
@@ -262,7 +245,6 @@ class StorageService {
     return const JsonEncoder.withIndent('  ').convert(data);
   }
 
-  /// Export config to a file chosen by the user.
   Future<bool> exportConfigToFile({
     required ClickerConfig clickerConfig,
     required HotkeyConfig hotkeyConfig,
@@ -297,7 +279,6 @@ class StorageService {
     }
   }
 
-  /// Import configuration from a JSON string.
   Future<ImportResult> importConfig(String jsonStr) async {
     try {
       final data = jsonDecode(jsonStr) as Map<String, dynamic>;
@@ -309,7 +290,6 @@ class StorageService {
       final uiAnimations = data['uiAnimations'] as bool?;
       final uiScale = data['uiScale'] as double?;
 
-      // Save configs
       await saveClickerConfig(clickerConfig);
       await saveHotkeyConfig(hotkeyConfig);
       await setThemeMode(themeMode);
@@ -318,7 +298,6 @@ class StorageService {
       if (uiAnimations != null) await setUiAnimations(uiAnimations);
       if (uiScale != null) await setUiScale(uiScale);
 
-      // Import macros
       if (data['macros'] != null) {
         for (final m in data['macros'] as List) {
           final macro = MacroModel.fromJson(m as Map<String, dynamic>);
@@ -326,7 +305,6 @@ class StorageService {
         }
       }
 
-      // Import profiles
       if (data['profiles'] != null) {
         final profData = data['profiles'] as Map<String, dynamic>;
         final profList = List<String>.from(profData['list'] ?? []);
@@ -338,7 +316,6 @@ class StorageService {
         }
       }
 
-      // Import hold trigger keys (v2)
       List<HoldTriggerKey>? holdTriggerKeys;
       if (data['holdTriggerKeys'] != null) {
         holdTriggerKeys = (data['holdTriggerKeys'] as List)
@@ -363,7 +340,6 @@ class StorageService {
     }
   }
 
-  /// Import config from a file chosen by the user.
   Future<ImportResult> importConfigFromFile() async {
     try {
       final result = await FilePicker.platform.pickFiles(
@@ -383,7 +359,6 @@ class StorageService {
   }
 }
 
-/// Result of a config import operation.
 class ImportResult {
   final bool success;
   final String? error;

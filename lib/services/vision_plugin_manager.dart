@@ -1,6 +1,3 @@
-/// Vision plugin manager — manages registration, discovery, and lifecycle of vision plugins.
-/// Plugins are loaded on demand and can be enabled/disabled without affecting others.
-library;
 
 import 'dart:io' show Platform;
 
@@ -16,21 +13,16 @@ class VisionPluginManager {
   final Map<String, bool> _initialized = {};
   bool _disposed = false;
 
-  /// All registered plugins
   List<VisionPlugin> get plugins => _plugins.values.toList();
 
-  /// Get a plugin by ID
   VisionPlugin? getPlugin(String id) => _plugins[id];
 
-  /// Get all plugins with a specific capability
   List<VisionPlugin> getPluginsWithCapability(VisionCapability cap) {
     return _plugins.values
         .where((p) => p.info.capabilities.contains(cap) && p.enabled)
         .toList();
   }
 
-  /// Get the first plugin with a specific capability (prefers available, but returns registered if none available)
-  /// Non-builtin plugins (e.g. PaddleOCR) are preferred over builtin ones
   VisionPlugin? getPluginForCapability(VisionCapability cap) {
     final preferred = _preferredId == null ? null : _plugins[_preferredId!];
     if (preferred != null &&
@@ -58,13 +50,11 @@ class VisionPluginManager {
         }
       }
     }
-    // Prefer available plugins, fall back to registered (can be initialized later)
     return externalAvailable ?? builtinAvailable ?? external ?? builtin;
   }
 
   String? _preferredId;
 
-  /// 用户显式选择的插件 id（同一能力下有多个引擎时用于切换）
   String? get preferredId => _preferredId;
 
   void setPreferred(String? id) {
@@ -73,14 +63,12 @@ class VisionPluginManager {
 
   bool _builtinRegistered = false;
 
-  /// Register a plugin (no-op if already registered with same ID)
   Future<void> registerPlugin(VisionPlugin plugin) async {
     if (_disposed) return;
     if (_plugins.containsKey(plugin.info.id)) return;
     _plugins[plugin.info.id] = plugin;
   }
 
-  /// Unregister and dispose a plugin
   Future<void> unregisterPlugin(String id) async {
     final plugin = _plugins.remove(id);
     if (plugin != null) {
@@ -89,7 +77,6 @@ class VisionPluginManager {
     }
   }
 
-  /// Ensure a plugin is initialized before use
   Future<bool> ensureInitialized(String id) async {
     if (_disposed) return false;
     final plugin = _plugins[id];
@@ -100,19 +87,16 @@ class VisionPluginManager {
     return ok;
   }
 
-  /// Reset initialization cache for a plugin so it can be re-initialized
   void resetInitialized(String id) {
     _initialized.remove(id);
   }
 
-  /// Initialize all registered plugins
   Future<void> initializeAll() async {
     for (final id in _plugins.keys) {
       await ensureInitialized(id);
     }
   }
 
-  /// Enable/disable a plugin
   void setPluginEnabled(String id, bool enabled) {
     final plugin = _plugins[id];
     if (plugin != null) {
@@ -120,7 +104,6 @@ class VisionPluginManager {
     }
   }
 
-  /// Dispose all plugins
   Future<void> dispose() async {
     _disposed = true;
     for (final plugin in _plugins.values) {
@@ -130,7 +113,6 @@ class VisionPluginManager {
     _initialized.clear();
   }
 
-  // ─── Singleton ────────────────────────────────────────────
 
   static VisionPluginManager? _instance;
 
@@ -141,7 +123,6 @@ class VisionPluginManager {
 
   VisionPluginManager._create();
 
-  /// Register all built-in plugins (safe to call multiple times)
   static Future<void> registerBuiltinPlugins() async {
     final mgr = instance;
     if (mgr._builtinRegistered) return;
@@ -150,7 +131,6 @@ class VisionPluginManager {
     if (Platform.isWindows) {
       await mgr.registerPlugin(WindowsOcrPlugin());
       await mgr.registerPlugin(RapidOcrPlugin());
-      // await mgr.registerPlugin(PaddleOcrPlugin()); // 暂时禁用，PaddlePaddle 3.x 与 PaddleOCR 不兼容
     }
     if (Platform.isWindows || Platform.isLinux) {
       await mgr.registerPlugin(YoloDetectPlugin());

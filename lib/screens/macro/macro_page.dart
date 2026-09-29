@@ -1,6 +1,3 @@
-/// Macro page — macro recording, list, playback, and keyboard sequence builder.
-/// Fluent UI design.
-library;
 
 import 'package:fluent_ui/fluent_ui.dart';
 import 'package:provider/provider.dart';
@@ -28,7 +25,6 @@ class MacroPage extends StatelessWidget {
     return ScaffoldPage.scrollable(
       padding: const EdgeInsets.all(20),
       children: [
-        // Macro error message
         if (state.macroError.isNotEmpty)
           Padding(padding: const EdgeInsets.only(bottom: 12), child: InfoBar(
             title: Text(state.macroError),
@@ -36,13 +32,11 @@ class MacroPage extends StatelessWidget {
             onClose: () => state.clearMacroError(),
           )),
 
-        // Recording / Playing status
         if (state.isRecording) _buildRecordingStatus(state),
         if (state.isPlaying) _buildPlayingStatus(state),
 
         if (state.isRecording || state.isPlaying) const SizedBox(height: 12),
 
-        // Action buttons
         _buildRecordButton(context, state),
         const SizedBox(height: 8),
 
@@ -93,7 +87,6 @@ class MacroPage extends StatelessWidget {
     );
   }
 
-  // ─── Status Bars ──────────────────────────────────────────
 
   Widget _buildRecordingStatus(AppState state) {
     final isPaused = state.isPaused;
@@ -130,11 +123,9 @@ class MacroPage extends StatelessWidget {
     );
   }
 
-  // ─── Record Button ────────────────────────────────────────
 
   Widget _buildRecordButton(BuildContext context, AppState state) {
     if (state.isPaused) {
-      // Paused: show save and discard buttons
       return Row(children: [
         Expanded(child: SizedBox(height: 48, child: FilledButton(
           onPressed: () => _stopRecording(context, state),
@@ -171,7 +162,6 @@ class MacroPage extends StatelessWidget {
   }
 
   Future<void> _stopRecording(BuildContext context, AppState state) async {
-    // Pause the hook if still recording
     if (!state.isPaused) {
       state.pauseRecording();
     }
@@ -196,14 +186,12 @@ class MacroPage extends StatelessWidget {
       final name = result == 'save' ? '录制的宏' : result;
       await state.stopRecording(name: name);
     }
-    // If result is null (cancel), keep paused state so user can still decide
   }
 
   void _discardRecording(BuildContext context, AppState state) {
     state.cancelRecording();
   }
 
-  // ─── Macro Card ───────────────────────────────────────────
 
   Widget _buildMacroCard(BuildContext context, MacroModel macro, AppState state) {
     final isDark = FluentTheme.of(context).brightness == Brightness.dark;
@@ -223,7 +211,6 @@ class MacroPage extends StatelessWidget {
     return Card(
       padding: const EdgeInsets.all(12),
       child: Row(children: [
-        // Play button
         GestureDetector(
           onTap: canPlay ? () => state.playMacro(macro) : null,
           child: Container(
@@ -237,7 +224,6 @@ class MacroPage extends StatelessWidget {
         ),
         const SizedBox(width: 12),
 
-        // Info
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(macro.name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13), overflow: TextOverflow.ellipsis),
           const SizedBox(height: 4),
@@ -254,7 +240,6 @@ class MacroPage extends StatelessWidget {
           ]),
         ])),
 
-        // Enable/disable toggle
         ToggleSwitch(
           checked: macro.enabled,
           onChanged: (v) async {
@@ -263,7 +248,6 @@ class MacroPage extends StatelessWidget {
           },
         ),
 
-        // Menu
         IconButton(
           icon: const Icon(FluentIcons.more, size: 16),
           onPressed: () => _showMacroMenu(context, state, macro),
@@ -370,7 +354,6 @@ class MacroPage extends StatelessWidget {
     if (confirm == true) await state.deleteMacro(macro);
   }
 
-  // ─── Macro Editor ──────────────────────────────────────────
 
   void _showMacroEditor(BuildContext context, AppState state, MacroModel macro) {
     showDialog(context: context, builder: (ctx) => MacroEditorDialog(macro: macro, onSave: (updatedMacro) async {
@@ -379,7 +362,6 @@ class MacroPage extends StatelessWidget {
     }));
   }
 
-  // ─── New Macro Editor ──────────────────────────────────────
 
   void _showNewMacroEditor(BuildContext context, AppState state) {
     final newMacro = MacroModel(
@@ -394,7 +376,6 @@ class MacroPage extends StatelessWidget {
     }));
   }
 
-  // ─── Key Sequence Builder ──────────────────────────────────
 
   void _showKeySequenceBuilder(BuildContext context, AppState state) {
     showDialog(context: context, builder: (ctx) => _KeySequenceBuilderDialog(onConfirm: (name, events) async {
@@ -404,7 +385,6 @@ class MacroPage extends StatelessWidget {
     }));
   }
 
-  // ─── Combo Builder ────────────────────────────────────────
 
   void _showComboBuilder(BuildContext context, AppState state) {
     showDialog(context: context, builder: (ctx) => _ComboBuilderDialog(onConfirm: (name, events) async {
@@ -414,7 +394,6 @@ class MacroPage extends StatelessWidget {
     }));
   }
 
-  // ─── Text Type Builder ─────────────────────────────────────
 
   void _showTextTypeBuilder(BuildContext context, AppState state) {
     showDialog(context: context, builder: (ctx) => _TextTypeBuilderDialog(onConfirm: (name, events) async {
@@ -424,7 +403,6 @@ class MacroPage extends StatelessWidget {
     }));
   }
 
-  // ─── Scroll Builder ───────────────────────────────────────
 
   void _showScrollBuilder(BuildContext context, AppState state) {
     showDialog(context: context, builder: (ctx) => _ScrollBuilderDialog(onConfirm: (name, events) async {
@@ -434,7 +412,6 @@ class MacroPage extends StatelessWidget {
     }));
   }
 
-  // ─── Delay Builder ────────────────────────────────────────
 
   void _showDelayBuilder(BuildContext context, AppState state) {
     showDialog(context: context, builder: (ctx) => _DelayBuilderDialog(onConfirm: (name, events) async {
@@ -444,7 +421,6 @@ class MacroPage extends StatelessWidget {
     }));
   }
 
-  // ─── Drag Builder ────────────────────────────────────────
 
   void _showDragBuilder(BuildContext context, AppState state) {
     showDialog(context: context, builder: (ctx) => _DragSwipeBuilderDialog(
@@ -457,7 +433,6 @@ class MacroPage extends StatelessWidget {
     ));
   }
 
-  // ─── Swipe Builder ────────────────────────────────────────
 
   void _showSwipeBuilder(BuildContext context, AppState state) {
     showDialog(context: context, builder: (ctx) => _DragSwipeBuilderDialog(
@@ -470,7 +445,6 @@ class MacroPage extends StatelessWidget {
     ));
   }
 
-  // ─── Import / Export ──────────────────────────────────────
 
   Future<void> _importMacro(BuildContext context, AppState state) async {
     final result = await FilePicker.platform.pickFiles(
@@ -490,7 +464,6 @@ class MacroPage extends StatelessWidget {
       if (ext == '.ahk' || ext == '.txt') {
         imported = _parseAhkScript(content, p.basenameWithoutExtension(file.path!));
       } else {
-        // JSON: can be single macro or list
         final decoded = jsonDecode(content);
         if (decoded is List) {
           imported = decoded.map((e) => MacroModel.fromJson(e as Map<String, dynamic>)).toList();
@@ -560,7 +533,6 @@ class MacroPage extends StatelessWidget {
     );
   }
 
-  /// Convert macro to AutoHotKey v1 script
   String _macroToAhk(MacroModel macro) {
     final buf = StringBuffer();
     buf.writeln('#NoEnv');
@@ -603,7 +575,7 @@ class MacroPage extends StatelessWidget {
             if (event.key != null) buf.writeln('Send, {${_ahkKeyName(event.key!)}}');
             break;
           case MacroEventType.keyRelease:
-            break; // AHK Send handles release automatically
+            break;
           case MacroEventType.scroll:
             final dy = event.scrollDy ?? 0;
             if (dy > 0) {
@@ -634,7 +606,6 @@ class MacroPage extends StatelessWidget {
     return buf.toString();
   }
 
-  /// Parse AutoHotKey script into macros
   List<MacroModel> _parseAhkScript(String content, String defaultName) {
     final events = <MacroEvent>[];
     int ts = 0;
@@ -647,14 +618,12 @@ class MacroPage extends StatelessWidget {
         continue;
       }
 
-      // Click x, y [button] [D|U]
       if (trimmed.startsWith('Click')) {
         final parts = trimmed.substring(5).trim().split(RegExp(r'[,\s]+')).where((s) => s.isNotEmpty).toList();
         String button = 'left';
         bool isDown = false;
         bool isUp = false;
         int? x, y;
-        // Parse parts
         final remaining = <String>[];
         for (final part in parts) {
           if (part == 'R' || part == 'Right') { button = 'right'; }
@@ -680,7 +649,6 @@ class MacroPage extends StatelessWidget {
         events.add(MacroEvent(type: type, timestampMs: ts, x: x, y: y, button: button));
         ts += 10;
       }
-      // Send, {key} or Send, text
       else if (trimmed.startsWith('Send')) {
         final arg = trimmed.substring(4).replaceFirst(RegExp(r'^[,\s]+'), '');
         if (arg.startsWith('{') && arg.endsWith('}')) {
@@ -689,7 +657,6 @@ class MacroPage extends StatelessWidget {
           ts += 10;
         }
       }
-      // Sleep, ms
       else if (trimmed.startsWith('Sleep')) {
         final msStr = trimmed.substring(5).replaceFirst(RegExp(r'^[,\s]+'), '');
         final ms = int.tryParse(msStr) ?? 100;
@@ -707,7 +674,6 @@ class MacroPage extends StatelessWidget {
     )];
   }
 
-  /// Map key names to AHK format
   String _ahkKeyName(String key) {
     const map = {
       'enter': 'Enter', 'tab': 'Tab', 'escape': 'Escape', 'backspace': 'Backspace',
@@ -722,7 +688,6 @@ class MacroPage extends StatelessWidget {
   }
 }
 
-// ─── Shared Chip Builder ─────────────────────────────────────
 
 Widget _chip(String label, bool selected, VoidCallback onTap, {IconData? icon}) {
   return Builder(builder: (context) {
@@ -751,7 +716,6 @@ Widget _chip(String label, bool selected, VoidCallback onTap, {IconData? icon}) 
   });
 }
 
-// ─── Macro Editor Dialog ─────────────────────────────────────
 
 class MacroEditorDialog extends StatefulWidget {
   final MacroModel macro;
@@ -770,7 +734,6 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
   String? _hotkey;
   bool _backgroundMode = false;
 
-  // Background mode target settings
   List<WindowInfo> _windows = [];
   int _targetHwnd = 0;
   String _targetWindowTitle = '';
@@ -793,7 +756,6 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
     _backgroundMode = widget.macro.backgroundMode;
     _targetHwnd = widget.macro.backgroundTargetHwnd;
     _targetWindowTitle = widget.macro.backgroundTargetWindowTitle;
-    // Load from plugin config if macro has no target set (deferred to after build)
     if (_targetHwnd == 0) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -883,22 +845,16 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
     return HotkeyConfig.buildHotkey(parts.mods, parts.key);
   }
 
-  // Track pending modifiers even when no key is selected yet
   final List<String> _pendingMods = [];
 
   void _insertAction(BuildContext context, {int? insertAt}) {
     final insertIndex = insertAt ?? _events.length;
-    String actionType = 'click'; // click, keyPress, keyRelease, mouseDown, mouseUp, scroll, wait, drag, swipe
-    // Click fields
+    String actionType = 'click';
     int clickX = 0, clickY = 0;
     String clickButton = 'left';
-    // Key fields
     String keyName = 'Space';
-    // Scroll fields
     double scrollDy = 3.0;
-    // Wait fields
     int waitMs = 500;
-    // Drag/Swipe fields
     int dragStartX = 0, dragStartY = 0, dragEndX = 0, dragEndY = 0;
     int dragDurationMs = 300;
 
@@ -912,7 +868,6 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
           title: const Text('插入操作'),
           constraints: const BoxConstraints(maxWidth: 420, maxHeight: 520),
           content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            // Action type
             const Text('操作类型:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
             const SizedBox(height: 6),
             Wrap(spacing: 4, runSpacing: 4, children: [
@@ -939,7 +894,6 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
             const Divider(),
             const SizedBox(height: 8),
 
-            // Type-specific fields
             if (actionType == 'click' || actionType == 'mouseDown' || actionType == 'mouseUp') ...[
               Row(children: [
                 const SizedBox(width: 50, child: Text('X:', style: TextStyle(fontSize: 12))),
@@ -980,18 +934,12 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
               const Text('按键:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
               const SizedBox(height: 6),
               Wrap(spacing: 3, runSpacing: 3, children: [
-                // Modifier keys
                 'Shift', 'Ctrl', 'Alt',
-                // Function keys
                 'F1','F2','F3','F4','F5','F6','F7','F8','F9','F10','F11','F12',
-                // Edit keys
                 'Space','Enter','Tab','Escape','Backspace','Delete','Insert',
-                // Arrow keys
                 'Up','Down','Left','Right','Home','End','PageUp','PageDown',
-                // Letters
                 'A','B','C','D','E','F','G','H','I','J','K','L','M',
                 'N','O','P','Q','R','S','T','U','V','W','X','Y','Z',
-                // Numbers
                 '0','1','2','3','4','5','6','7','8','9',
               ].map((key) {
                 final selected = keyName == key.toLowerCase() || keyName == key;
@@ -1134,7 +1082,6 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
           actions: [
             Button(onPressed: () => Navigator.pop(context), child: const Text('取消')),
             FilledButton(onPressed: () {
-              // Build the event
               final baseTime = insertIndex == 0 ? 0 : _events[insertIndex - 1].timestampMs;
               MacroEvent newEvent;
               switch (actionType) {
@@ -1198,7 +1145,6 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
                   title: Text(m.name, style: const TextStyle(fontSize: 13)),
                   subtitle: Text('${m.events.length} 个事件 · ${m.totalDurationMs}ms', style: const TextStyle(fontSize: 11)),
                   onPressed: () {
-                    // Insert at chosen position
                     final baseTime = insertIndex == 0 ? 0 : _events[insertIndex - 1].timestampMs;
                     final newEvents = m.events.map((e) => e.copyWith(
                       timestampMs: e.timestampMs + baseTime,
@@ -1230,16 +1176,13 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
       title: const Text('编辑宏'),
       constraints: const BoxConstraints(maxWidth: 520, maxHeight: 600),
       content: Column(mainAxisSize: MainAxisSize.min, children: [
-        // Name
         TextBox(controller: _nameCtrl, placeholder: '宏名称'),
         const SizedBox(height: 10),
-        // Hotkey
         Row(children: [
           const Text('快捷键:', style: TextStyle(fontSize: 13)),
           const SizedBox(width: 8),
           ...HotkeyConfig.modifiers.map((mod) {
             final parts = _hotkey?.split('+') ?? [];
-            // Also check pending modifiers (selected before a key was chosen)
             final selected = parts.contains(mod) || _pendingMods.contains(mod);
             return Padding(
               padding: const EdgeInsets.only(right: 4),
@@ -1291,7 +1234,6 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
           ],
         ]),
         const SizedBox(height: 10),
-        // Repeat & Speed
         Row(children: [
           const Text('重复:', style: TextStyle(fontSize: 13)),
           const SizedBox(width: 6),
@@ -1307,7 +1249,6 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
           Text('${_speed.toStringAsFixed(1)}x', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
           SizedBox(width: 120, child: Slider(value: _speed, min: 0.1, max: 5.0, divisions: 49, onChanged: (v) => setState(() => _speed = v))),
         ]),
-        // Background execution option (only shown when plugin is installed & enabled)
         if (_bgPluginAvailable) ...[
           const SizedBox(height: 10),
           Container(
@@ -1330,7 +1271,6 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
               ]),
               if (_backgroundMode) ...[
                 const SizedBox(height: 8),
-                // Target window
                 Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
                   Expanded(
                     child: ComboBox<int>(
@@ -1369,7 +1309,6 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
           ),
         ],
         const SizedBox(height: 10),
-        // Event list header
         Row(children: [
           Text('事件列表 (${_events.length})', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
           const Spacer(),
@@ -1387,7 +1326,6 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
             }, child: const Text('清空')),
         ]),
         const SizedBox(height: 6),
-        // Event list
         Flexible(child: Container(
           constraints: const BoxConstraints(maxHeight: 320),
           decoration: BoxDecoration(color: containerBg, borderRadius: BorderRadius.circular(8)),
@@ -1403,7 +1341,6 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
                       setState(() {
                         final event = _events.removeAt(oldIndex);
                         _events.insert(newIndex, event);
-                        // Update editing index
                         if (_editingIndex != null) {
                           if (_editingIndex == oldIndex) {
                             _editingIndex = newIndex;
@@ -1422,7 +1359,6 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
                       );
                     },
                   )),
-                  // Trailing insert button
                   _buildTrailingInsert(accent),
                 ]),
         )),
@@ -1565,7 +1501,6 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
         decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(6)),
         child: Row(children: [
-          // Drag handle
           ReorderableDragStartListener(
             index: index,
             child: MouseRegion(
@@ -1584,7 +1519,6 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
             Text('等${event.waitMs}ms', style: TextStyle(fontSize: 11, color: accent.withValues(alpha: 0.7))),
           ],
           const SizedBox(width: 6),
-          // More button
           GestureDetector(
             onTap: () => _showEventContextMenu(index),
             child: Icon(FluentIcons.more, size: 12, color: accent.withValues(alpha: 0.5)),
@@ -1606,7 +1540,6 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(6), border: Border.all(color: accent.withValues(alpha: 0.4))),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // Header
         Row(children: [
           Icon(_eventIcon(event.type), size: 14, color: accent),
           const SizedBox(width: 6),
@@ -1618,7 +1551,6 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
           ),
         ]),
         const SizedBox(height: 8),
-        // Hold duration
         Row(children: [
           const SizedBox(width: 80, child: Text('按住(ms):', style: TextStyle(fontSize: 12))),
           SizedBox(width: 80, child: TextBox(controller: holdCtrl, placeholder: '0')),
@@ -1627,7 +1559,6 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
           SizedBox(width: 80, child: TextBox(controller: waitCtrl, placeholder: '0')),
         ]),
         const SizedBox(height: 4),
-        // Type-specific fields
         if (event.type == MacroEventType.click || event.type == MacroEventType.mouseDown || event.type == MacroEventType.mouseUp) ...[
           Row(children: [
             const SizedBox(width: 60, child: Text('X:', style: TextStyle(fontSize: 12))),
@@ -1716,7 +1647,6 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
           ]),
         ],
         const SizedBox(height: 8),
-        // Apply button
         Row(mainAxisAlignment: MainAxisAlignment.end, children: [
           FilledButton(onPressed: () {
             final newHoldMs = int.tryParse(holdCtrl.text) ?? event.holdMs;
@@ -1772,7 +1702,6 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
   }
 }
 
-// ─── Key Sequence Builder Dialog ──────────────────────────────
 
 class _KeySequenceBuilderDialog extends StatefulWidget {
   final Future<void> Function(String name, List<MacroEvent> events) onConfirm;
@@ -1826,7 +1755,6 @@ class _KeySequenceBuilderDialogState extends State<_KeySequenceBuilderDialog> {
       content: SizedBox(width: 440, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
         TextBox(controller: _nameCtrl, placeholder: '宏名称'),
         const SizedBox(height: 10),
-        // Sequence display
         Container(
           constraints: const BoxConstraints(maxHeight: 100),
           padding: const EdgeInsets.all(8),
@@ -1849,7 +1777,6 @@ class _KeySequenceBuilderDialogState extends State<_KeySequenceBuilderDialog> {
           ]),
         ],
         const SizedBox(height: 8),
-        // Delay
         Row(children: [
           const Text('延迟:', style: TextStyle(fontSize: 12)),
           const SizedBox(width: 6),
@@ -1857,12 +1784,10 @@ class _KeySequenceBuilderDialogState extends State<_KeySequenceBuilderDialog> {
           Expanded(child: Slider(value: _delayMs.toDouble(), min: 0, max: 1000, divisions: 50, onChanged: (v) => setState(() => _delayMs = v.round()))),
         ]),
         const SizedBox(height: 6),
-        // Templates
         const Text('快速模板', style: TextStyle(fontSize: 12)),
         const SizedBox(height: 4),
         Wrap(spacing: 4, runSpacing: 4, children: _templates.map((t) => _chip(t.$1, false, () => setState(() => _entries.addAll(t.$2)))).toList()),
         const SizedBox(height: 8),
-        // Key categories
         ..._keyCategories.map((cat) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(cat.$1, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 11)),
           const SizedBox(height: 3),
@@ -1894,7 +1819,6 @@ class _KeyEntry {
   const _KeyEntry({required this.key, this.delayMs = 50});
 }
 
-// ─── Combo Builder Dialog ────────────────────────────────────
 
 class _ComboBuilderDialog extends StatefulWidget {
   final Future<void> Function(String name, List<MacroEvent> events) onConfirm;
@@ -1942,7 +1866,6 @@ class _ComboBuilderDialogState extends State<_ComboBuilderDialog> {
       content: SizedBox(width: 440, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
         TextBox(controller: _nameCtrl, placeholder: '宏名称'),
         const SizedBox(height: 10),
-        // Combo display
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(color: containerBg, borderRadius: BorderRadius.circular(8)),
@@ -1964,12 +1887,10 @@ class _ComboBuilderDialogState extends State<_ComboBuilderDialog> {
               ]),
         ),
         const SizedBox(height: 8),
-        // Templates
         const Text('常用组合', style: TextStyle(fontSize: 12)),
         const SizedBox(height: 4),
         Wrap(spacing: 4, runSpacing: 4, children: _comboTemplates.map((t) => _chip(t.$1, false, () => setState(() { _keys.clear(); _keys.addAll(t.$2); }))).toList()),
         const SizedBox(height: 8),
-        // Modifier keys
         const Text('修饰键', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 11)),
         const SizedBox(height: 4),
         Wrap(spacing: 4, children: _modifierKeys.map((key) {
@@ -1981,7 +1902,6 @@ class _ComboBuilderDialogState extends State<_ComboBuilderDialog> {
           } }));
         }).toList()),
         const SizedBox(height: 8),
-        // Regular keys
         ..._regularCategories.map((cat) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(cat.$1, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 11)),
           const SizedBox(height: 3),
@@ -1994,7 +1914,6 @@ class _ComboBuilderDialogState extends State<_ComboBuilderDialog> {
   }
 }
 
-// ─── Text Type Builder Dialog ────────────────────────────────
 
 class _TextTypeBuilderDialog extends StatefulWidget {
   final Future<void> Function(String name, List<MacroEvent> events) onConfirm;
@@ -2066,7 +1985,6 @@ class _TextTypeBuilderDialogState extends State<_TextTypeBuilderDialog> {
   }
 }
 
-// ─── Scroll Builder Dialog ───────────────────────────────────
 
 class _ScrollBuilderDialog extends StatefulWidget {
   final Future<void> Function(String name, List<MacroEvent> events) onConfirm;
@@ -2104,14 +2022,12 @@ class _ScrollBuilderDialogState extends State<_ScrollBuilderDialog> {
       content: SizedBox(width: 400, child: Column(mainAxisSize: MainAxisSize.min, children: [
         TextBox(controller: _nameCtrl, placeholder: '宏名称'),
         const SizedBox(height: 10),
-        // Direction
         Row(children: [
           Expanded(child: _chip('向下滚动', _scrollDy >= 0, () => setState(() => _scrollDy = _scrollDy.abs()))),
           const SizedBox(width: 8),
           Expanded(child: _chip('向上滚动', _scrollDy < 0, () => setState(() => _scrollDy = -_scrollDy.abs()))),
         ]),
         const SizedBox(height: 10),
-        // Amount
         Row(children: [
           const Text('滚动量:', style: TextStyle(fontSize: 12)),
           const SizedBox(width: 6),
@@ -2119,7 +2035,6 @@ class _ScrollBuilderDialogState extends State<_ScrollBuilderDialog> {
           Expanded(child: Slider(value: _scrollDy.abs(), min: 0.5, max: 20.0, divisions: 39, onChanged: (v) => setState(() => _scrollDy = _scrollDy < 0 ? -v : v))),
         ]),
         const SizedBox(height: 8),
-        // Count & interval
         Row(children: [
           const Text('次数:', style: TextStyle(fontSize: 12)),
           const SizedBox(width: 6),
@@ -2137,7 +2052,6 @@ class _ScrollBuilderDialogState extends State<_ScrollBuilderDialog> {
           const Text(' ms', style: TextStyle(fontSize: 11)),
         ]),
         const SizedBox(height: 8),
-        // Presets
         const Text('快速预设', style: TextStyle(fontSize: 12)),
         const SizedBox(height: 4),
         Wrap(spacing: 4, runSpacing: 4, children: _presets.map((p) => _chip(p.$1, false, () => setState(() { _scrollDy = p.$2; _scrollCount = p.$3; _scrollIntervalMs = p.$4; }))).toList()),
@@ -2147,7 +2061,6 @@ class _ScrollBuilderDialogState extends State<_ScrollBuilderDialog> {
   }
 }
 
-// ─── Delay Builder Dialog ────────────────────────────────────
 
 class _DelayBuilderDialog extends StatefulWidget {
   final Future<void> Function(String name, List<MacroEvent> events) onConfirm;
@@ -2193,15 +2106,12 @@ class _DelayBuilderDialogState extends State<_DelayBuilderDialog> {
       content: SizedBox(width: 400, child: Column(mainAxisSize: MainAxisSize.min, children: [
         TextBox(controller: _nameCtrl, placeholder: '宏名称'),
         const SizedBox(height: 10),
-        // Delay
         Row(children: [const Text('等待时长:', style: TextStyle(fontSize: 13)), const SizedBox(width: 8), Text(delayStr, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13))]),
         AppSlider(value: _delayMs.toDouble(), min: 100, max: 30000, divisions: 299, label: delayStr, onChanged: (v) => setState(() => _delayMs = v.round())),
         Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('100ms', style: TextStyle(fontSize: 11, color: FluentTheme.of(context).brightness == Brightness.dark ? const Color(0xFF707090) : const Color(0xFF9A9AAA))), Text('30s', style: TextStyle(fontSize: 11, color: FluentTheme.of(context).brightness == Brightness.dark ? const Color(0xFF707090) : const Color(0xFF9A9AAA)))]),
         const SizedBox(height: 8),
-        // Presets
         Wrap(spacing: 4, runSpacing: 4, children: _delayPresets.map((p) => _chip(p.$1, _delayMs == p.$2, () => setState(() => _delayMs = p.$2))).toList()),
         const SizedBox(height: 10),
-        // Repeat
         Row(children: [
           const Text('重复次数:', style: TextStyle(fontSize: 13)),
           const SizedBox(width: 8),
@@ -2213,7 +2123,6 @@ class _DelayBuilderDialogState extends State<_DelayBuilderDialog> {
           const Text('(1=单次)', style: TextStyle(fontSize: 11)),
         ]),
         const SizedBox(height: 10),
-        // Key press toggle
         Row(children: [
           const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('等待前按键', style: TextStyle(fontSize: 13)),
@@ -2232,7 +2141,6 @@ class _DelayBuilderDialogState extends State<_DelayBuilderDialog> {
           ]),
         ],
         const SizedBox(height: 8),
-        // Summary
         Container(
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(color: containerBg, borderRadius: BorderRadius.circular(8)),
@@ -2251,7 +2159,6 @@ class _DelayBuilderDialogState extends State<_DelayBuilderDialog> {
   }
 }
 
-// ─── Drag / Swipe Builder Dialog ──────────────────────────
 
 class _DragSwipeBuilderDialog extends StatefulWidget {
   final bool isSwipe;
@@ -2304,7 +2211,6 @@ class _DragSwipeBuilderDialogState extends State<_DragSwipeBuilderDialog> {
       content: SizedBox(width: 420, child: Column(mainAxisSize: MainAxisSize.min, children: [
         TextBox(controller: _nameCtrl, placeholder: '宏名称'),
         const SizedBox(height: 12),
-        // Start point
         Row(children: [
           const Text('起点:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
           const SizedBox(width: 8),
@@ -2323,7 +2229,6 @@ class _DragSwipeBuilderDialogState extends State<_DragSwipeBuilderDialog> {
           Button(onPressed: () => _pickCoord(true), child: const Text('选取')),
         ]),
         const SizedBox(height: 8),
-        // End point
         Row(children: [
           const Text('终点:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
           const SizedBox(width: 8),
@@ -2342,11 +2247,9 @@ class _DragSwipeBuilderDialogState extends State<_DragSwipeBuilderDialog> {
           Button(onPressed: () => _pickCoord(false), child: const Text('选取')),
         ]),
         const SizedBox(height: 10),
-        // Duration
         Row(children: [Text('${widget.isSwipe ? "滑动" : "拖拽"}时长:', style: const TextStyle(fontSize: 13)), const SizedBox(width: 8), Text('$_durationMs ms', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13))]),
         AppSlider(value: _durationMs.toDouble(), min: 50, max: 3000, divisions: 59, label: '$_durationMs ms', onChanged: (v) => setState(() => _durationMs = v.round())),
         const SizedBox(height: 6),
-        // Repeat
         Row(children: [
           const Text('重复次数:', style: TextStyle(fontSize: 13)),
           const SizedBox(width: 8),
@@ -2364,7 +2267,6 @@ class _DragSwipeBuilderDialogState extends State<_DragSwipeBuilderDialog> {
           )),
         ]),
         const SizedBox(height: 8),
-        // Summary
         Container(
           padding: const EdgeInsets.all(8),
           decoration: BoxDecoration(color: containerBg, borderRadius: BorderRadius.circular(8)),

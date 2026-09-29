@@ -1,7 +1,3 @@
-/// RapidOCR plugin — 内置 PP-OCRv4 检测+识别，经 ai_tracker 原生插件执行。
-/// 模型随安装包分发（data/plugins/ai_tracker/models），无需联网下载。
-library;
-
 import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
@@ -106,7 +102,6 @@ class RapidOcrPlugin extends VisionPlugin {
 
   static String _jsonPath(String path) => path.replaceAll('\\', '\\\\');
 
-  /// 定位随包分发的 OCR 模型目录
   static Future<String?> resolveModelsDir() async {
     final sep = Platform.pathSeparator;
     final exeDir = File(Platform.resolvedExecutable).parent.path;
@@ -177,7 +172,6 @@ class RapidOcrPlugin extends VisionPlugin {
     }
   }
 
-  /// 高 DPI 下截图返回的是物理像素，尺寸需按实际像素数反推
   static (int, int) _resolvePixelSize(int byteLength, int w, int h) {
     final pixelCount = byteLength ~/ 4;
     if (pixelCount == w * h) return (w, h);

@@ -1,4 +1,3 @@
-library;
 
 import 'dart:io';
 import 'package:flutter/services.dart';
@@ -40,7 +39,6 @@ class PaddleOcrPlugin extends VisionPlugin {
         return true;
       }
     } on PlatformException {
-      // Method not implemented yet
     }
     _available = false;
     _unavailableReason = 'PaddleOCR未安装，请安装Python依赖';
@@ -65,7 +63,6 @@ class PaddleOcrPlugin extends VisionPlugin {
     try {
       await _channel.invokeMethod<bool>('uninstallPaddleOcr');
     } on PlatformException {
-      // ignore
     }
     _available = false;
     _unavailableReason = 'PaddleOCR未安装';

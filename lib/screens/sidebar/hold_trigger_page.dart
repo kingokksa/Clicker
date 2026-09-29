@@ -1,6 +1,3 @@
-/// Hold trigger page — configure keys that auto-repeat when held down.
-/// Each trigger key has its own action, interval, and settings.
-library;
 
 import 'dart:io';
 import 'package:fluent_ui/fluent_ui.dart';
@@ -31,7 +28,6 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
     return ScaffoldPage.scrollable(
       padding: const EdgeInsets.all(20),
       children: [
-        // Header
         Row(children: [
           Icon(FluentIcons.keyboard_classic, size: 20, color: state.accentColor),
           const SizedBox(width: 10),
@@ -45,11 +41,9 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
         ]),
         const SizedBox(height: 16),
 
-        // Empty state
         if (keys.isEmpty)
           _buildEmptyState(isDark),
 
-        // Key list
         ...keys.map((k) => _buildKeyCard(k, isDark, state)),
       ],
     );
@@ -101,7 +95,6 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
           border: Border.all(color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)),
         ),
         child: Row(children: [
-          // Trigger key badge
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
@@ -120,7 +113,6 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
             ),
           ),
           const SizedBox(width: 14),
-          // Action description
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(actionDesc, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13,
               color: key.enabled ? null : (isDark ? const Color(0xFF606080) : const Color(0xFFB0B0C0)))),
@@ -128,18 +120,15 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
             Text('间隔 ${key.intervalMs.toInt()}ms${key.backgroundMode ? " · 后台(${key.targetX},${key.targetY})" : ""}',
               style: TextStyle(fontSize: 11, color: isDark ? const Color(0xFF707090) : const Color(0xFF9A9AAA))),
           ])),
-          // Enable toggle
           ToggleSwitch(
             checked: key.enabled,
             onChanged: (v) => _toggleKey(key, v),
           ),
           const SizedBox(width: 8),
-          // Edit button
           IconButton(
             icon: Icon(FluentIcons.edit, size: 14, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80)),
             onPressed: () => _editKey(key),
           ),
-          // Delete button
           IconButton(
             icon: Icon(FluentIcons.delete, size: 14, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80)),
             onPressed: () => _deleteKey(key),
@@ -216,8 +205,6 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
   Future<(int, int)?> _pickCoordinates(int hwnd) async {
     if (hwnd == 0) return null;
     final wasOnTop = context.read<AppState>().alwaysOnTop;
-    // Must cancel alwaysOnTop first, otherwise the TOPMOST Flutter window
-    // still covers the overlay even when minimized.
     if (Platform.isWindows) {
       try {
         if (wasOnTop) await _platformChannel.invokeMethod('setAlwaysOnTop', [false]);
@@ -228,7 +215,6 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
 
     try {
       final result = await ScreenOverlayService.instance.startWindowPick(hwnd);
-      // Restore clicker window
       if (Platform.isWindows) {
         try {
           if (wasOnTop) await _platformChannel.invokeMethod('setAlwaysOnTop', [true]);
@@ -237,7 +223,6 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
       }
       return result;
     } catch (_) {
-      // Restore clicker window on error too
       if (Platform.isWindows) {
         try {
           if (wasOnTop) await _platformChannel.invokeMethod('setAlwaysOnTop', [true]);
@@ -251,7 +236,6 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
   void _showEditDialog(HoldTriggerKey key, {required bool isNew}) {
     final isDark = FluentTheme.of(context).brightness == Brightness.dark;
 
-    // Local editing state
     var triggerKey = key.triggerKey;
     var triggerType = key.triggerType;
     var triggerMouseButton = key.triggerMouseButton;
@@ -281,7 +265,6 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
           constraints: const BoxConstraints(maxWidth: 480),
           content: SingleChildScrollView(
             child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            // Trigger type
             Text('触发方式', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80))),
             const SizedBox(height: 6),
             ComboBox<HoldTriggerType>(
@@ -297,7 +280,6 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
 
             const SizedBox(height: 14),
 
-            // Trigger key (keyboard mode)
             if (triggerType == HoldTriggerType.keyboard) ...[
               Text('触发按键', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80))),
               const SizedBox(height: 6),
@@ -327,7 +309,6 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
               ]),
             ],
 
-            // Trigger mouse button (mouse mode)
             if (triggerType == HoldTriggerType.mouse) ...[
               Text('触发鼠标按键', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80))),
               const SizedBox(height: 6),
@@ -348,7 +329,6 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
 
             const SizedBox(height: 14),
 
-            // Action type
             Text('动作类型', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80))),
             const SizedBox(height: 6),
             ComboBox<HoldTriggerAction>(
@@ -364,7 +344,6 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
 
             const SizedBox(height: 14),
 
-            // Action-specific settings
             if (action == HoldTriggerAction.mouseClick) ...[
               Text('鼠标按键', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80))),
               const SizedBox(height: 6),
@@ -451,7 +430,6 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
 
             const SizedBox(height: 14),
 
-            // Interval
             Text('间隔 ${intervalMs.toInt()}ms', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80))),
             AppSlider(
               value: intervalMs,
@@ -464,7 +442,6 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
 
             const SizedBox(height: 6),
 
-            // Background mode
             Row(children: [
               Checkbox(
                 checked: backgroundMode,
@@ -474,7 +451,6 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
               const Text('后台模式', style: TextStyle(fontSize: 13)),
             ]),
 
-            // Background mode settings: window selection + coordinate picking
             if (backgroundMode) ...[
               const SizedBox(height: 10),
               Container(
@@ -485,7 +461,6 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
                   border: Border.all(color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)),
                 ),
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  // Window selection
                   Text('目标窗口', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80))),
                   const SizedBox(height: 6),
                   Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
@@ -527,7 +502,6 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
                   ]),
                   const SizedBox(height: 10),
 
-                  // Click coordinates
                   Text('点击坐标（相对目标窗口客户区）', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80))),
                   const SizedBox(height: 6),
                   Row(children: [
@@ -584,7 +558,6 @@ class _HoldTriggerPageState extends State<HoldTriggerPage> {
 
             const SizedBox(height: 4),
 
-            // Enabled
             Row(children: [
               Checkbox(
                 checked: enabled,

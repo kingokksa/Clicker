@@ -1,6 +1,3 @@
-/// AI tracker plugin — 基于 ONNX Runtime 的 YOLO 目标检测与跟踪。
-/// 加载外部 ai_tracker 动态库（data/plugins/ai_tracker/…）。
-library;
 
 import 'dart:ffi';
 import 'dart:io';
@@ -47,13 +44,11 @@ class AiTrackerPlugin extends Plugin {
 
   bool get nativeLoaded => _nativeLoaded;
 
-  /// 激活：真实加载动态库并初始化
   @override
   Future<void> onActivate(PluginContext context) async {
     await loadNativeAsync();
   }
 
-  /// 停用：释放动态库资源
   @override
   Future<void> onDeactivate() async {
     unloadNative();
@@ -229,7 +224,6 @@ class AiTrackerPlugin extends Plugin {
     _nativeLoaded = false;
   }
 
-  /// 取当前激活的 AiTrackerPlugin 实例（供视觉子系统使用）
   static AiTrackerPlugin? activeInstance() {
     final desc = PluginManager.instance.byId('ai_tracker');
     return desc?.dartInstance is AiTrackerPlugin

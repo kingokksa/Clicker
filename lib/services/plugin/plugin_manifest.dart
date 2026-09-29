@@ -1,14 +1,7 @@
-/// 插件清单模型 — 新插件系统的核心描述文件。
-///
-/// manifest.json 描述插件的元数据、运行时类型、权限、激活事件和贡献
-/// （contributes）。宿主只在激活插件时才加载代码/分配资源，
-/// 纯 manifest 阅读零开销，实现真正的即需即用。
-library;
 
 import 'dart:convert';
 import 'dart:io' show Platform;
 
-/// 插件运行时类型
 enum PluginRuntime {
   dart('dart'),
   native('native');
@@ -20,25 +13,23 @@ enum PluginRuntime {
       PluginRuntime.values.firstWhere((r) => r.id == s, orElse: () => PluginRuntime.dart);
 }
 
-/// 插件权限
 class PluginPermission {
-  static const input = 'input';               // 发送鼠标/键盘输入
-  static const screen = 'screen';             // 屏幕捕获
-  static const storage = 'storage';           // 插件私有持久化存储
-  static const notifications = 'notifications'; // 系统通知/应用内提示
-  static const clipboard = 'clipboard';       // 剪贴板读写
-  static const processes = 'processes';       // 进程/窗口枚举
+  static const input = 'input';
+  static const screen = 'screen';
+  static const storage = 'storage';
+  static const notifications = 'notifications';
+  static const clipboard = 'clipboard';
+  static const processes = 'processes';
 
   static const all = [input, screen, storage, notifications, clipboard, processes];
 }
 
-/// 页面贡献 — 插件向主导航贡献一个页面
 class PageContribution {
   final String id;
   final String title;
-  final String? icon;      // FluentIcons 图标名（见 icon_resolver）
-  final int order;         // 导航排序，越小越靠前
-  final bool showInNav;    // false 时不进导航（如后台服务型插件）
+  final String? icon;
+  final int order;
+  final bool showInNav;
   final String? description;
 
   const PageContribution({
@@ -60,9 +51,8 @@ class PageContribution {
   );
 }
 
-/// 命令贡献 — 插件注册一个可执行命令（热键/脚本/宏均可触发）
 class CommandContribution {
-  final String id;         // 完整命令 id：pluginId.actionId
+  final String id;
   final String title;
   final String? category;
 
@@ -75,10 +65,8 @@ class CommandContribution {
   );
 }
 
-/// 设置项类型
 enum SettingType { toggle, number, slider, text, dropdown, hotkey, color }
 
-/// 设置定义 — 声明式设置项，宿主负责渲染与持久化，插件只读写值
 class SettingDefinition {
   final String key;
   final SettingType type;
@@ -89,7 +77,7 @@ class SettingDefinition {
   final double? max;
   final int? precision;
   final String? unit;
-  final List<Map<String, dynamic>> options; // dropdown: [{value, label}]
+  final List<Map<String, dynamic>> options;
 
   const SettingDefinition({
     required this.key,
@@ -123,7 +111,6 @@ class SettingDefinition {
   );
 }
 
-/// 输入后端贡献 — 插件提供一种新的输入注入方式（如硬件驱动）
 class InputBackendContribution {
   final String id;
   final String name;
@@ -138,10 +125,9 @@ class InputBackendContribution {
   );
 }
 
-/// 视觉提供者贡献 — 插件提供模板匹配/OCR/目标检测等视觉能力
 class VisionProviderContribution {
   final String id;
-  final String kind;   // templateMatch | ocr | detect | colorMatch
+  final String kind;
   final String name;
 
   const VisionProviderContribution({required this.id, required this.kind, required this.name});
@@ -154,7 +140,6 @@ class VisionProviderContribution {
     );
 }
 
-/// 贡献集合 — 插件向宿主声明的全部扩展
 class PluginContributions {
   final List<PageContribution> pages;
   final List<CommandContribution> commands;
@@ -189,25 +174,24 @@ class PluginContributions {
   );
 }
 
-/// 插件清单 — manifest.json 的 Dart 模型
 class PluginManifest {
   final String id;
   final String name;
   final String version;
-  final String apiVersion;    // 插件 API 版本，宿主据此协商
+  final String apiVersion;
   final String author;
   final String description;
-  final String category;      // core|click|vision|automation|ui|extension
+  final String category;
   final List<String> platforms;
   final PluginRuntime runtime;
-  final Map<String, String> entry;    // native: 平台 -> 库相对路径
-  final String? dartPluginId;         // dart: 内置注册 id（缺省同 id）
+  final Map<String, String> entry;
+  final String? dartPluginId;
   final List<String> permissions;
   final List<String> activationEvents;
   final PluginContributions contributions;
   final String? icon;
   final int minAppVersion;
-  final bool core;            // 核心插件：不可卸载
+  final bool core;
 
   const PluginManifest({
     required this.id,
@@ -229,7 +213,6 @@ class PluginManifest {
     this.core = false,
   });
 
-  /// 从 manifest.json 解析
   factory PluginManifest.fromJson(Map<String, dynamic> json) => PluginManifest(
     id: json['id'] as String? ?? '',
     name: json['name'] as String? ?? '',
@@ -284,28 +267,21 @@ class PluginManifest {
     'core': core,
   };
 
-  /// 当前平台是否支持
   bool get supportsCurrentPlatform {
     if (platforms.isEmpty) return true;
     return platforms.contains(currentPluginPlatform);
   }
 
-  /// 是否按需激活（非启动即激活）
   bool get activatesOnDemand =>
       !activationEvents.contains('onStartup') && activationEvents.isNotEmpty;
 }
 
-/// 页面完整 id 解析规则：
-/// - 声明 id 已含 ':' → 原样使用（显式完整 id）
-/// - 声明 id == 插件 id → 原样使用（内置 Dart 插件约定）
-/// - 其余 → 'pluginId:pageId'（避免原生插件间页面 id 冲突）
 String resolveFullPageId(String pluginId, String declaredId) {
   if (declaredId.contains(':')) return declaredId;
   if (declaredId == pluginId) return declaredId;
   return '$pluginId:$declaredId';
 }
 
-/// 当前运行平台名（与 manifest.platforms / entry 的 key 对应）
 String get currentPluginPlatform {
   if (Platform.isWindows) return 'windows';
   if (Platform.isLinux) return 'linux';

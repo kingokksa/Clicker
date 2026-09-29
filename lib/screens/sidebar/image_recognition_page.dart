@@ -1,5 +1,3 @@
-/// Image recognition page — screen monitoring, image search, OCR, conditional triggers.
-library;
 
 import 'dart:async';
 import 'dart:convert';
@@ -23,7 +21,6 @@ import '../../services/screen_overlay_service.dart';
 import '../../models/macro_model.dart';
 import '../macro/macro_page.dart';
 
-/// COCO 80 classes: Chinese name → English name
 const _cocoClasses = <MapEntry<String, String>>[
   MapEntry('人物', 'person'),
   MapEntry('自行车', 'bicycle'),
@@ -135,27 +132,21 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
 
   int _checkIntervalMs = 500;
 
-  // OCR state (used by trigger textMatch)
   final String _ocrLanguage = 'zh-Hans-CN';
 
-  // OCR tools install state
   bool _tesseractInstalled = false;
   bool _pythonInstalled = false;
   bool _checkingTools = true;
   final bool _installingTool = false;
-  // bool _paddleOcrInstalled = false;  // PaddleOCR 暂时禁用
-  // bool _checkingPaddleOcr = true;
-  // bool _installingPaddleOcr = false;
   bool _initialized = false;
 
-  // Conditional triggers
   final List<_TriggerEntry> _triggers = [];
   Timer? _triggerCheckTimer;
   final Map<String, DateTime> _triggerLastFired = {};
   final Map<String, VisionMatchResult> _lastDetectionResults = {};
   String? _highlightedTriggerId;
-  final Map<String, String> _triggerStatus = {}; // trigger id -> last check status text
-  final Map<String, DateTime> _triggerLastCheck = {}; // trigger id -> last check time
+  final Map<String, String> _triggerStatus = {};
+  final Map<String, DateTime> _triggerLastCheck = {};
 
   static const _platformChannel = MethodChannel('com.clicker.pro/platform');
 
@@ -186,7 +177,6 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
 
   Future<void> _initPlugins() async {
     await VisionPluginManager.registerBuiltinPlugins();
-    // Deploy native plugin DLL before initializing (needed for YOLO)
     await _deployNativePluginIfNeeded();
     await _vision.pluginManager.initializeAll();
     if (mounted) setState(() {});
@@ -263,13 +253,11 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     }
   }
 
-  // ─── Persistence ──────────────────────────────────────────
   static const _kTriggersKey = 'img_rec_triggers';
 
   Future<void> _loadPersistedData() async {
     final prefs = LocalStorage.instance;
 
-    // Load triggers
     final triggersJson = prefs.getString(_kTriggersKey);
     if (triggersJson != null) {
       try {
@@ -315,9 +303,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     }
 
     if (mounted) setState(() {});
-    // checkOcrTools now runs on a background thread in C++, so it won't block the UI.
     if (mounted && Platform.isWindows) _checkOcrTools();
-    // if (mounted && Platform.isWindows) _checkPaddleOcr();  // PaddleOCR 暂时禁用
   }
 
   Future<void> _checkOcrTools() async {
@@ -336,45 +322,8 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     }
   }
 
-  // PaddleOCR 暂时禁用
-  // Future<void> _checkPaddleOcr() async {
-  //   setState(() => _checkingPaddleOcr = true);
-  //   try {
-  //     final results = await _platformChannel.invokeMethod<Map>('checkPaddleOcr');
-  //     if (results != null && mounted) {
-  //       setState(() {
-  //         _paddleOcrInstalled = results['available'] == true;
-  //         _checkingPaddleOcr = false;
-  //       });
-  //     }
-  //   } on PlatformException {
-  //     if (mounted) setState(() => _checkingPaddleOcr = false);
-  //   }
-  // }
 
-  // Future<void> _installPaddleOcr() async {
-  //   setState(() => _installingPaddleOcr = true);
-  //   try {
-  //     await _platformChannel.invokeMethod<bool>('installPaddleOcr');
-  //     await _checkPaddleOcr();
-  //     final paddlePlugin = _vision.pluginManager.getPlugin('plugin_paddle_ocr');
-  //     if (paddlePlugin != null) {
-  //       await _vision.pluginManager.ensureInitialized('plugin_paddle_ocr');
-  //     }
-  //   } on PlatformException {
-  //     // Installation failed
-  //   }
-  //   if (mounted) setState(() => _installingPaddleOcr = false);
-  // }
 
-  // Future<void> _uninstallPaddleOcr() async {
-  //   try {
-  //     await _platformChannel.invokeMethod<bool>('uninstallPaddleOcr');
-  //     await _checkPaddleOcr();
-  //   } on PlatformException {
-  //     // ignore
-  //   }
-  // }
 
   Future<void> _saveTriggers() async {
     final prefs = LocalStorage.instance;
@@ -404,15 +353,13 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     await prefs.setString(_kTriggersKey, jsonEncode(list));
   }
 
-  // ─── Trigger Execution ────────────────────────────────────
-  bool _triggerRunning = false; // user must explicitly start
+  bool _triggerRunning = false;
 
   void _startTriggerChecker() {
     _triggerCheckTimer?.cancel();
     final enabledTriggers = _triggers.where((t) => t.enabled).toList();
     if (enabledTriggers.isEmpty) return;
 
-    // Use user-configured interval, but enforce minimum based on trigger types
     int interval = _checkIntervalMs;
     final hasExpensiveTriggers = enabledTriggers.any((t) =>
       t.conditionType == _TriggerConditionType.imageMatch ||
@@ -441,7 +388,6 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     for (final trigger in List.of(_triggers)) {
       if (!trigger.enabled) continue;
 
-      // Debounce: don't fire more often than the trigger's interval
       final lastFired = _triggerLastFired[trigger.id];
       if (lastFired != null && now.difference(lastFired).inMilliseconds < trigger.intervalMs) continue;
 
@@ -454,15 +400,14 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
             if (color == null) continue;
             if (trigger.targetColor != null) {
               final diff = _colorDiff(color, trigger.targetColor!);
-              conditionMet = diff < 40; // close enough to target color
+              conditionMet = diff < 40;
             } else {
-              // No target color: detect any change from initial color
               final lastColor = _triggerLastColors[trigger.id];
               if (lastColor == null) {
-                _triggerLastColors[trigger.id] = color; // record initial
+                _triggerLastColors[trigger.id] = color;
               } else {
                 conditionMet = _colorDiff(color, lastColor) > 30;
-                if (conditionMet) _triggerLastColors[trigger.id] = color; // update after trigger
+                if (conditionMet) _triggerLastColors[trigger.id] = color;
               }
             }
             break;
@@ -471,12 +416,12 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
             if (color == null) continue;
             final lastColor = _triggerLastColors[trigger.id];
             if (lastColor == null) {
-              _triggerLastColors[trigger.id] = color; // record initial
+              _triggerLastColors[trigger.id] = color;
             } else {
               final diff = _colorDiff(color, lastColor);
               if (diff > 30) {
                 conditionMet = true;
-                _triggerLastColors[trigger.id] = color; // update after change
+                _triggerLastColors[trigger.id] = color;
               }
             }
             break;
@@ -485,9 +430,8 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
             if (color == null) continue;
             if (trigger.targetColor != null) {
               final diff = _colorDiff(color, trigger.targetColor!);
-              conditionMet = diff > 60; // target color is no longer present
+              conditionMet = diff > 60;
             } else {
-              // No target color: detect if region becomes very dark/white (likely disappeared)
               final brightness = (color.r * 0.299 + color.g * 0.587 + color.b * 0.114);
               final lastColor = _triggerLastColors[trigger.id];
               if (lastColor != null) {
@@ -549,7 +493,6 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
             if (detector == null) {
               statusText = '无检测插件(需安装ONNX Runtime+模型)';
             } else if (!detector.isAvailable) {
-              // Try initializing the plugin first
               final ok = await pluginManager.ensureInitialized(detector.info.id);
               if (!ok || !detector.isAvailable) {
                 statusText = '检测插件不可用: ${detector.info.name}（请检查ONNX Runtime和模型是否已安装）';
@@ -668,7 +611,6 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
   }
 
   void _highlightTriggerRegion(_TriggerEntry t) {
-    // 仅更新UI状态，不使用overlay（overlay会拦截鼠标事件导致无法操作）
     setState(() => _highlightedTriggerId = t.id);
   }
 
@@ -678,11 +620,10 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     }
   }
 
-  /// Normalize text for fuzzy matching: remove spaces, punctuation, and convert to lowercase
   static String _normalizeText(String text) {
     return text
-      .replaceAll(RegExp(r'[\s\u3000]+'), '') // remove spaces (including full-width)
-      .replaceAll(RegExp(r'[^\w\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]+'), '') // keep letters, digits, CJK, kana
+      .replaceAll(RegExp(r'[\s\u3000]+'), '')
+      .replaceAll(RegExp(r'[^\w\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]+'), '')
       .toLowerCase();
   }
 
@@ -698,10 +639,9 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
         try {
           return RegExp(target).hasMatch(ocrText);
         } catch (_) {
-          return false; // invalid regex
+          return false;
         }
       case _TextMatchMode.fuzzy:
-        // Normalize both texts: remove spaces, punctuation, lowercase
         final normOcr = _normalizeText(ocrText);
         final normTarget = _normalizeText(target);
         if (normTarget.isEmpty) return false;
@@ -729,7 +669,6 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
         break;
       case _TriggerActionType.startClicker:
       case _TriggerActionType.stopClicker:
-        // These would integrate with the main clicker functionality
         break;
       case _TriggerActionType.runMacro:
         if (trigger.macroId.isNotEmpty) {
@@ -796,7 +735,6 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     return ScaffoldPage.scrollable(
       padding: const EdgeInsets.all(20),
       children: [
-        // Header
         Row(children: [
           Icon(FluentIcons.image_pixel, size: 20, color: state.accentColor),
           const SizedBox(width: 10),
@@ -804,7 +742,6 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
         ]),
         const SizedBox(height: 16),
 
-        // Tab selector
         Row(children: [
           _tabChip('条件触发', _selectedTab == 0, () => setState(() => _selectedTab = 0)),
           const SizedBox(width: 6),
@@ -845,7 +782,6 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     );
   }
 
-  // ─── Conditional Triggers ──────────────────────────────────
 
   List<Widget> _buildTriggers(bool isDark, AppState state) {
     final cardBg = isDark ? const Color(0xFF252540).withValues(alpha: 0.5) : const Color(0xFFF0F0FA).withValues(alpha: 0.5);
@@ -929,29 +865,6 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
               ),
             )),
           ]),
-          // PaddleOCR 暂时禁用
-          // if (Platform.isWindows && !_paddleOcrInstalled && !_checkingPaddleOcr) ...[
-          //   const SizedBox(height: 8),
-          //   Row(children: [
-          //     const Icon(FluentIcons.info, size: 12, color: Color(0xFFFF9800)),
-          //     const SizedBox(width: 4),
-          //     Expanded(child: Text('安装 PaddleOCR 可提升中文识别精度，在「高级模型」中安装', style: const TextStyle(fontSize: 11, color: Color(0xFFFF9800)))),
-          //   ]),
-          // ] else if (Platform.isWindows && _paddleOcrInstalled) ...[
-          //   const SizedBox(height: 8),
-          //   Row(children: [
-          //     const Icon(FluentIcons.completed, size: 12, color: Color(0xFF00E676)),
-          //     const SizedBox(width: 4),
-          //     const Expanded(child: Text('PaddleOCR 已就绪', style: TextStyle(fontSize: 11, color: Color(0xFF00E676)))),
-          //   ]),
-          // ] else if (Platform.isWindows && _checkingPaddleOcr) ...[
-          //   const SizedBox(height: 8),
-          //   const Row(children: [
-          //     SizedBox(width: 12, height: 12, child: ProgressRing()),
-          //     SizedBox(width: 4),
-          //     Text('正在检测PaddleOCR...', style: TextStyle(fontSize: 11, color: Colors.grey)),
-          //   ]),
-          // ],
         ]),
       ),
       const SizedBox(height: 10),
@@ -1305,7 +1218,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
 
   void _addTrigger(bool isDark, AppState state) async {
     final sel = await _startAreaSelect();
-    if (sel == null) return; // cancelled
+    if (sel == null) return;
     final (selX, selY, selX2, selY2) = sel;
     final selW = selX2 - selX;
     final selH = selY2 - selY;
@@ -1368,7 +1281,6 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
   bool _bundledDetector = false;
   bool _bundledOcr = false;
   String _ocrEngine = 'builtin_windows_ocr';
-  // bool _paddleOcrExists = false;  // PaddleOCR 暂时禁用
 
   String _pluginDir = '';
 
@@ -1419,7 +1331,6 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
 
     _onnxExists = await File('$dir\\onnxruntime.dll').exists();
     _modelExists = await File('$dir\\models\\yolo11n.onnx').exists();
-    // _paddleOcrExists = await _checkPaddleOcrInstalled();  // PaddleOCR 暂时禁用
     _dllDeployed = await _deployNativePlugin();
 
     final bundled = await _getBundledDir();
@@ -1431,22 +1342,10 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
 
     _ocrEngine = VisionPluginManager.instance.preferredId ?? 'builtin_windows_ocr';
 
-    // 不自动下载，只检查状态，由用户手动触发下载
 
     if (mounted) setState(() => _checking = false);
   }
 
-  // PaddleOCR 暂时禁用
-  // Future<bool> _checkPaddleOcrInstalled() async {
-  //   if (!Platform.isWindows) return false;
-  //   try {
-  //     const channel = MethodChannel('com.clicker.pro/platform');
-  //     final result = await channel.invokeMethod<Map>('checkPaddleOcr');
-  //     return result != null && result['available'] == true;
-  //   } catch (_) {
-  //     return false;
-  //   }
-  // }
 
   Future<bool> _deployNativePlugin() async {
     final dir = _pluginDir;
@@ -1733,7 +1632,6 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
       try { await Directory(extractDir).delete(recursive: true); } catch (_) {}
 
       _downloadStatus = 'ONNX Runtime 安装完成';
-      // 重新初始化YOLO插件
       await _reinitYoloPlugin();
     } catch (e) {
       _errorMsg = e.toString().replaceFirst('Exception: ', '');
@@ -1764,7 +1662,6 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
       );
       _modelExists = true;
       _downloadStatus = 'YOLO11n 模型下载完成';
-      // 重新初始化YOLO插件以加载模型
       await _reinitYoloPlugin();
     } catch (e) {
       _errorMsg = e.toString().replaceFirst('Exception: ', '');
@@ -1783,39 +1680,10 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
 
   final String _selectedPipMirror = '清华源';
 
-  // PaddleOCR 暂时禁用
-  // Future<void> _downloadPaddleOcr() async {
-  //   setState(() {
-  //     _downloading = true;
-  //     _downloadProgress = 0;
-  //     _downloadSize = '';
-  //     _errorMsg = '';
-  //     _downloadStatus = '正在通过 pip 安装 PaddleOCR...';
-  //   });
-  //
-  //   try {
-  //     const channel = MethodChannel('com.clicker.pro/platform');
-  //     final mirrorUrl = _pipMirrors[_selectedPipMirror] ?? '';
-  //     final args = mirrorUrl.isEmpty ? <String, dynamic>{} : <String, dynamic>{'mirror': mirrorUrl};
-  //     await channel.invokeMethod<bool>('installPaddleOcr', args);
-  //
-  //     _paddleOcrExists = true;
-  //     _downloadStatus = 'PaddleOCR 安装完成';
-  //     // 重新初始化PaddleOCR插件
-  //     await _reinitPaddleOcrPlugin();
-  //   } catch (e) {
-  //     _paddleOcrExists = false;
-  //     _errorMsg = 'pip 安装失败，请手动执行: pip install paddlepaddle paddleocr';
-  //     _downloadStatus = '安装失败';
-  //   }
-  //
-  //   setState(() => _downloading = false);
-  // }
 
   Future<void> _downloadAll() async {
     if (!_onnxExists) await _downloadOnnxRuntime();
     if (!_modelExists && _errorMsg.isEmpty) await _downloadModel();
-    // if (!_paddleOcrExists && _errorMsg.isEmpty && Platform.isWindows) await _downloadPaddleOcr();  // PaddleOCR 暂时禁用
     setState(() {});
   }
 
@@ -1829,16 +1697,6 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
     }
   }
 
-  // PaddleOCR 暂时禁用
-  // Future<void> _reinitPaddleOcrPlugin() async {
-  //   final mgr = VisionPluginManager.instance;
-  //   mgr.resetInitialized('plugin_paddle_ocr');
-  //   final plugin = mgr.getPlugin('plugin_paddle_ocr');
-  //   if (plugin != null) {
-  //     final ok = await plugin.initialize();
-  //     debugPrint('[图像识别] PaddleOCR插件重新初始化: $ok, available=${plugin.isAvailable}');
-  //   }
-  // }
 
   Future<void> _uninstallAll() async {
     setState(() {
@@ -1857,13 +1715,7 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
       _dllDeployed = false;
 
       if (Platform.isWindows) {
-        // PaddleOCR 暂时禁用
-        // try {
-        //   const channel = MethodChannel('com.clicker.pro/platform');
-        //   await channel.invokeMethod<bool>('uninstallPaddleOcr');
-        // } catch (_) {}
       }
-      // _paddleOcrExists = false;  // PaddleOCR 暂时禁用
       _downloadStatus = '已卸载全部组件';
     } catch (e) {
       _errorMsg = e.toString().replaceFirst('Exception: ', '');
@@ -1951,38 +1803,6 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
               accent: accent,
               onInstall: _downloading ? null : _downloadModel,
             ),
-            // PaddleOCR 暂时禁用
-            // _buildDepCard(
-            //   icon: FluentIcons.text_document,
-            //   name: 'PaddleOCR',
-            //   desc: '百度文字识别引擎 · 通过 pip 安装 · 需 Python 环境',
-            //   installed: _paddleOcrExists,
-            //   isDark: isDark,
-            //   accent: accent,
-            //   onInstall: _downloading ? null : _downloadPaddleOcr,
-            // ),
-            // if (!_paddleOcrExists) Padding(
-            //   padding: const EdgeInsets.only(top: 4, left: 4),
-            //   child: Row(children: [
-            //     Text('pip源: ', style: TextStyle(fontSize: 11, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
-            //     ..._pipMirrors.keys.map((name) {
-            //       final isSelected = _selectedPipMirror == name;
-            //       return Padding(
-            //         padding: const EdgeInsets.only(right: 4),
-            //         child: Button(
-            //           style: ButtonStyle(
-            //             padding: WidgetStateProperty.all(const EdgeInsets.symmetric(horizontal: 8, vertical: 2)),
-            //             backgroundColor: WidgetStateProperty.all(isSelected
-            //               ? accent.withValues(alpha: 0.15)
-            //               : isDark ? const Color(0xFF1E1E36) : const Color(0xFFE8E8F4)),
-            //           ),
-            //           onPressed: _downloading ? null : () => setState(() => _selectedPipMirror = name),
-            //           child: Text(name, style: TextStyle(fontSize: 10, color: isSelected ? accent : (isDark ? const Color(0xFF9090B0) : const Color(0xFF6A6A80)))),
-            //         ),
-            //       );
-            //     }),
-            //   ]),
-            // ),
           ],
           if (Platform.isAndroid) ...[
             _buildDepCard(
@@ -2268,8 +2088,6 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
   }
 }
 
-// ─── Element Inspector Tab ─────────────────────────────────
-
 class _ElementInspectorTab extends StatefulWidget {
   const _ElementInspectorTab();
 
@@ -2503,7 +2321,6 @@ class _ElementInspectorTabState extends State<_ElementInspectorTab> {
   }
 }
 
-// ─── Data Classes ────────────────────────────────────────────
 
 enum _TriggerConditionType { colorMatch, colorChange, colorDisappear, imageMatch, textMatch, objectDetect, elementMatch }
 extension on _TriggerConditionType {
@@ -2645,15 +2462,13 @@ class _TriggerConfig {
   });
 }
 
-// ─── Add Region Dialog ──────────────────────────────────────
 
-// ─── Add Trigger Dialog ─────────────────────────────────────
 
 class _AddTriggerDialog extends StatefulWidget {
   final int initialX, initialY, initialW, initialH;
   final Future<(int, int)?> Function()? onPickActionPos;
   final Future<TemplateData?> Function()? onCaptureTemplate;
-  final _TriggerEntry? initialTrigger; // null = add mode, non-null = edit mode
+  final _TriggerEntry? initialTrigger;
   const _AddTriggerDialog({
     this.initialX = 0, this.initialY = 0,
     this.initialW = 100, this.initialH = 100,
@@ -2694,7 +2509,6 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
     super.initState();
     final t = widget.initialTrigger;
     if (t != null) {
-      // Edit mode: populate from existing trigger
       _conditionType = t.conditionType;
       _actionType = t.actionType;
       _x = t.x; _y = t.y; _w = t.w; _h = t.h;
@@ -2812,7 +2626,6 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
           )),
         ]),
 
-        // Image match specific: capture template + threshold
         if (_conditionType == _TriggerConditionType.imageMatch) ...[
           const SizedBox(height: 8),
           Row(children: [
@@ -2851,7 +2664,6 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
           ]),
         ],
 
-        // Text match specific: target text
         if (_conditionType == _TriggerConditionType.textMatch) ...[
           const SizedBox(height: 8),
           TextBox(placeholder: '输入要匹配的文字', onChanged: (v) => _targetText = v),
@@ -2881,7 +2693,7 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
               Icon(FluentIcons.info, size: 12, color: Color(0xFFFF9800)),
               SizedBox(width: 4),
               Expanded(child: Text(
-                'Windows OCR 已就绪，支持中英文识别',  // PaddleOCR 暂时禁用
+                'Windows OCR 已就绪，支持中英文识别',
                 style: TextStyle(fontSize: 10, color: Color(0xFF00E676)),
               )),
             ]),

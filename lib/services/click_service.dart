@@ -1,8 +1,3 @@
-/// Click engine service — runs auto-clicking in an isolate-like thread.
-/// Supports both mouse and keyboard click modes with advanced features.
-/// Fast mouse clicking uses a native Win32 thread for maximum speed
-/// without blocking the Dart event loop.
-library;
 
 import 'dart:async';
 import 'dart:ffi';
@@ -15,16 +10,13 @@ import 'platform/platform_input.dart';
 import 'platform/windows_input.dart';
 import 'platform/android_input.dart';
 
-/// Play a system sound via Win32 MessageBeep
 void _playSystemSound() {
   if (!Platform.isWindows) return;
   final user32 = DynamicLibrary.open('user32.dll');
   final messageBeep = user32.lookupFunction<Int32 Function(Int32), int Function(int)>('MessageBeep');
-  messageBeep(0); // 0 = default beep
+  messageBeep(0);
 }
 
-/// Play a WAV file via Win32 PlaySound API (winmm.dll).
-/// SND_FILENAME = 0x00020000, SND_ASYNC = 0x0001, SND_NODEFAULT = 0x0002
 void _playWavFile(String path) {
   if (!Platform.isWindows) return;
   final winmm = DynamicLibrary.open('winmm.dll');
@@ -34,16 +26,12 @@ void _playWavFile(String path) {
   >('PlaySoundW');
   final pathPtr = path.toNativeUtf16();
   try {
-    // SND_FILENAME | SND_ASYNC | SND_NODEFAULT
     playSound(pathPtr, 0, 0x00020000 | 0x0001 | 0x0002);
   } finally {
     calloc.free(pathPtr);
   }
 }
 
-/// Play a sound based on SoundConfig.
-/// If path is empty, plays system default beep.
-/// If path is set, plays the custom audio file (WAV).
 Future<void> _playSound(SoundConfig config, {required bool isStart}) async {
   final enabled = isStart ? config.startEnabled : config.endEnabled;
   if (!enabled) return;
@@ -72,8 +60,6 @@ class ClickService {
   ClickerConfig _config = ClickerConfig();
   ClickerStatus _status = ClickerStatus.idle;
 
-  /// When true, click actions are skipped but the loop keeps running.
-  /// Used by floating panel to pause clicks while user interacts with it.
   static bool floatingPanelPaused = false;
 
   int _clickCount = 0;
@@ -85,37 +71,23 @@ class ClickService {
   final Random _random = Random();
   int _nativeGeneration = 0;
 
-  // 贝塞尔移动缓存：记住已移动到的固定目标点，避免连点循环每拍重复拖动
   int _lastMoveX = -1;
   int _lastMoveY = -1;
 
-  // 随机偏移原点（_anchor*）与上一拍实际落点（_lastLanding*）。
-  // 偏移必须始终围绕原点计算：若每拍都读一次光标，而上一拍的偏移已经把光标
-  // 挪走了，下一拍就会在「已偏移的位置」上再偏一次 —— 偏移逐拍累积，鼠标会
-  // 随机游走越跑越远。只有检测到光标被外部移动过才重新锚定。
   int _anchorX = -1;
   int _anchorY = -1;
   int _lastLandingX = -1;
   int _lastLandingY = -1;
 
-  /// 解析「跟随光标」模式下的随机偏移原点。
-  ///
-  /// 固定 / 拾取坐标模式不需要它：原点恒为配置坐标，本就不会漂移。
-  /// 跟随光标模式下原点在首拍锚定并复用；只有检测到光标被**外部**移动过
-  /// （读到的位置 != 上一拍的落点，说明用户或其它程序动过鼠标）才重新锚定。
-  /// 若每拍都以读到的光标为原点，而上一拍的偏移已经把光标挪走了，偏移就会
-  /// 逐拍叠加 —— 鼠标随机游走、越点越偏。
   Future<void> _resolveAnchor() async {
     if (!Platform.isWindows) return;
     final pos = await _readCursorPosition();
     if (pos == null) return;
     final (cx, cy) = pos;
     if (_anchorX < 0 || _anchorY < 0) {
-      // 首拍：锚定到当前光标
       _anchorX = cx;
       _anchorY = cy;
     } else if (cx != _lastLandingX || cy != _lastLandingY) {
-      // 光标被外部移动过 — 跟随到新位置
       _anchorX = cx;
       _anchorY = cy;
     }
@@ -133,12 +105,9 @@ class ClickService {
     }
   }
 
-  /// 围绕 [x]/[y] 施加随机偏移，并把落点记入 [_lastLandingX]/[_lastLandingY]，
-  /// 供下一拍判断光标是否被外部移动过。偏移量恒在 [min, max] 内。
   (int, int) _applyRandomOffset(int x, int y) {
     final offsetMin = _config.randomOffsetMinPx;
     final offsetMax = _config.randomOffsetMaxPx;
-    // 配置反了（max < min）时兜底，避免 nextInt 收到非正数抛异常
     final range = (offsetMax - offsetMin + 1) > 0 ? offsetMax - offsetMin + 1 : 1;
     final nx = x +
         (offsetMin + _random.nextInt(range)) * (_random.nextBool() ? 1 : -1);
@@ -149,7 +118,6 @@ class ClickService {
     return (nx, ny);
   }
 
-  // Native fast clicker channel
   static const _platformChannel = MethodChannel('com.clicker.pro/platform');
   bool _usingNativeClicker = false;
 
@@ -157,7 +125,6 @@ class ClickService {
     print('[ClickService] $msg');
   }
 
-  // Callbacks
   void Function(ClickerStatus status, int count)? onStatusChanged;
   void Function(String message)? onError;
 
@@ -168,7 +135,6 @@ class ClickService {
   int get clickCount => _clickCount;
   bool get isRunning => _status == ClickerStatus.running;
 
-  /// Called from AppState when the native clicker thread reports it stopped.
   void handleNativeClickerStopped(int count, {int? generation}) {
     if (generation != null && generation != _nativeGeneration) {
       _log('ignoring stale onFastClickerStopped (gen=$generation, current=$_nativeGeneration)');
@@ -207,7 +173,6 @@ class ClickService {
       return;
     }
 
-    // Check accessibility service on Android
     if (Platform.isAndroid && _input is AndroidInput) {
       final enabled = await (_input).isAccessibilityServiceEnabled();
       if (!enabled) {
@@ -219,15 +184,12 @@ class ClickService {
 
     _clickCount = 0;
     _startTime = DateTime.now();
-    // 重新开始点击时重置贝塞尔移动缓存，确保目标点即使没变也会重新移动到位
     _lastMoveX = -1;
     _lastMoveY = -1;
-    // 随机偏移原点：每次启动重新锚定（跟随启动时的光标位置）
     _anchorX = -1;
     _anchorY = -1;
     _lastLandingX = -1;
     _lastLandingY = -1;
-    // Clear any emergency stop flag from native layer
     floatingPanelPaused = false;
 
     switch (_config.repeatMode) {
@@ -246,7 +208,6 @@ class ClickService {
     _status = ClickerStatus.running;
     _startUiUpdateTimer();
 
-    // Set background mode on WindowsInput for Dart timer mode
     if (_input is WindowsInput && isBackgroundMode) {
       (_input).setBackgroundMode(
         true,
@@ -259,7 +220,6 @@ class ClickService {
     onStatusChanged?.call(_status, _clickCount);
     _log('start: interval=${_config.intervalMs}ms, mode=${_config.clickMode.name}, repeat=${_config.repeatMode.name}');
 
-    // Play start sound based on current mode
     if (_config.soundFeedbackEnabled) {
       final soundConfig = _config.clickMode == ClickMode.keyboard
           ? _config.soundFeedbackKey
@@ -284,29 +244,14 @@ class ClickService {
     });
   }
 
-  /// Arm the next click.
-  ///
-  /// [prevActionElapsed] 上一拍 _performAction 实际耗时。传入后会从本拍的
-  /// 定时器时长里扣掉，使「相邻两拍的实际间隔」等于配置的 delayUs，
-  /// 而不是 delayUs + 上一拍执行时间。
-  ///
-  /// 不传（首轮、暂停后恢复）时不做补偿：暂停期间用户本就不期待补点，
-  /// 也不该让暂停时间被「补」回来。
   void _scheduleClick({Stopwatch? prevActionElapsed}) {
     if (_status != ClickerStatus.running) return;
 
     final baseUs = (_config.intervalMs * 1000).round();
 
-    // Native fast clicker is only available on Windows.
-    // When random delay/offset is enabled, fall back to the Dart timer
-    // path — the native thread runs fixed-interval screenshots of the
-    // config and applies neither random delay nor random offset, so those
-    // features would silently do nothing in native fast mode.
     final wantsRandom = _config.randomDelayMinMs > 0 ||
         _config.randomDelayMaxMs > 0 ||
         _config.randomOffsetEnabled;
-    // Sequence mode uses mouseDown/mouseUp and per-step delays, which the
-    // native fast clicker cannot express — route it through the Dart path.
     final wantsSequence = _config.clickType == ClickType.sequence;
     final useNative =
         baseUs <= 50000 && Platform.isWindows && !wantsRandom && !wantsSequence;
@@ -321,13 +266,9 @@ class ClickService {
     try {
       delayUs = _getDelayUs();
     } catch (_) {
-      // Never let a bad delay config break the click loop.
       delayUs = baseUs;
     }
 
-    // 漂移补偿：本定时器要在上一拍动作完成后才挂载，动作耗时会被叠加到
-    // 每一拍上。这里把耗时扣回，使相邻两拍的间隔就是配置的 delayUs。
-    // 若动作比间隔还久，钳到 0——立即出下一拍，而不堆积漏点的回补。
     if (prevActionElapsed != null) {
       final elapsedUs = prevActionElapsed.elapsed.inMicroseconds;
       delayUs = (delayUs - elapsedUs).clamp(0, delayUs);
@@ -337,9 +278,7 @@ class ClickService {
 
     _timer = Timer(Duration(microseconds: delayUs), () async {
       if (_status != ClickerStatus.running) return;
-      // Skip click action while floating panel is being interacted with
       if (floatingPanelPaused) {
-        // Re-schedule with a small delay to avoid busy-waiting
         _timer = Timer(const Duration(milliseconds: 50), () {
           if (_status == ClickerStatus.running) _scheduleClick();
         });
@@ -352,7 +291,6 @@ class ClickService {
         _log('action error: $e');
       }
       actionElapsed.stop();
-      // stop() may have been called inside _performAction (e.g. text mode)
       if (_status != ClickerStatus.running) return;
       _clickCount++;
       if (_shouldStop()) { stop(); return; }
@@ -360,9 +298,6 @@ class ClickService {
     });
   }
 
-  /// Start native fast clicker via platform channel.
-  /// Runs on a separate Win32 thread — does NOT block Dart event loop.
-  /// Supports both mouse and keyboard modes. Minimum interval: 10ms.
   void _startNativeFastClicker() {
     _usingNativeClicker = true;
     _nativeGeneration++;
@@ -425,7 +360,6 @@ class ClickService {
     }
   }
 
-  /// Convert a key name string to a Windows virtual key code.
   static int _keyToVk(String key) {
     const vkMap = <String, int>{
       'enter': 0x0D, 'tab': 0x09, 'escape': 0x1B, 'backspace': 0x08,
@@ -451,7 +385,6 @@ class ClickService {
     };
     final lower = key.toLowerCase();
     if (vkMap.containsKey(lower)) return vkMap[lower]!;
-    // Single character: use its uppercase code point as VK
     if (key.length == 1) return key.toUpperCase().codeUnitAt(0);
     return 0;
   }
@@ -460,14 +393,12 @@ class ClickService {
     final baseUs = (_config.intervalMs * 1000).round().clamp(1, 1 << 30).toInt();
     var delay = baseUs;
 
-    // Human-like mode: ±40% variation on each interval, with optional random pauses
     if (_config.humanLikeEnabled) {
       final variation = (baseUs * 0.4).round();
       if (variation > 0) {
         delay += _random.nextInt(variation * 2 + 1) - variation;
       }
 
-      // Random pause (advanced feature)
       if (_config.humanLikeRandomPause && _random.nextInt(100) < _config.humanLikePauseChance) {
         final lo = _config.humanLikePauseMinMs;
         final hi = _config.humanLikePauseMaxMs;
@@ -476,8 +407,6 @@ class ClickService {
       }
     }
 
-    // User-configured random delay range ALWAYS applies on top, so it is not
-    // silently skipped when smart delay / human-like mode is also enabled.
     final lo = _config.randomDelayMinMs;
     final hi = _config.randomDelayMaxMs;
     if (lo > 0 && hi > 0) {
@@ -490,14 +419,12 @@ class ClickService {
   }
 
   Future<void> _performAction() async {
-    // Double-check pause flag before executing
     if (floatingPanelPaused) return;
     if (_config.clickMode == ClickMode.keyboard) {
       await _performKeyAction();
     } else if (_config.clickMode == ClickMode.touch) {
       await _performTouchAction();
     } else {
-      // Mouse mode — supports click, drag, swipe, sequence
       if (_config.clickType == ClickType.drag) {
         await _input.mouseDrag(
           startX: _config.dragStartX, startY: _config.dragStartY,
@@ -525,7 +452,6 @@ class ClickService {
       x = _config.fixedX;
       y = _config.fixedY;
     } else {
-      // PositionMode.current: use screen center on mobile
       if (Platform.isAndroid || Platform.isIOS) {
         try {
           final size = await _input.getScreenSize();
@@ -541,8 +467,6 @@ class ClickService {
       }
     }
 
-    // 随机偏移（仅 tap / longPress）。触摸模式每拍都从配置或屏幕中心重新取原点，
-    // 本身不会累积漂移；这里复用同一个偏移实现以保证两端行为一致。
     if (_config.randomOffsetEnabled &&
         x >= 0 && y >= 0 &&
         (_config.touchAction == TouchAction.tap ||
@@ -579,8 +503,6 @@ class ClickService {
     }
   }
 
-  /// 拟人贝塞尔移动：从当前光标到 [targetX, targetY] 走一段二次贝塞尔曲线，
-  /// 分段移动模拟真人滑动手感。仅在能读到当前光标时生效，否则退回直接跳转。
   Future<void> _moveMouseBezier(int targetX, int targetY) async {
     int srcX = -1, srcY = -1;
     if (Platform.isWindows) {
@@ -601,7 +523,6 @@ class ClickService {
       await _input.mouseMove(targetX, targetY);
       return;
     }
-    // 二次贝塞尔控制点：路径中点加随机偏移
     final cpX = (srcX + targetX) / 2.0 + (_random.nextInt(61) - 30);
     final cpY = (srcY + targetY) / 2.0 + (_random.nextInt(61) - 30);
     final steps = (dist / 2.5).clamp(12, 40).toInt();
@@ -627,21 +548,17 @@ class ClickService {
         ? _config.fixedY
         : -1;
 
-    // 跟随光标模式 + 随机偏移：解析锚定原点（不直接读光标当原点，否则偏移逐拍累积）
     if (x < 0 && y < 0 && _config.randomOffsetEnabled) {
       await _resolveAnchor();
       x = _anchorX;
       y = _anchorY;
     }
 
-    // 固定目标点（随机偏移之前），供贝塞尔移动使用
     final int targetX = x;
     final int targetY = y;
     final bool hasFixedTarget = _config.positionMode == PositionMode.fixed ||
         _config.positionMode == PositionMode.pick;
 
-    // 拟人贝塞尔轨迹：仅固定/拾取位置、且目标点变化时才走曲线移动，
-    // 移动一次到位后原地连点，避免每拍把鼠标拖来拖去（尤其是往左上角滑）。
     if (hasFixedTarget && _config.humanLikeEnabled && _config.humanLikeBezierCurve &&
         targetX >= 0 && targetY >= 0) {
       if (_lastMoveX != targetX || _lastMoveY != targetY) {
@@ -651,15 +568,12 @@ class ClickService {
       }
     }
 
-    // 应用随机偏移（点击瞬时的微调，不触发贝塞尔拖动）
     if (x >= 0 && y >= 0 && _config.randomOffsetEnabled) {
       final p = _applyRandomOffset(x, y);
       x = p.$1;
       y = p.$2;
     }
 
-    // mouseClick already handles SetCursorPos for fixed positions,
-    // no need to call mouseMove separately
     await _input.mouseClick(
       x: x,
       y: y,
@@ -678,14 +592,12 @@ class ClickService {
         ? _config.fixedY
         : -1;
 
-    // 跟随光标模式 + 随机偏移：解析锚定原点（同 _performMouseClick，防逐拍累积）
     if (x < 0 && y < 0 && _config.randomOffsetEnabled) {
       await _resolveAnchor();
       x = _anchorX;
       y = _anchorY;
     }
 
-    // 固定目标点（随机偏移之前）
     final int targetX = x;
     final int targetY = y;
     final bool hasFixedTarget = _config.positionMode == PositionMode.fixed ||
@@ -725,7 +637,6 @@ class ClickService {
           await Future.delayed(Duration(milliseconds: item.delayMs));
           break;
       }
-      // Per-step pause after non-delay actions (delay steps already waited).
       if (_status == ClickerStatus.running &&
           item.action != MouseActionType.delay &&
           item.delayMs > 0) {
@@ -740,8 +651,6 @@ class ClickService {
         await _performKeyRepeat();
         break;
       case KeyActionMode.hold:
-        // Hold mode is handled by native thread for fast intervals.
-        // For slow intervals, press once and the stop() will release it.
         if (!_usingNativeClicker) {
           await _input.keyPress(_config.keyToRepeat);
         }
@@ -791,12 +700,10 @@ class ClickService {
   Future<void> _performComboAction() async {
     final keys = _config.comboKeys;
     if (keys.isEmpty) return;
-    // Press all keys
     for (final key in keys) {
       await _input.keyPress(key);
     }
     await Future.delayed(const Duration(milliseconds: 50));
-    // Release all keys in reverse order
     for (final key in keys.reversed) {
       await _input.keyRelease(key);
     }
@@ -844,7 +751,6 @@ class ClickService {
       }
     }
 
-    // Play end sound based on current mode
     if (_config.soundFeedbackEnabled) {
       final soundConfig = _config.clickMode == ClickMode.keyboard
           ? _config.soundFeedbackKey
@@ -854,7 +760,6 @@ class ClickService {
 
     _status = ClickerStatus.idle;
 
-    // Restore foreground mode on WindowsInput
     if (_input is WindowsInput) {
       (_input).setBackgroundMode(false);
     }
@@ -862,13 +767,11 @@ class ClickService {
     onStatusChanged?.call(_status, _clickCount);
   }
 
-  /// Get elapsed time since start (for stats display)
   Duration? get elapsedDuration {
     if (_startTime == null) return null;
     return DateTime.now().difference(_startTime!);
   }
 
-  /// Get average clicks per second
   double get averageCps {
     if (_startTime == null || _clickCount == 0) return 0;
     final elapsed = DateTime.now().difference(_startTime!).inMilliseconds;

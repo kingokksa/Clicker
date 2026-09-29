@@ -1,8 +1,3 @@
-/// 移动端定时任务页面 — 与桌面端 SchedulePage 功能对齐：
-/// 可增删的定时任务列表，每个任务到点自动执行一个动作（启动/停止连点、播放/停止宏）。
-/// 布防 / 触发逻辑由共享的 [ScheduleController] 提供（桌面端同一份实现），
-/// 本页只负责 Material 风格的 UI，通过 MobileAppState 的三个转发方法落盘。
-library;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -114,7 +109,6 @@ class _ScheduleCard extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          // ── 标题行 ──
           Row(children: [
             Text('任务 ${index + 1}',
                 style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
@@ -134,7 +128,6 @@ class _ScheduleCard extends StatelessWidget {
           ]),
           const SizedBox(height: 8),
 
-          // ── 动作 ──
           Row(children: [
             const SizedBox(width: 60, child: Text('动作', style: TextStyle(fontSize: 13))),
             Expanded(child: _dropdown<ScheduleAction>(
@@ -150,7 +143,6 @@ class _ScheduleCard extends StatelessWidget {
             )),
           ]),
 
-          // ── 播放宏：选宏 ──
           if (task.action == ScheduleAction.playMacro) ...[
             const SizedBox(height: 8),
             Row(children: [
@@ -160,7 +152,6 @@ class _ScheduleCard extends StatelessWidget {
                     ? Text('暂无宏 — 请先在宏页面录制',
                         style: TextStyle(fontSize: 12, color: subColor))
                     : _dropdown<String>(
-                        // 任务里存的 macroId 可能已失效（宏被删），回退到列表第一个
                         value: macros
                             .firstWhere((m) => m.id == task.macroId,
                                 orElse: () => macros.first)
@@ -180,7 +171,6 @@ class _ScheduleCard extends StatelessWidget {
 
           const SizedBox(height: 8),
 
-          // ── 时间模式 ──
           Row(children: [
             const SizedBox(width: 60, child: Text('时间', style: TextStyle(fontSize: 13))),
             _chip('时间点', task.timing == ScheduleTiming.clock, accent, isDark,
@@ -190,7 +180,6 @@ class _ScheduleCard extends StatelessWidget {
                 () => update(task.copyWith(timing: ScheduleTiming.countdown), rearm: true)),
           ]),
 
-          // ── 重复模式（仅时间点） ──
           if (task.timing == ScheduleTiming.clock) ...[
             const SizedBox(height: 8),
             Row(children: [
@@ -205,7 +194,6 @@ class _ScheduleCard extends StatelessWidget {
 
           const SizedBox(height: 10),
 
-          // ── 具体时刻 / 倒计时分钟 ──
           if (task.timing == ScheduleTiming.clock)
             Row(children: [
               const SizedBox(width: 60, child: Text('时刻', style: TextStyle(fontSize: 13))),
@@ -227,7 +215,6 @@ class _ScheduleCard extends StatelessWidget {
               const Text('分钟后触发', style: TextStyle(fontSize: 13)),
             ]),
 
-          // ── 启用开关 ──
           const SizedBox(height: 6),
           Row(children: [
             const SizedBox(width: 60, child: Text('启用', style: TextStyle(fontSize: 13))),
@@ -240,7 +227,6 @@ class _ScheduleCard extends StatelessWidget {
             ),
           ]),
 
-          // ── 下次触发提示 ──
           if (task.enabled) ...[
             const SizedBox(height: 4),
             Row(children: [

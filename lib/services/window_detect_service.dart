@@ -1,6 +1,3 @@
-/// Window auto-detect service — monitors foreground window title changes
-/// and auto-switches clicker config based on window rules.
-library;
 
 import 'dart:async';
 import 'package:flutter/services.dart';
@@ -8,7 +5,7 @@ import 'package:flutter/services.dart';
 class WindowRule {
   final String id;
   String name;
-  String windowTitlePattern; // substring match
+  String windowTitlePattern;
   String profileName;
   bool enabled;
   int matchCount;
@@ -55,7 +52,6 @@ class WindowDetectService {
   List<WindowRule> get rules => List.unmodifiable(_rules);
   String get lastWindowTitle => _lastWindowTitle;
 
-  /// Get current foreground window title
   Future<String> getForegroundWindowTitle() async {
     try {
       final result = await _channel.invokeMethod<String>('getForegroundWindowTitle');
@@ -65,17 +61,14 @@ class WindowDetectService {
     }
   }
 
-  /// Add a window rule
   void addRule(WindowRule rule) {
     _rules.add(rule);
   }
 
-  /// Remove a window rule
   void removeRule(String id) {
     _rules.removeWhere((r) => r.id == id);
   }
 
-  /// Update a window rule
   void updateRule(String id, {String? name, String? pattern, String? profile, bool? enabled}) {
     final idx = _rules.indexWhere((r) => r.id == id);
     if (idx < 0) return;
@@ -89,14 +82,12 @@ class WindowDetectService {
     );
   }
 
-  /// Start monitoring
   void start() {
     if (_isRunning) return;
     _isRunning = true;
     _pollWindow();
   }
 
-  /// Stop monitoring
   void stop() {
     _isRunning = false;
     _timer?.cancel();

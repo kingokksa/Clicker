@@ -1,7 +1,3 @@
-/// 视觉模板存储 — 移动端图片识别的模板库。
-/// 模板 = 屏幕截图区域的原始 BGRA 像素 + 尺寸 + 匹配阈值，
-/// 持久化为 data/templates/{id}.json（像素 base64 压缩）。
-library;
 
 import 'dart:convert';
 import 'dart:io';
@@ -14,7 +10,7 @@ class VisionTemplate {
   String name;
   final int width;
   final int height;
-  final Uint8List pixels; // BGRA
+  final Uint8List pixels;
   double threshold;
   final int createdAt;
 
@@ -49,24 +45,20 @@ class VisionTemplate {
         createdAt: json['createdAt'] as int? ?? 0,
       );
 
-  /// BGRA → BMP 编码（用于缩略图显示，Flutter 原生支持 BMP 解码）
   Uint8List toBmp() {
-    final rowSize = (width * 3 + 3) & ~3; // BGR 行按 4 字节对齐
+    final rowSize = (width * 3 + 3) & ~3;
     final dataSize = rowSize * height;
     final fileSize = 54 + dataSize;
     final b = ByteData(fileSize);
-    // BITMAPFILEHEADER
     b.setUint8(0, 0x42); b.setUint8(1, 0x4D);
     b.setUint32(2, fileSize, Endian.little);
     b.setUint32(10, 54, Endian.little);
-    // BITMAPINFOHEADER
     b.setUint32(14, 40, Endian.little);
     b.setUint32(18, width, Endian.little);
     b.setUint32(22, height, Endian.little);
     b.setUint16(26, 1, Endian.little);
     b.setUint16(28, 24, Endian.little);
     b.setUint32(34, dataSize, Endian.little);
-    // 像素（BMP 自底向上，BGR 顺序）
     final out = b.buffer.asUint8List();
     for (var y = 0; y < height; y++) {
       final srcRow = (height - 1 - y) * width * 4;
@@ -74,9 +66,9 @@ class VisionTemplate {
       for (var x = 0; x < width; x++) {
         final s = srcRow + x * 4;
         final d = dstRow + x * 3;
-        out[d] = pixels[s];     // B
-        out[d + 1] = pixels[s + 1]; // G
-        out[d + 2] = pixels[s + 2]; // R
+        out[d] = pixels[s];
+        out[d + 1] = pixels[s + 1];
+        out[d + 2] = pixels[s + 2];
       }
     }
     return out;
@@ -99,7 +91,6 @@ class VisionTemplateStore {
     return _dir!;
   }
 
-  /// 加载全部模板（按创建时间倒序）
   Future<List<VisionTemplate>> loadAll() async {
     final dir = await _ensureDir();
     final list = <VisionTemplate>[];

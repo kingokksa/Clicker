@@ -1,7 +1,3 @@
-/// Plugin center — two tabs: "已安装" and "商店".
-/// 数据源为新插件系统 PluginManager（状态机 + 按需激活），
-/// 商店从远程/GitHub 拉取索引，Dart 插件编译进应用、安装后按需激活。
-library;
 
 import 'dart:convert';
 import 'dart:io';
@@ -15,7 +11,6 @@ import '../../services/plugin/plugin_manifest.dart';
 import '../../services/plugin/plugin_sources.dart';
 import '../../services/plugin/icon_resolver.dart';
 
-/// 分类 id → 标签
 const Map<String, String> _categoryLabels = {
   'core': '核心',
   'click': '点击',
@@ -25,7 +20,6 @@ const Map<String, String> _categoryLabels = {
   'extension': '扩展',
 };
 
-/// 错误红（fluent_ui 的 Colors 无 material 的 red）
 const Color _errorRed = Color(0xFFE53935);
 
 class PluginPage extends StatefulWidget {
@@ -42,7 +36,6 @@ class _PluginPageState extends State<PluginPage> {
   @override
   void initState() {
     super.initState();
-    // Auto-fetch store index on first build
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await PluginSourceRepository.instance.load();
       await PluginStore.instance.fetchIndex();
@@ -60,7 +53,6 @@ class _PluginPageState extends State<PluginPage> {
     return ScaffoldPage.scrollable(
       padding: const EdgeInsets.all(20),
       children: [
-        // Header
         Row(children: [
           Icon(FluentIcons.puzzle, size: 20, color: state.accentColor),
           const SizedBox(width: 10),
@@ -71,7 +63,6 @@ class _PluginPageState extends State<PluginPage> {
         ]),
         const SizedBox(height: 16),
 
-        // Action buttons row
         Row(children: [
           _actionButton(
             icon: FluentIcons.open_folder_horizontal,
@@ -119,7 +110,6 @@ class _PluginPageState extends State<PluginPage> {
         ]),
         const SizedBox(height: 20),
 
-        // Tab switcher
         Row(children: [
           _tabButton('已安装', FluentIcons.download, 0, isDark, state.accentColor),
           const SizedBox(width: 4),
@@ -127,20 +117,17 @@ class _PluginPageState extends State<PluginPage> {
         ]),
         const SizedBox(height: 16),
 
-        // Tab content
         if (_tabIndex == 0) ..._buildInstalledTab(allPlugins, isDark, state),
         if (_tabIndex == 1) ..._buildStoreTab(isDark, state),
       ],
     );
   }
 
-  // ──── Installed Tab ────
 
   List<Widget> _buildInstalledTab(
     List<PluginDescriptor> allPlugins, bool isDark, AppState state,
   ) {
     return [
-      // Installed plugins grouped by category
       ..._buildCategoryGroups(
         allPlugins.where((p) => p.isInstalled).toList(), isDark),
 
@@ -158,7 +145,6 @@ class _PluginPageState extends State<PluginPage> {
     ];
   }
 
-  // ──── Store Tab ────
 
   List<Widget> _buildStoreTab(bool isDark, AppState state) {
     final store = PluginStore.instance;
@@ -207,16 +193,13 @@ class _PluginPageState extends State<PluginPage> {
     }
 
     return [
-      // ── 源管理区 ──
       _buildSourceManager(isDark, accent),
       const SizedBox(height: 16),
 
-      // ── 按源分组的插件列表 ──
       ..._buildStoreGroups(isDark, accent),
     ];
   }
 
-  /// 源管理区 — 官方源（固定）+ 第三方源（可增删/启禁）
   Widget _buildSourceManager(bool isDark, Color accent) {
     final sources = PluginSourceRepository.instance.sources;
 
@@ -249,19 +232,16 @@ class _PluginPageState extends State<PluginPage> {
         ]),
         const SizedBox(height: 10),
 
-        // 源列表
         ...sources.map((source) => _buildSourceRow(source, isDark, accent)),
       ]),
     );
   }
 
-  /// 单个源行
   Widget _buildSourceRow(PluginSource source, bool isDark, Color accent) {
     final hasError = source.error != null;
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
       child: Row(children: [
-        // 源图标
         Container(
           width: 28, height: 28,
           decoration: BoxDecoration(
@@ -277,7 +257,6 @@ class _PluginPageState extends State<PluginPage> {
           ),
         ),
         const SizedBox(width: 10),
-        // 源信息
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             Text(source.name, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
@@ -305,7 +284,6 @@ class _PluginPageState extends State<PluginPage> {
           Text(source.url, maxLines: 1, overflow: TextOverflow.ellipsis,
             style: TextStyle(fontSize: 10, color: isDark ? const Color(0xFF707090) : const Color(0xFFA0A0B0))),
         ])),
-        // 启用开关（官方源固定开启）
         if (!source.isOfficial)
           ToggleSwitch(
             checked: source.enabled,
@@ -315,7 +293,6 @@ class _PluginPageState extends State<PluginPage> {
               if (mounted) setState(() {});
             },
           ),
-        // 删除按钮（仅第三方）
         if (!source.isOfficial) ...[
           const SizedBox(width: 6),
           IconButton(
@@ -344,12 +321,10 @@ class _PluginPageState extends State<PluginPage> {
     );
   }
 
-  /// 按源分组的商店插件列表
   List<Widget> _buildStoreGroups(bool isDark, Color accent) {
     final store = PluginStore.instance;
     final sources = PluginSourceRepository.instance.enabledSources;
 
-    // 无可用源或无插件
     if (store.plugins.isEmpty) {
       return [
         Center(child: Padding(
@@ -380,7 +355,6 @@ class _PluginPageState extends State<PluginPage> {
         const SizedBox(height: 12),
       ]);
     }
-    // 未匹配到源的条目（本地兜底索引生成）归入“本地”
     final orphan = store.plugins.where((p) =>
         !sources.any((s) => s.id == p.sourceId)).toList();
     if (orphan.isNotEmpty) {
@@ -422,7 +396,6 @@ class _PluginPageState extends State<PluginPage> {
           border: Border.all(color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)),
         ),
         child: Row(children: [
-          // Icon
           Container(
             width: 36, height: 36,
             decoration: BoxDecoration(
@@ -432,13 +405,11 @@ class _PluginPageState extends State<PluginPage> {
             child: Icon(icon, size: 16, color: activeColor),
           ),
           const SizedBox(width: 12),
-          // Info
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
               Text(entry.name, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13,
                 color: isSupported ? null : disabledColor)),
               const SizedBox(width: 6),
-              // Type badge
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                 decoration: BoxDecoration(
@@ -452,7 +423,6 @@ class _PluginPageState extends State<PluginPage> {
                     color: entry.type == 'dart' ? const Color(0xFF00E676) : const Color(0xFF42A5F5))),
               ),
               const SizedBox(width: 4),
-              // Platform badges
               ...entry.platforms.map((p) => Padding(
                 padding: const EdgeInsets.only(right: 3),
                 child: _platformBadge(p, p == currentPluginPlatform, isDark),
@@ -476,7 +446,6 @@ class _PluginPageState extends State<PluginPage> {
             Text('v${entry.version}${entry.author.isNotEmpty ? " · ${entry.author}" : ""}',
               style: TextStyle(fontSize: 10, color: isDark ? const Color(0xFF707090) : const Color(0xFFA0A0B0))),
           ])),
-          // Action button
           if (!isSupported)
             const Button(
               onPressed: null,
@@ -554,7 +523,6 @@ class _PluginPageState extends State<PluginPage> {
     );
   }
 
-  // ──── Shared helpers ────
 
   List<Widget> _buildCategoryGroups(List<PluginDescriptor> plugins, bool isDark, {String? groupTitle}) {
     if (plugins.isEmpty) return [];
@@ -649,7 +617,6 @@ class _PluginPageState extends State<PluginPage> {
     );
   }
 
-  /// 添加第三方插件源对话框
   void _showAddSourceDialog(BuildContext context, bool isDark) {
     final urlCtrl = TextEditingController();
     bool isAdding = false;
@@ -728,7 +695,6 @@ class _PluginPageState extends State<PluginPage> {
     );
   }
 
-  /// 从 GitHub 链接导入插件对话框
   void _showImportFromUrlDialog(BuildContext context, bool isDark) {
     final urlCtrl = TextEditingController();
     bool isImporting = false;
@@ -881,7 +847,6 @@ class _PluginPageState extends State<PluginPage> {
     final pluginDir = Directory('$dir${Platform.pathSeparator}${id.replaceAll('.', '_')}');
     if (!await pluginDir.exists()) await pluginDir.create(recursive: true);
 
-    // manifest.json（新架构：声明式贡献 + 激活事件）
     final manifest = {
       'id': id,
       'name': name,
@@ -913,12 +878,10 @@ class _PluginPageState extends State<PluginPage> {
     await File('${pluginDir.path}${Platform.pathSeparator}manifest.json')
       .writeAsString(_jsonPretty(manifest));
 
-    // Platform directories
     for (final plat in ['windows', 'linux', 'darwin']) {
       await Directory('${pluginDir.path}${Platform.pathSeparator}$plat').create(recursive: true);
     }
 
-    // src directory with template
     final srcDir = Directory('${pluginDir.path}${Platform.pathSeparator}src');
     await srcDir.create(recursive: true);
 
@@ -967,13 +930,11 @@ PLUGIN_EXPORT void PLUGIN_CALL plugin_dispose(void) {
 }
 ''');
 
-    // Copy SDK header to src dir
     final sdkSrc = File('sdk${Platform.pathSeparator}clicker_plugin.h');
     if (await sdkSrc.exists()) {
       await sdkSrc.copy('${srcDir.path}${Platform.pathSeparator}clicker_plugin.h');
     }
 
-    // Refresh plugin list
     await PluginManager.instance.discoverExternalPlugins();
     if (mounted) setState(() {});
   }
@@ -1004,7 +965,6 @@ PLUGIN_EXPORT void PLUGIN_CALL plugin_dispose(void) {
     ]);
   }
 
-  /// 插件卡片 — 显示运行状态（运行中/已停止/错误）、启用开关、卸载
   Widget _buildPluginCard(PluginDescriptor desc, bool isDark) {
     final manifest = desc.manifest;
     final pm = PluginManager.instance;
@@ -1039,7 +999,6 @@ PLUGIN_EXPORT void PLUGIN_CALL plugin_dispose(void) {
               Text(manifest.name, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13,
                 color: enabled ? null : disabledColor)),
               const SizedBox(width: 6),
-              // 来源徽章
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                 decoration: BoxDecoration(
@@ -1053,7 +1012,6 @@ PLUGIN_EXPORT void PLUGIN_CALL plugin_dispose(void) {
                     color: desc.isBuiltin ? const Color(0xFF00E676) : const Color(0xFF42A5F5))),
               ),
               const SizedBox(width: 4),
-              // 运行状态徽章
               if (desc.state == PluginState.active)
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
@@ -1104,7 +1062,6 @@ PLUGIN_EXPORT void PLUGIN_CALL plugin_dispose(void) {
               Text(manifest.description,
                 style: TextStyle(fontSize: 10, color: isDark ? const Color(0xFF707090) : const Color(0xFFA0A0B0))),
           ])),
-          // Toggle
           ToggleSwitch(
             checked: enabled,
             onChanged: (v) async {

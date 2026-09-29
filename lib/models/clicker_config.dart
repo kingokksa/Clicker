@@ -1,10 +1,6 @@
-/// Auto-clicker configuration model.
-/// Supports both mouse and keyboard click modes with advanced features.
-library;
 
 import 'package:collection/collection.dart';
 
-/// Info about a visible window, used for background execution target selection.
 class WindowInfo {
   final int hwnd;
   final String title;
@@ -13,12 +9,10 @@ class WindowInfo {
   const WindowInfo({required this.hwnd, required this.title, required this.className});
 }
 
-/// Sound configuration for a single module (click / key / macro).
-/// Each module has independent start and end sound settings.
 class SoundConfig {
   final bool startEnabled;
   final bool endEnabled;
-  final String startPath; // '' = default system sound, otherwise absolute file path
+  final String startPath;
   final String endPath;
 
   const SoundConfig({
@@ -61,7 +55,6 @@ enum ClickType { single, double, drag, swipe, sequence }
 
 enum ClickMode { mouse, keyboard, touch }
 
-/// Touch gesture types — used on mobile and also available on desktop.
 enum TouchAction { tap, longPress, drag, swipe }
 
 enum MouseButton { left, right, middle, scrollUp, scrollDown, x1, x2 }
@@ -71,11 +64,11 @@ enum PositionMode { current, fixed, pick }
 enum ClickRepeatMode { infinite, count, duration }
 
 enum KeyActionMode {
-  repeat,    // repeat single key press
-  hold,      // hold key down
-  sequence,  // press key sequence
-  combo,     // key combination (press together)
-  text,      // auto-type text
+  repeat,
+  hold,
+  sequence,
+  combo,
+  text,
 }
 
 class KeySequenceItem {
@@ -94,12 +87,8 @@ class KeySequenceItem {
   }
 }
 
-/// A single step in a mouse action sequence.
 enum MouseActionType { click, press, release, doubleClick, delay }
 
-/// One entry in the mouse action sequence.
-/// [delayMs] is the pause after this step (ignored for [MouseActionType.delay],
-/// which uses [delayMs] as the pause duration itself).
 class MouseActionItem {
   final MouseActionType action;
   final MouseButton button;
@@ -132,13 +121,10 @@ class MouseActionItem {
   }
 }
 
-/// Timing mode for scheduled start/stop.
 enum ScheduleTiming { clock, countdown }
 
-/// Recurrence for a schedule. Countdown schedules are always one-shot.
 enum ScheduleRepeat { once, daily }
 
-/// 定时触发时要执行的动作。
 enum ScheduleAction {
   startClick('启动连点'),
   stopClick('停止连点'),
@@ -149,23 +135,21 @@ enum ScheduleAction {
   final String label;
 }
 
-/// A single scheduled task.
 class ClickerSchedule {
   static int _idSeq = 0;
-  /// 生成唯一任务 id（时间戳 + 自增，同一运行内不冲突）。
   static String newId() =>
       '${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}_${_idSeq++}';
 
-  final String id;                  // 任务唯一标识（增删定位用）
+  final String id;
   final bool enabled;
-  final ScheduleAction action;    // 触发时执行的动作
-  final String? macroId;          // action == playMacro 时播放的宏 id
-  final ScheduleTiming timing;    // clock = 具体时间点, countdown = 倒计时
-  final ScheduleRepeat repeat;    // once = 仅一次, daily = 每天重复
-  final int hour;                 // clock mode: 0-23
-  final int minute;               // clock mode: 0-59
-  final int afterMinutes;         // countdown mode: minutes after arming
-  final int fireAtEpochMs;        // 已布防的绝对触发时刻（0 = 未布防）— 由调度器管理
+  final ScheduleAction action;
+  final String? macroId;
+  final ScheduleTiming timing;
+  final ScheduleRepeat repeat;
+  final int hour;
+  final int minute;
+  final int afterMinutes;
+  final int fireAtEpochMs;
 
   const ClickerSchedule({
     this.id = '',
@@ -222,7 +206,6 @@ class ClickerSchedule {
       {ScheduleAction defaultAction = ScheduleAction.startClick}) => ClickerSchedule(
     id: json['id'] as String? ?? newId(),
     enabled: json['enabled'] ?? false,
-    // 旧配置没有 action 字段：按插槽语义回退（start 槽→启动连点，stop 槽→停止连点）
     action: json['action'] != null
         ? (ScheduleAction.values.asNameMap()[json['action']] ?? defaultAction)
         : defaultAction,
@@ -242,8 +225,6 @@ class ClickerSchedule {
   );
 }
 
-/// 解析定时任务列表。兼容旧版 startSchedule/stopSchedule 两个固定槽位：
-/// 二者迁移到列表并保留原有动作语义（start→启动连点，stop→停止连点）。
 List<ClickerSchedule> _parseSchedules(Map<String, dynamic> json) {
   final list = json['schedules'];
   if (list is List) {
@@ -282,14 +263,12 @@ class ClickerConfig {
   int repeatCount;
   int durationSeconds;
 
-  // Keyboard-specific
   String keyToRepeat;
   bool holdKey;
   KeyActionMode keyActionMode;
 
-  // Touch-specific
   TouchAction touchAction;
-  int longPressDurationMs; // duration for long press gesture
+  int longPressDurationMs;
   int dragStartX;
   int dragStartY;
   int dragEndX;
@@ -298,43 +277,33 @@ class ClickerConfig {
   int swipeStartY;
   int swipeEndX;
   int swipeEndY;
-  int swipeDurationMs; // duration of swipe gesture
+  int swipeDurationMs;
 
-  // Key sequence
   List<KeySequenceItem> keySequence;
 
-  // Mouse action sequence
   List<MouseActionItem> mouseSequence;
 
-  // Scheduled tasks (auto start/stop click, play/stop macro, ...)
   List<ClickerSchedule> schedules;
 
-  // Key combo (keys pressed together)
   List<String> comboKeys;
 
-  // Text to auto-type
   String textToType;
   int textTypeDelayMs;
 
-  // Random delay range (0 = no random)
   int randomDelayMinMs;
   int randomDelayMaxMs;
 
-  // Anti-detection: jitter on key press timing
   bool jitterEnabled;
   int jitterMinMs;
   int jitterMaxMs;
 
-  // Random offset for mouse click position (pixels)
   bool randomOffsetEnabled;
   int randomOffsetMinPx;
   int randomOffsetMaxPx;
 
-  // Hold-trigger: when enabled, holding the trigger key runs the clicker
   bool holdTriggerEnabled;
-  String holdTriggerKey; // e.g. "F5", "Alt+F5"
+  String holdTriggerKey;
 
-  // Feature toggles
   bool autoClickEnabled;
   bool humanLikeEnabled;
   bool soundFeedbackEnabled;
@@ -344,19 +313,16 @@ class ClickerConfig {
   bool scriptEngineEnabled;
   bool remoteControlEnabled;
 
-  // Human-like mode advanced settings
-  bool humanLikeBezierCurve; // bezier curve mouse movement
-  bool humanLikeRandomPause; // occasional random pauses
-  int humanLikePauseChance; // chance of random pause per action (0-100, default 5)
-  int humanLikePauseMinMs; // min pause duration (ms, default 200)
-  int humanLikePauseMaxMs; // max pause duration (ms, default 800)
+  bool humanLikeBezierCurve;
+  bool humanLikeRandomPause;
+  int humanLikePauseChance;
+  int humanLikePauseMinMs;
+  int humanLikePauseMaxMs;
 
-  // Sound feedback settings
   SoundConfig soundFeedbackClick;
   SoundConfig soundFeedbackKey;
   SoundConfig soundFeedbackMacro;
 
-  // Background execution
   bool backgroundExecutionEnabled;
   bool silentStartEnabled;
   bool antiInterferenceEnabled;
@@ -366,11 +332,10 @@ class ClickerConfig {
   bool taskNotificationEnabled;
   bool autoRetryEnabled;
 
-  // Background click target
-  int targetHwnd;         // target window handle (0 = none)
-  String targetWindowTitle; // display name of target window
-  int targetClientX;      // click X relative to target client area
-  int targetClientY;      // click Y relative to target client area
+  int targetHwnd;
+  String targetWindowTitle;
+  int targetClientX;
+  int targetClientY;
 
   ClickerConfig({
     this.clickMode = ClickMode.mouse,

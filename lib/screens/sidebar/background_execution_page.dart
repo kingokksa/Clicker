@@ -1,6 +1,3 @@
-/// Background execution module — send clicks to a background window
-/// without affecting the foreground window the user is using.
-library;
 
 import 'dart:io';
 import 'package:fluent_ui/fluent_ui.dart';
@@ -24,7 +21,6 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
   bool _loading = false;
   bool _pickingCoords = false;
 
-  // Hotkey config state
   List<String> _bgClickMods = [];
   String _bgClickKey = 'F7';
 
@@ -76,8 +72,6 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
     setState(() => _pickingCoords = true);
 
     final wasOnTop = state.alwaysOnTop;
-    // Must cancel alwaysOnTop first, otherwise the TOPMOST Flutter window
-    // still covers the overlay even when minimized.
     if (Platform.isWindows) {
       try {
         if (wasOnTop) await _platformChannel.invokeMethod('setAlwaysOnTop', [false]);
@@ -94,7 +88,6 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
       }
     } catch (_) {}
 
-    // Restore clicker window
     if (Platform.isWindows) {
       try {
         if (wasOnTop) await _platformChannel.invokeMethod('setAlwaysOnTop', [true]);
@@ -121,7 +114,6 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
     return ScaffoldPage.scrollable(
       padding: const EdgeInsets.all(20),
       children: [
-        // Header
         Row(children: [
           Icon(FluentIcons.remote, size: 20, color: accent),
           const SizedBox(width: 10),
@@ -129,7 +121,6 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
         ]),
         const SizedBox(height: 20),
 
-        // ─── Background Click Mode ────────────────────────────
         _sectionTitle('后台点击', isDark),
         const SizedBox(height: 8),
 
@@ -145,7 +136,6 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
           ),
           const Divider(style: DividerThemeData(horizontalMargin: EdgeInsets.zero)),
 
-          // Target window selection
           _labelRow('目标窗口', isDark),
           const SizedBox(height: 6),
           Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
@@ -180,7 +170,6 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
           ]),
           const SizedBox(height: 8),
 
-          // Click coordinates
           _labelRow('点击坐标（相对目标窗口客户区）', isDark),
           const SizedBox(height: 6),
           Row(children: [
@@ -222,7 +211,6 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
 
           const Divider(style: DividerThemeData(horizontalMargin: EdgeInsets.zero)),
 
-          // Hotkey for background click
           _labelRow('触发/停止快捷键', isDark),
           const SizedBox(height: 6),
           Row(children: [
@@ -265,7 +253,6 @@ class _BackgroundExecutionPageState extends State<BackgroundExecutionPage> {
 
           const Divider(style: DividerThemeData(horizontalMargin: EdgeInsets.zero)),
 
-          // Start/Stop button
           Row(children: [
             Expanded(
               child: FilledButton(

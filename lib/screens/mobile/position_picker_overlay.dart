@@ -1,6 +1,3 @@
-/// Full-screen overlay for picking a position on screen by tapping.
-/// Returns (x, y) screen coordinates when user taps.
-library;
 
 import 'package:flutter/material.dart';
 
@@ -14,14 +11,12 @@ class PositionPickerOverlay extends StatelessWidget {
     return Scaffold(
       backgroundColor: Colors.black.withValues(alpha: 0.7),
       body: Stack(children: [
-        // Tap area — entire screen
         GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTapDown: (details) {
             final renderBox = context.findRenderObject() as RenderBox;
             final localPos = details.localPosition;
             final screenSize = MediaQuery.of(context).size;
-            // Convert to screen coordinates (approximate)
             final x = (localPos.dx / screenSize.width * screenSize.width).round();
             final y = (localPos.dy / screenSize.height * screenSize.height).round();
             Navigator.of(context).pop((x, y));
@@ -29,7 +24,6 @@ class PositionPickerOverlay extends StatelessWidget {
           child: const SizedBox.expand(),
         ),
 
-        // Top instruction bar
         Positioned(
           top: 0,
           left: 0,
@@ -55,7 +49,6 @@ class PositionPickerOverlay extends StatelessWidget {
           ),
         ),
 
-        // Center crosshair hint
         Center(
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             Icon(Icons.add_circle_outline, size: 48,

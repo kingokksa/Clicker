@@ -1,6 +1,3 @@
-/// Mobile hold trigger page — long-press on screen to auto-repeat actions.
-/// Adapted from desktop HoldTriggerPage for touch-based interaction.
-library;
 
 import 'dart:io' show Platform;
 
@@ -93,7 +90,6 @@ class MobileHoldTriggerPage extends StatelessWidget {
           title: Text(isNew ? '添加触发项' : '编辑触发项'),
           content: SingleChildScrollView(
             child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-              // Action type
               const Text('触发动作', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
               const SizedBox(height: 6),
               _buildChipGroup<HoldTriggerAction>(
@@ -113,7 +109,6 @@ class MobileHoldTriggerPage extends StatelessWidget {
               ),
               const SizedBox(height: 12),
 
-              // Action params
               if (action == HoldTriggerAction.mouseClick) ...[
                 const Text('鼠标按钮', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
                 const SizedBox(height: 6),
@@ -143,7 +138,6 @@ class MobileHoldTriggerPage extends StatelessWidget {
               ],
               const SizedBox(height: 12),
 
-              // Interval
               const Text('重复间隔 (ms)', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
               const SizedBox(height: 6),
               TextField(
@@ -246,11 +240,9 @@ class _TriggerCard extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Row(children: [
-          // Enable switch
           Switch(value: triggerKey.enabled, activeThumbColor: accent, onChanged: onToggle),
           const SizedBox(width: 8),
 
-          // Info
           Expanded(child: GestureDetector(
             onTap: onEdit,
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -266,7 +258,6 @@ class _TriggerCard extends StatelessWidget {
             ]),
           )),
 
-          // Delete
           IconButton(
             icon: const Icon(Icons.delete_outline, size: 18),
             color: Colors.red.shade300,

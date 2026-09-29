@@ -1,7 +1,3 @@
-/// Vision service — unified API for all image recognition operations.
-/// Delegates to plugins via VisionPluginManager, while keeping screen capture
-/// and overlay management as core (non-plugin) functionality.
-library;
 
 import 'dart:convert';
 
@@ -35,31 +31,21 @@ class VisionService {
 
   final VisionPluginManager _pluginManager = VisionPluginManager.instance;
 
-  // ─── Plugin Access ────────────────────────────────────────
-
-  /// Get the plugin manager for direct plugin access
   VisionPluginManager get pluginManager => _pluginManager;
 
-  /// Get all available plugins for a capability
   List<VisionPlugin> getPluginsFor(VisionCapability cap) {
     return _pluginManager.getPluginsWithCapability(cap);
   }
 
-  /// Get the preferred plugin for a capability (first available)
   VisionPlugin? getPreferredPlugin(VisionCapability cap) {
     return _pluginManager.getPluginForCapability(cap);
   }
 
-  // ─── Screen Capture ───────────────────────────────────────
-
-  /// Capture a screen region as raw BGRA pixel data
   Future<Uint8List?> captureScreenRect(int x, int y, int w, int h) async {
     try {
       final result = await _channel.invokeMethod<dynamic>('captureScreenRect', [x, y, w, h]);
       if (result == null) return null;
-      // Native side may return true to indicate media projection was just initialized
       if (result == true) {
-        // Retry once after projection is ready
         await Future.delayed(const Duration(milliseconds: 300));
         final retry = await _channel.invokeMethod<dynamic>('captureScreenRect', [x, y, w, h]);
         if (retry == null) return null;
@@ -75,7 +61,6 @@ class VisionService {
     }
   }
 
-  /// Save a screenshot of a screen region to a file
   Future<String?> saveScreenshot(int x, int y, int w, int h) async {
     try {
       final dir = await AppPaths.getScreenshotsDir();
@@ -87,7 +72,6 @@ class VisionService {
     }
   }
 
-  /// Capture a screen region and return as template data (BGRA bytes + dimensions)
   Future<TemplateData?> captureTemplate(int x, int y, int w, int h) async {
     final pixels = await captureScreenRect(x, y, w, h);
     if (pixels == null) {
@@ -98,10 +82,6 @@ class VisionService {
     return TemplateData(pixels: pixels, width: w, height: h);
   }
 
-  // ─── Image Matching (via plugins) ─────────────────────────
-
-  /// Find every occurrence of a template inside a screen region, best score first.
-  /// Multi-scale search only runs on the native path — plugins match at original size.
   Future<List<MatchResult>> findImageAll({
     required int regionX,
     required int regionY,
@@ -159,7 +139,6 @@ class VisionService {
     );
   }
 
-  /// Find a template image within a screen region using the specified or preferred plugin
   Future<MatchResult?> findImage({
     required int regionX,
     required int regionY,
@@ -182,7 +161,6 @@ class VisionService {
     return all.isEmpty ? null : all.first;
   }
 
-  /// Direct platform channel fallback for template matching
   Future<List<MatchResult>> _findImageDirect(
     int regionX, int regionY, int regionW, int regionH,
     TemplateData template, double threshold, {
@@ -242,7 +220,6 @@ class VisionService {
     return out;
   }
 
-  /// 轮询等待模板出现，超时返回 null。
   Future<MatchResult?> waitForImage({
     required int regionX,
     required int regionY,
@@ -278,9 +255,6 @@ class VisionService {
     }
   }
 
-  // ─── OCR (via plugins) ────────────────────────────────────
-
-  /// Perform OCR on a screen region using the specified or preferred plugin
   Future<OcrResult?> ocrRegion({
     required int x,
     required int y,
@@ -299,7 +273,6 @@ class VisionService {
     }
 
     if (plugin == null || !plugin.isAvailable) {
-      // Fallback to direct platform channel
       return _ocrDirect(x, y, w, h, language);
     }
 
@@ -309,7 +282,6 @@ class VisionService {
         x: x, y: y, w: w, h: h, language: language,
       ).timeout(const Duration(seconds: 30));
 
-      // If plugin returned an error, fall back to direct OCR
       if (result.error != null && result.error!.isNotEmpty) {
         return _ocrDirect(x, y, w, h, language);
       }
@@ -323,14 +295,12 @@ class VisionService {
         error: result.error,
       );
     } catch (e) {
-      // Plugin failed or timed out, try direct fallback
       return _ocrDirect(x, y, w, h, language);
     }
 
     return ocrResult;
   }
 
-  /// Direct platform channel fallback for OCR
   Future<OcrResult?> _ocrDirect(int x, int y, int w, int h, String language) async {
     try {
       final result = await _channel.invokeMethod<Map>('ocrRegion', [x, y, w, h, language]);
@@ -350,7 +320,6 @@ class VisionService {
     }
   }
 
-  /// OCR 逐行结果；原生通道只返回整块文本，此时退化为单行。
   Future<List<OcrLine>> ocrLines({
     required int x,
     required int y,
@@ -404,9 +373,6 @@ class VisionService {
     ];
   }
 
-  // ─── Pixel Color ──────────────────────────────────────────
-
-  /// Get pixel color at screen coordinates
   Future<Color?> getPixelColor(int x, int y) async {
     try {
       final result = await _channel.invokeMethod<Map>('getPixelColor', [x, y]);
@@ -419,7 +385,6 @@ class VisionService {
     return null;
   }
 
-  /// 在屏幕区域内查找颜色；插件不支持时回退为一次截屏 + 本地扫描。
   Future<VisionMatchResult?> findColor({
     required int regionX,
     required int regionY,
@@ -483,18 +448,12 @@ class VisionService {
     return null;
   }
 
-  // ─── Vision Clicker ───────────────────────────────────────
-
-  /// Start the native vision clicker loop (find template → tap).
-  /// The loop runs on a native thread and keeps working after the
-  /// Flutter UI is backgrounded. Requires screen capture to be
-  /// authorized (call [findImage] once first to trigger the grant).
   Future<bool> startVisionClicker({
     required TemplateData template,
     double threshold = 0.85,
     int intervalMs = 500,
-    int maxCount = 0, // 0 = unlimited
-    int maxDurationMs = 0, // 0 = unlimited
+    int maxCount = 0,
+    int maxDurationMs = 0,
   }) async {
     try {
       final result = await _channel.invokeMethod<bool>('startVisionClicker', [
@@ -512,7 +471,6 @@ class VisionService {
     }
   }
 
-  /// Check whether the native MediaProjection (screen capture) is ready.
   Future<bool> isScreenCaptureAvailable() async {
     try {
       final result = await _channel.invokeMethod<bool>('isScreenCaptureAvailable');
@@ -522,7 +480,6 @@ class VisionService {
     }
   }
 
-  /// Request screen capture permission (shows the system dialog).
   Future<bool> requestScreenCapture() async {
     try {
       final result = await _channel.invokeMethod<bool>('requestScreenCapture');
@@ -532,20 +489,13 @@ class VisionService {
     }
   }
 
-  /// Stop the native vision clicker loop.
   Future<void> stopVisionClicker() async {
     try {
       await _channel.invokeMethod<bool>('stopVisionClicker');
     } on PlatformException {
-      // Ignore — channel may already be torn down.
     }
   }
 
-  // ─── Screen Info ──────────────────────────────────────────
-
-  // ─── UI Automation ────────────────────────────────────────
-
-  /// 枚举 UI Automation 控件树。坐标与 captureScreenRect 同一逻辑像素空间。
   Future<ElementDump> dumpElements({
     int maxDepth = 6,
     int maxElements = 400,
@@ -574,7 +524,6 @@ class VisionService {
 
   static bool _blank(String? s) => s == null || s.trim().isEmpty;
 
-  /// 按条件找第一个可见控件；条件全空时返回 null（不把所有控件当命中）。
   Future<UiElement?> findElement({
     String? name,
     String? automationId,
@@ -600,7 +549,6 @@ class VisionService {
     return null;
   }
 
-  /// 轮询等待控件出现，超时返回 null。
   Future<UiElement?> waitForElement({
     String? name,
     String? automationId,
@@ -636,9 +584,6 @@ class VisionService {
     }
   }
 
-  // ─── 截图直供 ─────────────────────────────────────────────
-
-  /// 捕获区域并编码为 PNG；[maxWidth] > 0 时等比缩小，便于直接喂给多模态模型。
   Future<ScreenshotPng?> capturePng({
     required int x,
     required int y,
@@ -655,7 +600,6 @@ class VisionService {
     }
   }
 
-  /// 捕获区域并把 [marks] 画成带编号的框（Set-of-Mark），返回 PNG。
   Future<ScreenshotPng?> captureAnnotatedPng({
     required int x,
     required int y,
@@ -692,7 +636,6 @@ class VisionService {
     );
   }
 
-  /// 截图 + UIA 元素编号一步到位：返回带编号的 PNG 与编号对应的元素表。
   Future<SetOfMarkResult?> setOfMark({
     int x = 0,
     int y = 0,
@@ -734,7 +677,6 @@ class VisionService {
     return SetOfMarkResult(png: png, elements: marked, truncated: dump.truncated);
   }
 
-  /// Get screen size
   Future<({int width, int height})?> getScreenSize() async {
     try {
       final result = await _channel.invokeMethod<Map>('getScreenSize');
@@ -748,10 +690,8 @@ class VisionService {
   }
 }
 
-// ─── Data Classes ────────────────────────────────────────────
-
 class TemplateData {
-  final Uint8List pixels; // BGRA raw pixel data
+  final Uint8List pixels;
   final int width;
   final int height;
 
@@ -773,7 +713,6 @@ class MatchResult {
     required this.score,
   });
 
-  /// Center point of the match
   int get centerX => x + width ~/ 2;
   int get centerY => y + height ~/ 2;
 }
@@ -799,7 +738,6 @@ class OcrResult {
   bool get hasText => text.isNotEmpty;
 }
 
-/// 一个 UI Automation 控件（坐标与截图 API 同一逻辑像素空间）。
 class UiElement {
   final String name;
   final String automationId;
@@ -851,7 +789,6 @@ class UiElement {
   int get centerY => y + height ~/ 2;
   bool get hasBounds => width > 0 && height > 0;
 
-  /// 纯容器/无名元素，编号截图时跳过。
   bool get markable {
     if (name.isNotEmpty || automationId.isNotEmpty) return true;
     switch (controlType) {
@@ -866,7 +803,6 @@ class UiElement {
     }
   }
 
-  /// 条件全空返回 false —— 否则“无条件”会把第一个控件当命中。
   bool matches({String? name, String? automationId, String? className, String? controlType}) {
     if (name == null && automationId == null && className == null && controlType == null) return false;
     if (name != null && name.isNotEmpty && !this.name.toLowerCase().contains(name.toLowerCase())) return false;
@@ -906,7 +842,6 @@ class ElementDump {
   bool get hasError => error != null;
 }
 
-/// Set-of-Mark 的一个编号框。
 class MarkSpec {
   final int x;
   final int y;
@@ -931,7 +866,6 @@ class MarkSpec {
       };
 }
 
-/// PNG 截图（[scale] 为相对原区域的缩放比）。
 class ScreenshotPng {
   final Uint8List bytes;
   final int width;

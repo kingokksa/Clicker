@@ -1,5 +1,3 @@
-/// Background execution plugin — 后台窗口操作
-library;
 
 import '../plugin/plugin_api.dart';
 import '../plugin/plugin_manifest.dart';

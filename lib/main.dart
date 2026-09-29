@@ -1,4 +1,3 @@
-library;
 
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -26,16 +25,11 @@ void main() async {
     await _initDesktopWindow();
     runApp(const ClickerApp());
   } else {
-    // Mobile (Android/iOS) — use Material app
-    // Initialize SystemTrayService to set up MethodChannel handler for overlay callbacks
     await SystemTrayService().init();
     runApp(const MobileClickerApp());
   }
 }
 
-/// 注册内置 Dart 插件工厂。
-/// 惰性实例化：注册时仅创建探针实例读取 manifest，激活时才创建正式实例。
-/// initialize() 由 AppState.init() 在宿主服务就绪后调用。
 void _registerBuiltinPlugins() {
   final pm = PluginManager.instance;
   pm.registerDartPlugin(MacroPlugin.new);
@@ -47,7 +41,6 @@ void _registerBuiltinPlugins() {
   pm.registerDartPlugin(SchedulePlugin.new);
   pm.registerDartPlugin(HumanizePlugin.new);
   pm.registerDartPlugin(ApiPlugin.new);
-  // 原生插件声明式设置页的渲染工厂（UI 层注入）
   PluginManager.declarativePageFactory = buildDeclarativePluginPage;
 }
 

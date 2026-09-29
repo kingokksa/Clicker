@@ -1,6 +1,3 @@
-/// Macro service -- recording and playback of mouse/keyboard sequences.
-/// Uses WH_JOURNALRECORD hook on Windows for real input capture.
-library;
 
 import 'dart:async';
 import 'dart:ffi';
@@ -13,7 +10,6 @@ import 'platform/windows_input.dart';
 import 'platform/android_input.dart';
 import 'plugin/plugin_manager.dart';
 
-/// Play a system sound via Win32 MessageBeep
 void _playSystemSound() {
   if (!Platform.isWindows) return;
   final user32 = DynamicLibrary.open('user32.dll');
@@ -21,7 +17,6 @@ void _playSystemSound() {
   messageBeep(0);
 }
 
-/// Play a WAV file via Win32 PlaySound API (winmm.dll).
 void _playWavFile(String path) {
   if (!Platform.isWindows) return;
   final winmm = DynamicLibrary.open('winmm.dll');
@@ -37,7 +32,6 @@ void _playWavFile(String path) {
   }
 }
 
-/// Play a sound based on SoundConfig
 Future<void> _playMacroSound(SoundConfig config, {required bool isStart}) async {
   final enabled = isStart ? config.startEnabled : config.endEnabled;
   if (!enabled) return;
@@ -70,18 +64,15 @@ class MacroService {
 
   MacroModel? _currentMacro;
   int _currentRepeat = 0;
-  final Set<String> _heldKeys = {}; // Track currently held keys to avoid repeat
-  final Set<String> _heldMouseButtons = {}; // Track held mouse buttons
+  final Set<String> _heldKeys = {};
+  final Set<String> _heldMouseButtons = {};
 
   void Function(MacroStatus status)? onStatusChanged;
   void Function(int eventCount)? onRecordingUpdate;
   void Function(int eventIndex, int totalEvents)? onPlaybackProgress;
   void Function(String message)? onError;
-  /// Requested when the user taps the native floating stop button while
-  /// recording on Android. The app layer wires this to its own save flow.
   Future<void> Function()? onRecordingStopRequest;
 
-  /// Callback to get current clicker config (for background mode fallback target)
   ClickerConfig? Function()? getConfig;
 
   MacroService(this._input);
@@ -92,7 +83,6 @@ class MacroService {
   bool get isPaused => _status == MacroStatus.paused;
   bool get isPlaying => _status == MacroStatus.playing;
 
-  // ─── Recording ─────────────────────────────────────────────
 
   Future<void> startRecording() async {
     if (_status != MacroStatus.idle) return;
@@ -102,17 +92,13 @@ class MacroService {
     _heldMouseButtons.clear();
     _recordStartMs = DateTime.now().millisecondsSinceEpoch;
 
-    // Set status immediately so UI updates
     _status = MacroStatus.recording;
     onStatusChanged?.call(_status);
 
-    // Use WindowsInput journal recording hook if available.
     if (_input is WindowsInput) {
       final winInput = _input;
       winInput.onRecordEvent = _handleJournalEvent;
       winInput.onRecordingCancelled = () {
-        // Low-level hooks are stable and shouldn't be cancelled by the system,
-        // but keep this handler as a safety net.
         if (_status == MacroStatus.recording && _recordingBuffer.isNotEmpty) {
           stopRecording(name: '录制中断的宏');
           onError?.call('录制被系统中断，已自动保存已捕获的事件');
@@ -123,7 +109,6 @@ class MacroService {
       };
       final success = await winInput.startJournalRecording();
       if (!success) {
-        // Roll back status on failure
         _status = MacroStatus.idle;
         onStatusChanged?.call(_status);
         onError?.call('录制初始化失败，请检查权限');
@@ -138,7 +123,6 @@ class MacroService {
     }
   }
 
-  /// Handle touch gestures captured by the native Android recording overlay.
   void _handleAndroidRecordEvent(Map<String, dynamic> data) {
     if (_status != MacroStatus.recording) return;
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -175,7 +159,6 @@ class MacroService {
     }
   }
 
-  /// Handle events from low-level keyboard/mouse hooks.
   void _handleJournalEvent(Map<String, dynamic> data) {
     if (_status != MacroStatus.recording) return;
 
@@ -189,7 +172,6 @@ class MacroService {
       if (keyName == null) return;
 
       if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) {
-        // Ignore auto-repeat when key is held down
         if (_heldKeys.contains(keyName)) return;
         _heldKeys.add(keyName);
         _addEvent(MacroEventType.keyPress, time, key: keyName);
@@ -275,7 +257,6 @@ class MacroService {
     onRecordingUpdate?.call(_recordingBuffer.length);
   }
 
-  /// Convert virtual key code to a readable key name.
   String? _vkToKeyName(int vk) {
     const vkMap = <int, String>{
       0x08: 'Backspace', 0x09: 'Tab', 0x0D: 'Enter', 0x1B: 'Escape',
@@ -288,9 +269,7 @@ class MacroService {
       0x78: 'F9', 0x79: 'F10', 0x7A: 'F11', 0x7B: 'F12',
     };
     if (vkMap.containsKey(vk)) return vkMap[vk];
-    // Letters A-Z
     if (vk >= 0x41 && vk <= 0x5A) return String.fromCharCode(vk);
-    // Digits 0-9
     if (vk >= 0x30 && vk <= 0x39) return String.fromCharCode(vk);
     return null;
   }
@@ -320,13 +299,9 @@ class MacroService {
     onRecordingUpdate?.call(_recordingBuffer.length);
   }
 
-  /// Pause recording — stops the hook immediately but keeps the buffer.
-  /// Discards the last few events that were likely triggered by clicking
-  /// the stop button itself.
   void pauseRecording() {
     if (_status != MacroStatus.recording) return;
 
-    // Stop hooks immediately so no more events are captured
     if (_input is WindowsInput) {
       final winInput = _input;
       winInput.onRecordEvent = null;
@@ -338,8 +313,6 @@ class MacroService {
       andInput.stopRecording();
     }
 
-    // Remove trailing events that were likely from clicking the stop button
-    // or pressing the stop hotkey. Remove events within 200ms of now.
     final elapsedNow = DateTime.now().millisecondsSinceEpoch - _recordStartMs;
     while (_recordingBuffer.isNotEmpty) {
       final last = _recordingBuffer.last;
@@ -350,10 +323,6 @@ class MacroService {
       }
     }
 
-    // Remove orphaned keyPress/mouseDown events that have no matching release.
-    // When the user presses a hotkey to stop recording, the keydown is captured
-    // but the keyup is not (because the hook was already stopped).
-    // Playing back these orphaned presses causes stuck keys and system shortcuts.
     _removeOrphanedPresses();
 
     onRecordingUpdate?.call(_recordingBuffer.length);
@@ -361,12 +330,10 @@ class MacroService {
     onStatusChanged?.call(_status);
   }
 
-  /// Remove keyPress/mouseDown events that have no matching keyRelease/mouseUp.
   void _removeOrphanedPresses() {
     final heldKeySet = <String>{};
     final heldMouseSet = <String>{};
 
-    // First pass: find which keys/buttons are held at the end
     for (final event in _recordingBuffer) {
       if (event.type == MacroEventType.keyPress && event.key != null) {
         heldKeySet.add(event.key!);
@@ -379,10 +346,8 @@ class MacroService {
       }
     }
 
-    // If no orphans, nothing to do
     if (heldKeySet.isEmpty && heldMouseSet.isEmpty) return;
 
-    // Second pass: remove the orphaned press events (from the end, since they're likely last)
     _recordingBuffer.removeWhere((event) {
       if (event.type == MacroEventType.keyPress && event.key != null && heldKeySet.contains(event.key!)) {
         return true;
@@ -399,7 +364,6 @@ class MacroService {
       throw StateError('Not recording');
     }
 
-    // Stop journal hook if not already paused.
     if (_input is WindowsInput) {
       final winInput = _input;
       if (winInput.onRecordEvent != null) {
@@ -430,7 +394,6 @@ class MacroService {
   }
 
   void cancelRecording() {
-    // Stop journal hook if using WindowsInput.
     if (_input is WindowsInput) {
       final winInput = _input;
       winInput.onRecordEvent = null;
@@ -449,9 +412,7 @@ class MacroService {
     onStatusChanged?.call(_status);
   }
 
-  // ─── Playback ──────────────────────────────────────────────
 
-  // Track keys held during playback for cleanup
   final Set<String> _heldPlaybackKeys = {};
   final Set<String> _heldPlaybackMouseButtons = {};
 
@@ -463,11 +424,9 @@ class MacroService {
     _heldPlaybackKeys.clear();
     _heldPlaybackMouseButtons.clear();
 
-    // Set background mode on WindowsInput if macro has background mode enabled and plugin is available
     final bgEnabled = PluginManager.instance.isEnabled('background_execution');
     if (_input is WindowsInput && macro.backgroundMode && bgEnabled) {
       int hwnd = macro.backgroundTargetHwnd;
-      // Fallback to plugin config if macro has no target set
       if (hwnd == 0) {
         final config = getConfig?.call();
         if (config != null) {
@@ -475,7 +434,6 @@ class MacroService {
         }
       }
       if (hwnd != 0) {
-        // For macros, only set hwnd — coordinates come from each event
         (_input).setBackgroundMode(true, hwnd: hwnd);
       }
     }
@@ -483,7 +441,6 @@ class MacroService {
     onStatusChanged?.call(_status);
     _currentRepeat = 0;
 
-    // Play macro start sound
     if (macro.soundEnabled) {
       final config = getConfig?.call();
       if (config != null && config.soundFeedbackEnabled) {
@@ -500,12 +457,8 @@ class MacroService {
     final macro = _currentMacro!;
     final events = macro.events;
     final speedMultiplier = 1.0 / macro.speed;
-    // repeatCount == 0 means infinite; loop until status changes.
     final totalRepeats = macro.repeatCount == 0 ? null : macro.repeatCount;
 
-    // 截止时刻调度：以「本拍应在什么时候结束」为基准，而不是逐拍累加
-    // Future.delayed。这样 _executeEvent 的实际耗时不会逐拍叠加成漂移，
-    // 也不会把 holdMs 漏算（hold 期间事件时间戳本就没推进）。
     final clock = Stopwatch()..start();
     int deadlineMs = 0;
 
@@ -521,10 +474,6 @@ class MacroService {
 
         final event = events[i];
 
-        // Calculate when this step should fire, accounting for holdMs of the
-        // previous step: during a hold the recorded timestamps do not advance,
-        // so the next step must be offset by half the hold duration on both
-        // sides. waitMs takes precedence over the timestamp difference when set.
         if (i > 0) {
           final prevEvent = events[i - 1];
           int delay;
@@ -543,13 +492,11 @@ class MacroService {
         if (remainMs > 0) {
           await Future.delayed(Duration(milliseconds: remainMs));
         } else {
-          // 落后于进度：丢弃欠账，从当前位置重新对齐，不试图补回漏点。
           deadlineMs = clock.elapsedMilliseconds;
         }
 
         if (_status != MacroStatus.playing) break;
 
-        // Check if background target window still exists
         if (_input is WindowsInput && (_input).isBackgroundMode) {
           if (!(_input).isBackgroundWindowValid()) {
             onError?.call('目标窗口已关闭，宏已停止');
@@ -558,11 +505,8 @@ class MacroService {
           }
         }
 
-        // Execute event with hold duration
         await _executeEvent(event);
 
-        // Hold duration: advances the deadline but does not insert an extra
-        // wait — the next step's deadline already includes half of it.
         if (event.holdMs > 0) {
           deadlineMs += (event.holdMs / 2 * speedMultiplier).round();
         }
@@ -598,7 +542,6 @@ class MacroService {
       case MacroEventType.mouseUp:
         final btn = event.button ?? 'left';
         if (isMobile && btn == 'longPress') {
-          // longPress is handled as a single gesture, no separate up needed
         } else {
           _heldPlaybackMouseButtons.remove(btn);
           await _input.mouseUp(
@@ -664,7 +607,6 @@ class MacroService {
         break;
 
       case MacroEventType.wait:
-        // Wait events are handled by timestamp calculation above
         break;
     }
   }
@@ -677,14 +619,11 @@ class MacroService {
     _currentRepeat = 0;
     final wasPlaying = _status == MacroStatus.playing;
     _status = MacroStatus.idle;
-    // Restore foreground mode on WindowsInput
     if (_input is WindowsInput) {
       (_input).setBackgroundMode(false);
     }
     if (wasPlaying) {
-      // Release all keys that may be stuck after playback
       _releaseAllKeys();
-      // Play macro end sound
       if (macro?.soundEnabled ?? false) {
         final config = getConfig?.call();
         if (config != null && config.soundFeedbackEnabled) {
@@ -695,14 +634,11 @@ class MacroService {
     }
   }
 
-  /// Release all keys that are still held after playback, plus common modifier keys.
   void _releaseAllKeys() {
-    // Release keys tracked as held during playback
     for (final key in _heldPlaybackKeys.toList()) {
       _input.keyRelease(key);
     }
     _heldPlaybackKeys.clear();
-    // Also release common modifier keys as a safety net
     const safetyKeys = [
       'Shift', 'Ctrl', 'Alt', 'Win',
       'Enter', 'Space', 'Tab', 'Escape', 'Backspace', 'Delete',
@@ -710,7 +646,6 @@ class MacroService {
     for (final key in safetyKeys) {
       _input.keyRelease(key);
     }
-    // Only release mouse buttons that were actually pressed during playback
     for (final btn in _heldPlaybackMouseButtons.toList()) {
       _input.mouseUp(x: -1, y: -1, button: btn);
     }

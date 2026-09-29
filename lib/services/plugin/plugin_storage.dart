@@ -1,6 +1,3 @@
-/// 插件存储 — 每个插件独立的持久化键值存储。
-/// 数据写入 <pluginsDir>/<pluginId>/data.json，与其他插件完全隔离。
-library;
 
 import 'dart:async';
 import 'dart:convert';
@@ -41,47 +38,40 @@ class PluginStorage {
     }
   }
 
-  /// 读取值；不存在时返回 [defaultValue]（通常取自设置定义）
   Future<T?> get<T>(String key, {T? defaultValue}) async {
     await _ensureLoaded();
     final value = _cache[key];
     if (value == null) return defaultValue;
     if (value is T) return value;
-    // 宽松转换
     if (T == int && value is num) return value.round() as T;
     if (T == double && value is num) return value.toDouble() as T;
     if (T == String && value is! String) return value.toString() as T;
     return defaultValue;
   }
 
-  /// 写入值并持久化
   Future<void> set(String key, Object? value) async {
     await _ensureLoaded();
     _cache[key] = value;
     await _flush();
   }
 
-  /// 批量写入
   Future<void> setAll(Map<String, Object?> values) async {
     await _ensureLoaded();
     _cache.addAll(values);
     await _flush();
   }
 
-  /// 读取全部键值（快照）
   Future<Map<String, dynamic>> all() async {
     await _ensureLoaded();
     return Map<String, dynamic>.from(_cache);
   }
 
-  /// 删除键
   Future<void> remove(String key) async {
     await _ensureLoaded();
     _cache.remove(key);
     await _flush();
   }
 
-  /// 按 manifest 设置定义补齐缺省值
   Future<void> applyDefaults(List<SettingDefinition> defs) async {
     await _ensureLoaded();
     var changed = false;
@@ -106,8 +96,6 @@ class PluginStorage {
   }
 }
 
-/// 带内存缓存的同步存储 — 供原生插件 C 回调同步读写。
-/// 写操作立即更新缓存并异步落盘（防抖）。
 class CachedPluginStorage implements PluginStorageLike {
   final PluginStorage _storage;
   Map<String, dynamic> _cache = {};
@@ -146,12 +134,10 @@ class CachedPluginStorage implements PluginStorageLike {
 
   void _ensureSynced() {
     if (_synced) return;
-    // 同步路径在 load() 完成后才会被调用；此断言防止误用
     assert(_synced, 'CachedPluginStorage.load() must complete before sync access');
   }
 }
 
-/// 同步存储接口（native 回调桥接用）
 abstract class PluginStorageLike {
   Object? getSync(String key);
   void setSync(String key, Object? value);

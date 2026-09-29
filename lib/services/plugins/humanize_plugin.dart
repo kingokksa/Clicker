@@ -1,5 +1,3 @@
-/// 拟人模式插件 — 拟人化节奏与反检测设置（随机偏移 / 延迟 / 抖动）。
-library;
 
 import '../plugin/plugin_api.dart';
 import '../plugin/plugin_manifest.dart';

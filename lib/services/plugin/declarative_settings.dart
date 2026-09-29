@@ -1,7 +1,3 @@
-/// 声明式设置页 — 将 manifest 的 settings 声明渲染为 Fluent 设置界面。
-/// 原生插件无需编写任何 UI 代码，只要在 manifest.json 里声明设置项，
-/// 宿主自动渲染并持久化到插件存储。
-library;
 
 import 'package:fluent_ui/fluent_ui.dart';
 
@@ -9,7 +5,6 @@ import 'plugin_manifest.dart';
 import 'plugin_storage.dart';
 import 'plugin_manager.dart';
 
-/// 构建原生插件的声明式页面
 Widget buildDeclarativePluginPage(
     PluginDescriptor desc, CachedPluginStorage storage) {
   return _DeclarativePluginPage(desc: desc, storage: storage);
@@ -25,7 +20,6 @@ class _DeclarativePluginPage extends StatefulWidget {
 }
 
 class _DeclarativePluginPageState extends State<_DeclarativePluginPage> {
-  // 命令执行反馈（顶部 InfoBar，数秒后自动消失）
   String? _noticeMessage;
   bool _noticeIsError = false;
 
@@ -51,7 +45,6 @@ class _DeclarativePluginPageState extends State<_DeclarativePluginPage> {
     return ScaffoldPage.scrollable(
       padding: const EdgeInsets.all(20),
       children: [
-        // 命令执行反馈
         if (_noticeMessage != null)
           InfoBar(
             title: Text(_noticeIsError ? '执行失败' : '命令已执行'),
@@ -61,7 +54,6 @@ class _DeclarativePluginPageState extends State<_DeclarativePluginPage> {
           ),
         if (_noticeMessage != null) const SizedBox(height: 12),
 
-        // 标题
         Row(children: [
           Icon(FluentIcons.puzzle, size: 22, color: FluentTheme.of(context).accentColor),
           const SizedBox(width: 10),
@@ -82,7 +74,6 @@ class _DeclarativePluginPageState extends State<_DeclarativePluginPage> {
         ],
         const SizedBox(height: 20),
 
-        // 设置项
         if (settings.isNotEmpty) ...[
           _sectionTitle('设置', isDark),
           const SizedBox(height: 8),
@@ -90,7 +81,6 @@ class _DeclarativePluginPageState extends State<_DeclarativePluginPage> {
           const SizedBox(height: 20),
         ],
 
-        // 命令面板（触发声明的命令）
         if (commands.isNotEmpty) ...[
           _sectionTitle('可用命令', isDark),
           const SizedBox(height: 8),
@@ -120,7 +110,6 @@ class _DeclarativePluginPageState extends State<_DeclarativePluginPage> {
           const SizedBox(height: 20),
         ],
 
-        // 插件信息
         _sectionTitle('信息', isDark),
         const SizedBox(height: 8),
         Card(
