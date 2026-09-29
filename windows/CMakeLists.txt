@@ -92,6 +92,22 @@ if(EXISTS "${AI_TRACKER_SRC}/main.cpp")
   install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/../plugins/ai_tracker/manifest.json"
     DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/plugins/ai_tracker"
     COMPONENT Runtime)
+
+  # Bundled inference assets: ONNX Runtime, PP-OCRv4 (det/rec/dict) and the
+  # YOLOX-Nano detector. Shipped with the app so no runtime download is needed.
+  set(AI_TRACKER_VENDOR "${CMAKE_CURRENT_SOURCE_DIR}/../plugins/ai_tracker/vendor")
+  if(EXISTS "${AI_TRACKER_VENDOR}/onnxruntime.dll")
+    install(FILES "${AI_TRACKER_VENDOR}/onnxruntime.dll"
+      DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/plugins/ai_tracker"
+      COMPONENT Runtime)
+  endif()
+  foreach(_asset "detector.onnx" "ocr_det.onnx" "ocr_rec.onnx" "ocr_keys.txt")
+    if(EXISTS "${AI_TRACKER_VENDOR}/models/${_asset}")
+      install(FILES "${AI_TRACKER_VENDOR}/models/${_asset}"
+        DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/plugins/ai_tracker/models"
+        COMPONENT Runtime)
+    endif()
+  endforeach()
 endif()
 
 # === Bundled plugin store index ===

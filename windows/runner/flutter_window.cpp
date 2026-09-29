@@ -12,6 +12,8 @@
 #include <mutex>
 #include <atomic>
 #include <map>
+#include <cmath>
+#include <UIAutomation.h>
 
 // C++/WinRT for Windows OCR
 #include <winrt/Windows.Foundation.h>
@@ -162,6 +164,156 @@ static volatile UINT g_clicker_stopped_msg = 0;
 static volatile UINT g_perform_click_msg = 0;
 static volatile UINT g_findimage_result_msg = 0;
 
+// ─── 模板匹配内核：灰度 + 积分图 + 按行并行 ────────────────
+// NCC 只关心亮度，灰度化把内存带宽降到 1/4；积分图让窗口均值/方差变成 O(1)，
+// 每个位置只剩互相关那一项需要逐像素算。
+static inline uint8_t _lumaOf(uint8_t b, uint8_t g, uint8_t r) {
+  return static_cast<uint8_t>((r * 77 + g * 150 + b * 29) >> 8);
+}
+
+static std::vector<uint8_t> _bgraToGray(const uint8_t* bgra, int w, int h) {
+  const int n = w * h;
+  std::vector<uint8_t> gray(static_cast<size_t>(n));
+  for (int i = 0; i < n; i++) {
+    gray[i] = _lumaOf(bgra[i * 4], bgra[i * 4 + 1], bgra[i * 4 + 2]);
+  }
+  return gray;
+}
+
+static std::vector<uint8_t> _resampleGray(const std::vector<uint8_t>& src, int sw, int sh, int dw, int dh) {
+  std::vector<uint8_t> out(static_cast<size_t>(dw) * dh);
+  for (int y = 0; y < dh; y++) {
+    int sy = static_cast<int>(static_cast<int64_t>(y) * sh / dh);
+    if (sy >= sh) sy = sh - 1;
+    const uint8_t* srow = src.data() + static_cast<size_t>(sy) * sw;
+    uint8_t* drow = out.data() + static_cast<size_t>(y) * dw;
+    for (int x = 0; x < dw; x++) {
+      int sx = static_cast<int>(static_cast<int64_t>(x) * sw / dw);
+      if (sx >= sw) sx = sw - 1;
+      drow[x] = srow[sx];
+    }
+  }
+  return out;
+}
+
+struct GrayRegion {
+  int w = 0;
+  int h = 0;
+  std::vector<uint8_t> px;
+  std::vector<int64_t> sat;
+  std::vector<int64_t> sat2;
+
+  inline int64_t rectSum(const std::vector<int64_t>& t, int x, int y, int rw, int rh) const {
+    const int stride = w + 1;
+    return t[static_cast<size_t>(y + rh) * stride + (x + rw)] - t[static_cast<size_t>(y) * stride + (x + rw)]
+         - t[static_cast<size_t>(y + rh) * stride + x] + t[static_cast<size_t>(y) * stride + x];
+  }
+};
+
+static GrayRegion _makeGrayRegion(std::vector<uint8_t> gray, int w, int h) {
+  GrayRegion r;
+  r.w = w;
+  r.h = h;
+  r.px = std::move(gray);
+  const int stride = w + 1;
+  r.sat.assign(static_cast<size_t>(stride) * (h + 1), 0);
+  r.sat2.assign(static_cast<size_t>(stride) * (h + 1), 0);
+  for (int y = 0; y < h; y++) {
+    int64_t rowSum = 0;
+    int64_t rowSum2 = 0;
+    const uint8_t* src = r.px.data() + static_cast<size_t>(y) * w;
+    int64_t* cur = r.sat.data() + static_cast<size_t>(y + 1) * stride;
+    int64_t* cur2 = r.sat2.data() + static_cast<size_t>(y + 1) * stride;
+    const int64_t* prev = r.sat.data() + static_cast<size_t>(y) * stride;
+    const int64_t* prev2 = r.sat2.data() + static_cast<size_t>(y) * stride;
+    for (int x = 0; x < w; x++) {
+      const int v = src[x];
+      rowSum += v;
+      rowSum2 += static_cast<int64_t>(v) * v;
+      cur[x + 1] = prev[x + 1] + rowSum;
+      cur2[x + 1] = prev2[x + 1] + rowSum2;
+    }
+  }
+  return r;
+}
+
+struct GrayTemplate {
+  int w = 0;
+  int h = 0;
+  std::vector<uint8_t> px;
+  double mean = 0;
+  double norm = 1;
+};
+
+static GrayTemplate _makeGrayTemplate(std::vector<uint8_t> gray, int w, int h) {
+  GrayTemplate t;
+  t.w = w;
+  t.h = h;
+  t.px = std::move(gray);
+  const int n = w * h;
+  if (n <= 0) return t;
+  double sum = 0;
+  for (int i = 0; i < n; i++) sum += t.px[i];
+  t.mean = sum / n;
+  double var = 0;
+  for (int i = 0; i < n; i++) {
+    const double d = t.px[i] - t.mean;
+    var += d * d;
+  }
+  t.norm = std::sqrt(var);
+  if (t.norm < 1.0) t.norm = 1.0;
+  return t;
+}
+
+static inline double _nccAt(const GrayRegion& reg, const GrayTemplate& tpl, int sx, int sy) {
+  const int n = tpl.w * tpl.h;
+  const int64_t sum = reg.rectSum(reg.sat, sx, sy, tpl.w, tpl.h);
+  const int64_t sum2 = reg.rectSum(reg.sat2, sx, sy, tpl.w, tpl.h);
+  const double regMean = static_cast<double>(sum) / n;
+  double regVar = static_cast<double>(sum2) - static_cast<double>(sum) * regMean;
+  if (regVar < 1.0) regVar = 1.0;
+
+  double dot = 0;
+  for (int ty = 0; ty < tpl.h; ty++) {
+    const uint8_t* rp = reg.px.data() + static_cast<size_t>(sy + ty) * reg.w + sx;
+    const uint8_t* tp = tpl.px.data() + static_cast<size_t>(ty) * tpl.w;
+    for (int tx = 0; tx < tpl.w; tx++) dot += static_cast<double>(rp[tx]) * tp[tx];
+  }
+  const double num = dot - static_cast<double>(n) * regMean * tpl.mean;
+  double ncc = num / (tpl.norm * std::sqrt(regVar));
+  if (ncc > 1.0) return 1.0;
+  if (ncc < -1.0) return -1.0;
+  return ncc;
+}
+
+// 按行切分到多线程；行数太少时退回单线程，避免线程启动开销反超
+template <typename Fn>
+static void _parallelRows(int count, Fn&& body) {
+  int nThreads = static_cast<int>(std::thread::hardware_concurrency());
+  if (nThreads <= 0) nThreads = 1;
+  if (nThreads > 8) nThreads = 8;
+  if (count < 64 || nThreads == 1) {
+    body(0, 1);
+    return;
+  }
+  if (count < nThreads) nThreads = count;
+  std::vector<std::thread> pool;
+  pool.reserve(static_cast<size_t>(nThreads - 1));
+  for (int ti = 1; ti < nThreads; ti++) {
+    pool.emplace_back([&body, ti, nThreads]() { body(ti, nThreads); });
+  }
+  body(0, nThreads);
+  for (auto& t : pool) t.join();
+}
+
+struct MatchBox {
+  double score;
+  int x;
+  int y;
+  int w;
+  int h;
+};
+
 // Structure to pass findImage result from background thread to main thread
 struct FindImageResultData {
   flutter::MethodResult<>* result_ptr;
@@ -170,10 +322,352 @@ struct FindImageResultData {
   int bestY;
   int tplW;
   int tplH;
+  std::vector<MatchBox> matches;
 };
 static std::mutex g_findimage_mutex;
 static std::map<int, FindImageResultData> g_findimage_results;
 static std::atomic<int> g_findimage_next_id{0};
+
+// 模板指纹缓存：同一模板反复查找时只传指纹，像素不必再过一次 channel
+struct CachedTemplate {
+  int w = 0;
+  int h = 0;
+  std::vector<uint8_t> gray;
+};
+static std::mutex g_tpl_cache_mutex;
+static std::map<std::string, CachedTemplate> g_tpl_cache;
+
+// 帧指纹缓存：画面与全部参数都没变时直接复用上次结果
+struct FrameCache {
+  bool valid = false;
+  uint64_t regionHash = 0;
+  uint64_t tplHash = 0;
+  int regionX = 0;
+  int regionY = 0;
+  int regionW = 0;
+  int regionH = 0;
+  double threshold = 0;
+  int maxResults = 0;
+  std::vector<double> scales;
+  std::vector<MatchBox> matches;
+};
+static std::mutex g_frame_cache_mutex;
+static FrameCache g_frame_cache;
+
+static inline uint64_t _fnv1a(const uint8_t* data, size_t len) {
+  uint64_t h = 1469598103934665603ULL;
+  for (size_t i = 0; i < len; i++) {
+    h ^= data[i];
+    h *= 1099511628211ULL;
+  }
+  return h;
+}
+
+static flutter::EncodableList _matchesToEncodable(const std::vector<MatchBox>& matches) {
+  flutter::EncodableList out;
+  for (const auto& b : matches) {
+    flutter::EncodableMap m;
+    m[flutter::EncodableValue("x")] = flutter::EncodableValue(b.x);
+    m[flutter::EncodableValue("y")] = flutter::EncodableValue(b.y);
+    m[flutter::EncodableValue("width")] = flutter::EncodableValue(b.w);
+    m[flutter::EncodableValue("height")] = flutter::EncodableValue(b.h);
+    m[flutter::EncodableValue("score")] = flutter::EncodableValue(b.score);
+    m[flutter::EncodableValue("matched")] = flutter::EncodableValue(true);
+    out.push_back(flutter::EncodableValue(m));
+  }
+  return out;
+}
+
+// ─── UIA 元素枚举 ─────────────────────────────────────────
+// 走 COM 的 UI Automation 直接读控件树（名称/类型/包围盒），比截图匹配稳；
+// 跨进程调用可能卡住，所以放独立线程里跑，结果经窗口消息回主线程。
+
+static volatile UINT g_elem_result_msg = 0;
+
+struct ElementDumpResult {
+  std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result_ptr;
+  flutter::EncodableList elements;
+  bool truncated = false;
+  std::string error;
+};
+
+static std::mutex g_elem_mutex;
+static std::map<int, ElementDumpResult> g_elem_results;
+static std::atomic<int> g_elem_next_id{0};
+
+static std::string _bstrToUtf8(BSTR b) {
+  if (!b) return std::string();
+  const int need = WideCharToMultiByte(CP_UTF8, 0, b, -1, nullptr, 0, nullptr, nullptr);
+  if (need <= 1) return std::string();
+  std::string out(static_cast<size_t>(need - 1), '\0');
+  WideCharToMultiByte(CP_UTF8, 0, b, -1, out.data(), need, nullptr, nullptr);
+  return out;
+}
+
+static const char* _uiaControlTypeName(CONTROLTYPEID id) {
+  switch (id) {
+    case UIA_ButtonControlTypeId: return "Button";
+    case UIA_CalendarControlTypeId: return "Calendar";
+    case UIA_CheckBoxControlTypeId: return "CheckBox";
+    case UIA_ComboBoxControlTypeId: return "ComboBox";
+    case UIA_EditControlTypeId: return "Edit";
+    case UIA_HyperlinkControlTypeId: return "Hyperlink";
+    case UIA_ImageControlTypeId: return "Image";
+    case UIA_ListItemControlTypeId: return "ListItem";
+    case UIA_ListControlTypeId: return "List";
+    case UIA_MenuControlTypeId: return "Menu";
+    case UIA_MenuBarControlTypeId: return "MenuBar";
+    case UIA_MenuItemControlTypeId: return "MenuItem";
+    case UIA_ProgressBarControlTypeId: return "ProgressBar";
+    case UIA_RadioButtonControlTypeId: return "RadioButton";
+    case UIA_ScrollBarControlTypeId: return "ScrollBar";
+    case UIA_SliderControlTypeId: return "Slider";
+    case UIA_SpinnerControlTypeId: return "Spinner";
+    case UIA_StatusBarControlTypeId: return "StatusBar";
+    case UIA_TabControlTypeId: return "Tab";
+    case UIA_TabItemControlTypeId: return "TabItem";
+    case UIA_TextControlTypeId: return "Text";
+    case UIA_ToolBarControlTypeId: return "ToolBar";
+    case UIA_ToolTipControlTypeId: return "ToolTip";
+    case UIA_TreeControlTypeId: return "Tree";
+    case UIA_TreeItemControlTypeId: return "TreeItem";
+    case UIA_DataGridControlTypeId: return "DataGrid";
+    case UIA_DataItemControlTypeId: return "DataItem";
+    case UIA_DocumentControlTypeId: return "Document";
+    case UIA_SplitButtonControlTypeId: return "SplitButton";
+    case UIA_WindowControlTypeId: return "Window";
+    case UIA_PaneControlTypeId: return "Pane";
+    case UIA_HeaderControlTypeId: return "Header";
+    case UIA_HeaderItemControlTypeId: return "HeaderItem";
+    case UIA_TableControlTypeId: return "Table";
+    case UIA_TitleBarControlTypeId: return "TitleBar";
+    case UIA_SeparatorControlTypeId: return "Separator";
+    case UIA_GroupControlTypeId: return "Group";
+    case UIA_ThumbControlTypeId: return "Thumb";
+    case UIA_CustomControlTypeId: return "Custom";
+    default: return "Unknown";
+  }
+}
+
+struct ElementCollector {
+  IUIAutomationTreeWalker* walker = nullptr;
+  int maxDepth = 6;
+  int maxElements = 400;
+  int count = 0;
+  bool truncated = false;
+  double dpiScale = 1.0;
+  flutter::EncodableList out;
+
+  void walk(IUIAutomationElement* el, int depth) {
+    if (!el) return;
+    if (count >= maxElements) {
+      truncated = true;
+      return;
+    }
+
+    BSTR name = nullptr;
+    BSTR automationId = nullptr;
+    BSTR className = nullptr;
+    el->get_CurrentName(&name);
+    el->get_CurrentAutomationId(&automationId);
+    el->get_CurrentClassName(&className);
+
+    CONTROLTYPEID controlType = 0;
+    el->get_CurrentControlType(&controlType);
+
+    RECT rect{0, 0, 0, 0};
+    const bool hasRect = SUCCEEDED(el->get_CurrentBoundingRectangle(&rect));
+
+    BOOL enabled = FALSE;
+    BOOL focused = FALSE;
+    el->get_CurrentIsEnabled(&enabled);
+    el->get_CurrentHasKeyboardFocus(&focused);
+
+    UIA_HWND nativeHwnd = nullptr;
+    el->get_CurrentNativeWindowHandle(&nativeHwnd);
+
+    flutter::EncodableMap m;
+    m[flutter::EncodableValue("name")] = flutter::EncodableValue(_bstrToUtf8(name));
+    m[flutter::EncodableValue("automationId")] = flutter::EncodableValue(_bstrToUtf8(automationId));
+    m[flutter::EncodableValue("className")] = flutter::EncodableValue(_bstrToUtf8(className));
+    m[flutter::EncodableValue("controlType")] = flutter::EncodableValue(std::string(_uiaControlTypeName(controlType)));
+    m[flutter::EncodableValue("controlTypeId")] = flutter::EncodableValue(static_cast<int>(controlType));
+    m[flutter::EncodableValue("enabled")] = flutter::EncodableValue(enabled != FALSE);
+    m[flutter::EncodableValue("focused")] = flutter::EncodableValue(focused != FALSE);
+    m[flutter::EncodableValue("hwnd")] = flutter::EncodableValue(static_cast<int64_t>(reinterpret_cast<INT_PTR>(nativeHwnd)));
+    m[flutter::EncodableValue("depth")] = flutter::EncodableValue(depth);
+    if (hasRect) {
+      const int x = static_cast<int>(std::lround(rect.left / dpiScale));
+      const int y = static_cast<int>(std::lround(rect.top / dpiScale));
+      const int w = static_cast<int>(std::lround((rect.right - rect.left) / dpiScale));
+      const int h = static_cast<int>(std::lround((rect.bottom - rect.top) / dpiScale));
+      m[flutter::EncodableValue("x")] = flutter::EncodableValue(x);
+      m[flutter::EncodableValue("y")] = flutter::EncodableValue(y);
+      m[flutter::EncodableValue("width")] = flutter::EncodableValue(w);
+      m[flutter::EncodableValue("height")] = flutter::EncodableValue(h);
+      m[flutter::EncodableValue("centerX")] = flutter::EncodableValue(x + w / 2);
+      m[flutter::EncodableValue("centerY")] = flutter::EncodableValue(y + h / 2);
+    }
+    out.push_back(flutter::EncodableValue(m));
+    count++;
+
+    if (name) SysFreeString(name);
+    if (automationId) SysFreeString(automationId);
+    if (className) SysFreeString(className);
+
+    if (depth >= maxDepth) {
+      IUIAutomationElement* probe = nullptr;
+      if (SUCCEEDED(walker->GetFirstChildElement(el, &probe)) && probe) {
+        truncated = true;
+        probe->Release();
+      }
+      return;
+    }
+
+    IUIAutomationElement* child = nullptr;
+    walker->GetFirstChildElement(el, &child);
+    while (child) {
+      if (count >= maxElements) {
+        truncated = true;
+        child->Release();
+        break;
+      }
+      walk(child, depth + 1);
+      IUIAutomationElement* next = nullptr;
+      walker->GetNextSiblingElement(child, &next);
+      child->Release();
+      child = next;
+    }
+  }
+};
+
+// ─── 截图直供：PNG 编码 + Set-of-Mark 编号 ────────────────
+// 多模态模型直接吃 PNG；需要指向具体控件时，把 UIA 元素的框和编号画上去。
+
+static std::wstring _utf8ToWide(const std::string& s) {
+  if (s.empty()) return std::wstring();
+  const int need = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), nullptr, 0);
+  if (need <= 0) return std::wstring();
+  std::wstring out(static_cast<size_t>(need), L'\0');
+  MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), out.data(), need);
+  return out;
+}
+
+struct MarkRect {
+  int x = 0;
+  int y = 0;
+  int w = 0;
+  int h = 0;
+  std::wstring label;
+};
+
+static std::vector<uint8_t> _captureAnnotatedBgra(int x, int y, int w, int h, int outW, int outH,
+                                                  const std::vector<MarkRect>& marks, double scale) {
+  std::vector<uint8_t> out;
+  HDC screen = GetDC(nullptr);
+  if (!screen) return out;
+  HDC mem = CreateCompatibleDC(screen);
+
+  BITMAPINFO bmi = {};
+  bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+  bmi.bmiHeader.biWidth = outW;
+  bmi.bmiHeader.biHeight = -outH;
+  bmi.bmiHeader.biPlanes = 1;
+  bmi.bmiHeader.biBitCount = 32;
+  bmi.bmiHeader.biCompression = BI_RGB;
+
+  void* bits = nullptr;
+  HBITMAP dib = CreateDIBSection(mem, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
+  if (!dib || !bits) {
+    DeleteDC(mem);
+    ReleaseDC(nullptr, screen);
+    return out;
+  }
+  HBITMAP oldBmp = (HBITMAP)SelectObject(mem, dib);
+  SetStretchBltMode(mem, HALFTONE);
+  StretchBlt(mem, 0, 0, outW, outH, screen, x, y, w, h, SRCCOPY);
+
+  if (!marks.empty()) {
+    SetBkMode(mem, TRANSPARENT);
+    HFONT font = CreateFontW(-16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                             DEFAULT_PITCH, L"Microsoft YaHei");
+    HGDIOBJ oldFont = font ? SelectObject(mem, font) : nullptr;
+    for (const auto& mk : marks) {
+      const int mx = static_cast<int>(std::lround((mk.x - x) * scale));
+      const int my = static_cast<int>(std::lround((mk.y - y) * scale));
+      const int mw = static_cast<int>(std::lround(mk.w * scale));
+      const int mh = static_cast<int>(std::lround(mk.h * scale));
+      if (mw <= 0 || mh <= 0) continue;
+      if (mx + mw < 0 || my + mh < 0 || mx > outW || my > outH) continue;
+
+      HPEN pen = CreatePen(PS_SOLID, 2, RGB(255, 64, 64));
+      HGDIOBJ oldPen = SelectObject(mem, pen);
+      HGDIOBJ oldBrush = SelectObject(mem, GetStockObject(NULL_BRUSH));
+      Rectangle(mem, mx, my, mx + mw, my + mh);
+      SelectObject(mem, oldBrush);
+      SelectObject(mem, oldPen);
+      DeleteObject(pen);
+
+      if (mk.label.empty()) continue;
+      SIZE sz{0, 0};
+      GetTextExtentPoint32W(mem, mk.label.c_str(), (int)mk.label.size(), &sz);
+      RECT bgRect{mx, my, mx + sz.cx + 10, my + sz.cy + 6};
+      if (bgRect.bottom > outH) {
+        bgRect.top = my - sz.cy - 6;
+        bgRect.bottom = my;
+      }
+      HBRUSH bg = CreateSolidBrush(RGB(255, 64, 64));
+      FillRect(mem, &bgRect, bg);
+      DeleteObject(bg);
+      SetTextColor(mem, RGB(255, 255, 255));
+      RECT txtRect{bgRect.left + 5, bgRect.top + 3, bgRect.right, bgRect.bottom};
+      DrawTextW(mem, mk.label.c_str(), (int)mk.label.size(), &txtRect, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_NOPREFIX);
+    }
+    if (oldFont) SelectObject(mem, oldFont);
+    if (font) DeleteObject(font);
+  }
+
+  out.resize(static_cast<size_t>(outW) * outH * 4);
+  memcpy(out.data(), bits, out.size());
+
+  SelectObject(mem, oldBmp);
+  DeleteObject(dib);
+  DeleteDC(mem);
+  ReleaseDC(nullptr, screen);
+  return out;
+}
+
+static std::vector<uint8_t> _encodePngFromBgra(std::vector<uint8_t> bgra, int w, int h) {
+  std::vector<uint8_t> png;
+  for (size_t i = 3; i < bgra.size(); i += 4) bgra[i] = 255;
+  try {
+    winrt::init_apartment(winrt::apartment_type::multi_threaded);
+    using namespace winrt::Windows::Graphics::Imaging;
+    using namespace winrt::Windows::Storage::Streams;
+
+    SoftwareBitmap bitmap(BitmapPixelFormat::Bgra8, w, h, BitmapAlphaMode::Premultiplied);
+    {
+      DataWriter writer;
+      writer.WriteBytes(winrt::array_view<uint8_t const>(bgra));
+      bitmap.CopyFromBuffer(writer.DetachBuffer());
+    }
+    InMemoryRandomAccessStream stream;
+    BitmapEncoder encoder = BitmapEncoder::CreateAsync(BitmapEncoder::PngEncoderId(), stream).get();
+    encoder.SetSoftwareBitmap(bitmap);
+    encoder.FlushAsync().get();
+
+    const uint32_t size = static_cast<uint32_t>(stream.Size());
+    if (size == 0) return png;
+    DataReader reader = DataReader(stream.GetInputStreamAt(0));
+    reader.LoadAsync(size).get();
+    png.resize(size);
+    reader.ReadBytes(winrt::array_view<uint8_t>(png));
+  } catch (...) {
+    png.clear();
+  }
+  return png;
+}
 
 // ─── OCR Fallback Methods ──────────────────────────────────
 // Save BGRA pixels to a temp BMP file (shared by fallback methods)
@@ -994,6 +1488,7 @@ bool FlutterWindow::OnCreate() {
 
   g_perform_click_msg = RegisterWindowMessageW(L"ClickerPerformClick");
   g_findimage_result_msg = RegisterWindowMessageW(L"ClickerFindImageResult");
+  g_elem_result_msg = RegisterWindowMessageW(L"ClickerElementDumpResult");
 
   HWND hwnd = GetHandle();
 
@@ -1364,34 +1859,77 @@ bool FlutterWindow::OnCreate() {
           else if (const auto* i32 = std::get_if<int32_t>(&args->at(7))) threshold = static_cast<double>(*i32);
           else if (const auto* i64 = std::get_if<int64_t>(&args->at(7))) threshold = static_cast<double>(*i64);
 
-          if ((!tplBytes && !tplBytesUint8) || tplW <= 0 || tplH <= 0 || regionW <= 0 || regionH <= 0) {
+          std::string tplKey;
+          if (args->size() >= 11) {
+            if (const auto* s = std::get_if<std::string>(&args->at(10))) tplKey = *s;
+          }
+
+          if ((!tplBytes && !tplBytesUint8 && tplKey.empty()) || tplW <= 0 || tplH <= 0 || regionW <= 0 || regionH <= 0) {
             result->Error("INVALID_ARGS", "Invalid template or region dimensions");
             return;
           }
 
-          // Convert template bytes to uint8_t vector
-          std::vector<uint8_t> tplData;
-          if (tplBytesUint8) {
-            tplData = std::move(*const_cast<std::vector<uint8_t>*>(tplBytesUint8));
-          } else {
-            tplData.resize(tplBytes->size());
-            for (size_t idx = 0; idx < tplBytes->size(); idx++) {
-              if (const auto* b32 = std::get_if<int32_t>(&tplBytes->at(idx))) tplData[idx] = static_cast<uint8_t>(*b32);
-              else if (const auto* b64 = std::get_if<int64_t>(&tplBytes->at(idx))) tplData[idx] = static_cast<uint8_t>(*b64);
+          // Optional args: [8] maxResults (default 1), [9] scales (default [1.0])
+          int maxResults = 1;
+          if (args->size() >= 9) {
+            if (const auto* v = std::get_if<int32_t>(&args->at(8))) maxResults = *v;
+            else if (const auto* v64 = std::get_if<int64_t>(&args->at(8))) maxResults = static_cast<int>(*v64);
+            else if (const auto* vd = std::get_if<double>(&args->at(8))) maxResults = static_cast<int>(*vd);
+          }
+          if (maxResults < 1) maxResults = 1;
+          if (maxResults > 200) maxResults = 200;
+
+          std::vector<double> scales;
+          if (args->size() >= 10) {
+            if (const auto* list = std::get_if<flutter::EncodableList>(&args->at(9))) {
+              for (const auto& v : *list) {
+                if (const auto* d = std::get_if<double>(&v)) scales.push_back(*d);
+                else if (const auto* i32 = std::get_if<int32_t>(&v)) scales.push_back(static_cast<double>(*i32));
+                else if (const auto* i64 = std::get_if<int64_t>(&v)) scales.push_back(static_cast<double>(*i64));
+              }
             }
           }
-          size_t expectedTplSize = (size_t)tplW * tplH * 4;
-          if (tplData.size() < expectedTplSize) {
-            result->Error("INVALID_ARGS", "Template data size mismatch: expected " + std::to_string(expectedTplSize) + " got " + std::to_string(tplData.size()));
-            return;
-          }
-          // Check template data
           {
-            int nonZeroCount = 0;
-            for (size_t i = 0; i < tplData.size() && nonZeroCount < 10; i++) {
-              if (tplData[i] != 0) nonZeroCount++;
+            std::vector<double> clean;
+            for (double s : scales) {
+              if (s >= 0.2 && s <= 5.0) clean.push_back(s);
             }
-            OutputDebugStringA(("[findImage] tplData nonZero(first10)=" + std::to_string(nonZeroCount) + "/" + std::to_string(tplData.size()) + " expectedTplSize=" + std::to_string(expectedTplSize) + "\n").c_str());
+            if (clean.empty()) clean.push_back(1.0);
+            scales = clean;
+          }
+
+          // 模板同样只保留亮度；给了指纹且本地已缓存时，像素不必重传
+          std::vector<uint8_t> tplGray;
+          if (!tplBytes && !tplBytesUint8) {
+            std::lock_guard<std::mutex> lock(g_tpl_cache_mutex);
+            auto it = g_tpl_cache.find(tplKey);
+            if (it == g_tpl_cache.end() || it->second.w != tplW || it->second.h != tplH) {
+              result->Error("TEMPLATE_NOT_CACHED", "模板缓存未命中，请随请求重发模板像素");
+              return;
+            }
+            tplGray = it->second.gray;
+          } else {
+            std::vector<uint8_t> tplData;
+            if (tplBytesUint8) {
+              tplData = std::move(*const_cast<std::vector<uint8_t>*>(tplBytesUint8));
+            } else {
+              tplData.resize(tplBytes->size());
+              for (size_t idx = 0; idx < tplBytes->size(); idx++) {
+                if (const auto* b32 = std::get_if<int32_t>(&tplBytes->at(idx))) tplData[idx] = static_cast<uint8_t>(*b32);
+                else if (const auto* b64 = std::get_if<int64_t>(&tplBytes->at(idx))) tplData[idx] = static_cast<uint8_t>(*b64);
+              }
+            }
+            const size_t expectedTplSize = static_cast<size_t>(tplW) * tplH * 4;
+            if (tplData.size() < expectedTplSize) {
+              result->Error("INVALID_ARGS", "Template data size mismatch: expected " + std::to_string(expectedTplSize) + " got " + std::to_string(tplData.size()));
+              return;
+            }
+            tplGray = _bgraToGray(tplData.data(), tplW, tplH);
+            if (!tplKey.empty()) {
+              std::lock_guard<std::mutex> lock(g_tpl_cache_mutex);
+              if (g_tpl_cache.size() >= 64) g_tpl_cache.clear();
+              g_tpl_cache[tplKey] = CachedTemplate{tplW, tplH, tplGray};
+            }
           }
 
           // Get DPI scale factor: capture at physical pixels, then downscale to logical for matching
@@ -1425,23 +1963,22 @@ bool FlutterWindow::OnCreate() {
           DeleteDC(hdcMem);
           ReleaseDC(nullptr, hdcScreen);
 
-          // Downscale physical pixels back to logical pixel size for template matching
-          std::vector<uint8_t> regionPixels(regionW * regionH * 4);
+          // 降采样时直接转成灰度：后续 NCC 只在这一张上算
+          std::vector<uint8_t> regionGray(static_cast<size_t>(regionW) * regionH);
           if (dpiScale == 1.0) {
-            regionPixels = std::move(physRegionPixels);
+            for (int i = 0, n = regionW * regionH; i < n; i++) {
+              regionGray[i] = _lumaOf(physRegionPixels[i * 4], physRegionPixels[i * 4 + 1], physRegionPixels[i * 4 + 2]);
+            }
           } else {
             for (int ly = 0; ly < regionH; ly++) {
               int sy = static_cast<int>(ly * dpiScale);
               if (sy >= physRegionH) sy = physRegionH - 1;
+              uint8_t* drow = regionGray.data() + static_cast<size_t>(ly) * regionW;
               for (int lx = 0; lx < regionW; lx++) {
                 int sx = static_cast<int>(lx * dpiScale);
                 if (sx >= physRegionW) sx = physRegionW - 1;
-                int srcIdx = (sy * physRegionW + sx) * 4;
-                int dstIdx = (ly * regionW + lx) * 4;
-                regionPixels[dstIdx]     = physRegionPixels[srcIdx];
-                regionPixels[dstIdx + 1] = physRegionPixels[srcIdx + 1];
-                regionPixels[dstIdx + 2] = physRegionPixels[srcIdx + 2];
-                regionPixels[dstIdx + 3] = physRegionPixels[srcIdx + 3];
+                const int srcIdx = (sy * physRegionW + sx) * 4;
+                drow[lx] = _lumaOf(physRegionPixels[srcIdx], physRegionPixels[srcIdx + 1], physRegionPixels[srcIdx + 2]);
               }
             }
           }
@@ -1463,215 +2000,339 @@ bool FlutterWindow::OnCreate() {
             return;
           }
 
+          // 帧指纹：画面与全部参数都没变时直接复用上次结果，省掉整轮匹配
+          const uint64_t regionHash = _fnv1a(regionGray.data(), regionGray.size());
+          const uint64_t tplHash = _fnv1a(tplGray.data(), tplGray.size());
+          {
+            std::lock_guard<std::mutex> lock(g_frame_cache_mutex);
+            if (g_frame_cache.valid &&
+                g_frame_cache.regionHash == regionHash &&
+                g_frame_cache.tplHash == tplHash &&
+                g_frame_cache.regionX == regionX && g_frame_cache.regionY == regionY &&
+                g_frame_cache.regionW == regionW && g_frame_cache.regionH == regionH &&
+                g_frame_cache.threshold == threshold &&
+                g_frame_cache.maxResults == maxResults &&
+                g_frame_cache.scales == scales) {
+              result->Success(flutter::EncodableValue(_matchesToEncodable(g_frame_cache.matches)));
+              return;
+            }
+          }
+
           auto result_ptr = result.release();
           int resultId = g_findimage_next_id.fetch_add(1);
           HWND hwnd = GetHandle();
 
-          std::thread([result_ptr, regionPixels=std::move(regionPixels), tplData=std::move(tplData),
-                       regionX, regionY, regionW, regionH, tplW, tplH,
-                       threshold, searchW, searchH, resultId, hwnd]() {
-            double bestScore = -2;
-            int bestX = -1, bestY = -1;
+          std::thread([result_ptr, regionGray=std::move(regionGray), tplGray0=std::move(tplGray),
+                       regionX, regionY, regionW, regionH, tplW0=tplW, tplH0=tplH,
+                       threshold, maxResults, scales, regionHash, tplHash, resultId, hwnd]() {
+            std::vector<MatchBox> found;
 
-            // Pre-compute template mean (over ALL pixels)
-            int tplPixelCount = tplW * tplH;
-            double tplSumB = 0, tplSumG = 0, tplSumR = 0;
-            for (int i = 0; i < tplPixelCount; i++) {
-              tplSumB += tplData[i * 4];
-              tplSumG += tplData[i * 4 + 1];
-              tplSumR += tplData[i * 4 + 2];
-            }
-            double tplMeanB = tplSumB / tplPixelCount;
-            double tplMeanG = tplSumG / tplPixelCount;
-            double tplMeanR = tplSumR / tplPixelCount;
+            std::map<int, GrayRegion> levelCache;
+            levelCache.emplace(1, _makeGrayRegion(regionGray, regionW, regionH));
+            const GrayRegion& base = levelCache.at(1);
 
-            // Full-pixel template norm (for refine phase)
-            double tplFullVarSum = 0;
-            for (int i = 0; i < tplPixelCount; i++) {
-              double db = tplData[i * 4] - tplMeanB;
-              double dg = tplData[i * 4 + 1] - tplMeanG;
-              double dr = tplData[i * 4 + 2] - tplMeanR;
-              tplFullVarSum += db * db + dg * dg + dr * dr;
-            }
-            double tplFullNorm = sqrt(tplFullVarSum);
-            if (tplFullNorm < 1.0) tplFullNorm = 1.0;
+            // 区域金字塔按需构建：模板够大时先在缩小的层级上粗搜，省掉大量无谓位置
+            auto regionAt = [&](int level) -> const GrayRegion& {
+              auto it = levelCache.find(level);
+              if (it != levelCache.end()) return it->second;
+              const int dw = std::max(1, base.w / level);
+              const int dh = std::max(1, base.h / level);
+              auto px = _resampleGray(base.px, base.w, base.h, dw, dh);
+              return levelCache.emplace(level, _makeGrayRegion(std::move(px), dw, dh)).first->second;
+            };
 
-            // Coarse search parameters
-            int coarseStep = 4;
-            if (searchW * searchH > 1000000) coarseStep = 8;
-            int sampleStep = 4;
-            if (tplW * tplH < 5000) sampleStep = 2;
-            if (tplW * tplH < 1000) sampleStep = 1;
+            const double minTplDim = static_cast<double>(std::min(tplW0, tplH0));
+            auto levelFor = [minTplDim](double s) -> int {
+              const double d = minTplDim * s;
+              if (d >= 48.0) return 4;
+              if (d >= 24.0) return 2;
+              return 1;
+            };
 
-            // Pre-compute sampled template norm (for coarse phase)
-            // This is critical: must use same sampled pixels as coarse NCC
-            double tplSampledVarSum = 0;
-            int sampledCount = 0;
-            for (int ty = 0; ty < tplH; ty += sampleStep) {
-              for (int tx = 0; tx < tplW; tx += sampleStep) {
-                int tIdx = (ty * tplW + tx) * 4;
-                if (tIdx + 3 >= (int)tplData.size()) continue;
-                double db = tplData[tIdx] - tplMeanB;
-                double dg = tplData[tIdx + 1] - tplMeanG;
-                double dr = tplData[tIdx + 2] - tplMeanR;
-                tplSampledVarSum += db * db + dg * dg + dr * dr;
-                sampledCount++;
-              }
-            }
-            double tplSampledNorm = sqrt(tplSampledVarSum);
-            if (tplSampledNorm < 1.0) tplSampledNorm = 1.0;
+            for (double scale : scales) {
+              if (!(scale > 0.0)) continue;
+              const int level = levelFor(scale);
+              const GrayRegion& reg = regionAt(level);
 
-            double coarseThreshold = std::max(threshold - 0.2, 0.3);
+              const int coarseW = static_cast<int>(std::lround(tplW0 * scale / level));
+              const int coarseH = static_cast<int>(std::lround(tplH0 * scale / level));
+              if (coarseW < 2 || coarseH < 2 || coarseW > reg.w || coarseH > reg.h) continue;
 
-            struct CoarseMatch { int sx; int sy; double score; };
-            std::vector<CoarseMatch> candidates;
+              const GrayTemplate coarseTpl = (coarseW == tplW0 && coarseH == tplH0)
+                  ? _makeGrayTemplate(tplGray0, tplW0, tplH0)
+                  : _makeGrayTemplate(_resampleGray(tplGray0, tplW0, tplH0, coarseW, coarseH), coarseW, coarseH);
 
-            // Phase 1: Coarse search with sampled NCC
-            for (int sy = 0; sy < searchH; sy += coarseStep) {
-              for (int sx = 0; sx < searchW; sx += coarseStep) {
-                // Compute region mean over sampled pixels
-                double regSumB = 0, regSumG = 0, regSumR = 0;
-                int sCount = 0;
-                for (int ty = 0; ty < tplH; ty += sampleStep) {
-                  for (int tx = 0; tx < tplW; tx += sampleStep) {
-                    int rIdx = ((sy + ty) * regionW + (sx + tx)) * 4;
-                    if (rIdx + 3 >= (int)regionPixels.size()) continue;
-                    regSumB += regionPixels[rIdx];
-                    regSumG += regionPixels[rIdx + 1];
-                    regSumR += regionPixels[rIdx + 2];
-                    sCount++;
+              const int searchW = reg.w - coarseW + 1;
+              const int searchH = reg.h - coarseH + 1;
+              if (searchW <= 0 || searchH <= 0) continue;
+
+              int coarseStep = 4;
+              if (static_cast<int64_t>(searchW) * searchH > 1000000) coarseStep = 8;
+              const double coarseThreshold = std::max(threshold - 0.15, 0.3);
+
+              struct CoarseHit { int sx; int sy; double score; };
+              const int rows = (searchH + coarseStep - 1) / coarseStep;
+              std::vector<std::vector<CoarseHit>> hits(8);
+
+              _parallelRows(rows, [&](int ti, int nThreads) {
+                auto& out = hits[static_cast<size_t>(ti)];
+                for (int r = ti; r < rows; r += nThreads) {
+                  const int sy = r * coarseStep;
+                  if (sy >= searchH) continue;
+                  for (int sx = 0; sx < searchW; sx += coarseStep) {
+                    const double ncc = _nccAt(reg, coarseTpl, sx, sy);
+                    if (ncc >= coarseThreshold) out.push_back({sx, sy, ncc});
                   }
                 }
-                if (sCount == 0) continue;
-                double regMeanB = regSumB / sCount;
-                double regMeanG = regSumG / sCount;
-                double regMeanR = regSumR / sCount;
+              });
 
-                // Compute NCC over sampled pixels
-                double nccNum = 0, regSampledVarSum = 0;
-                for (int ty = 0; ty < tplH; ty += sampleStep) {
-                  for (int tx = 0; tx < tplW; tx += sampleStep) {
-                    int rIdx = ((sy + ty) * regionW + (sx + tx)) * 4;
-                    int tIdx = (ty * tplW + tx) * 4;
-                    if (rIdx + 3 >= (int)regionPixels.size() || tIdx + 3 >= (int)tplData.size()) continue;
-                    double rdB = regionPixels[rIdx] - regMeanB;
-                    double rdG = regionPixels[rIdx + 1] - regMeanG;
-                    double rdR = regionPixels[rIdx + 2] - regMeanR;
-                    double tdB = tplData[tIdx] - tplMeanB;
-                    double tdG = tplData[tIdx + 1] - tplMeanG;
-                    double tdR = tplData[tIdx + 2] - tplMeanR;
-                    nccNum += rdB * tdB + rdG * tdG + rdR * tdR;
-                    regSampledVarSum += rdB * rdB + rdG * rdG + rdR * rdR;
-                  }
-                }
-                double regSampledNorm = sqrt(regSampledVarSum);
-                if (regSampledNorm < 1.0) regSampledNorm = 1.0;
+              std::vector<CoarseHit> candidates;
+              for (const auto& v : hits) candidates.insert(candidates.end(), v.begin(), v.end());
+              std::sort(candidates.begin(), candidates.end(),
+                        [](const CoarseHit& a, const CoarseHit& b) { return a.score > b.score; });
+              if (candidates.size() > 20) candidates.resize(20);
 
-                // Correct NCC: both numerator and denominator use same sampled pixels
-                double ncc = nccNum / (tplSampledNorm * regSampledNorm);
-                if (ncc > 1.0) ncc = 1.0;
-                if (ncc < -1.0) ncc = -1.0;
+              const int fineW = static_cast<int>(std::lround(tplW0 * scale));
+              const int fineH = static_cast<int>(std::lround(tplH0 * scale));
+              if (fineW < 1 || fineH < 1 || fineW > regionW || fineH > regionH) continue;
 
-                if (ncc > bestScore) {
-                  bestScore = ncc;
-                  bestX = regionX + sx;
-                  bestY = regionY + sy;
-                }
+              const GrayTemplate fineTpl = (fineW == tplW0 && fineH == tplH0)
+                  ? _makeGrayTemplate(tplGray0, tplW0, tplH0)
+                  : _makeGrayTemplate(_resampleGray(tplGray0, tplW0, tplH0, fineW, fineH), fineW, fineH);
 
-                if (ncc >= coarseThreshold) {
-                  candidates.push_back({sx, sy, ncc});
-                }
-              }
-            }
+              const int fineSearchW = base.w - fineW + 1;
+              const int fineSearchH = base.h - fineH + 1;
+              if (fineSearchW <= 0 || fineSearchH <= 0) continue;
 
-            OutputDebugStringA(("[findImage] coarse done: bestScore=" + std::to_string(bestScore) + " candidates=" + std::to_string(candidates.size()) + "\n").c_str());
-
-            // Phase 2: Refine top candidates with full-pixel NCC
-            std::sort(candidates.begin(), candidates.end(),
-              [](const CoarseMatch& a, const CoarseMatch& b) { return a.score > b.score; });
-            if (candidates.size() > 30) candidates.resize(30);
-
-            // Add neighbors
-            std::set<std::pair<int,int>> refineSet;
-            for (auto& c : candidates) {
-              for (int dy = -coarseStep; dy <= coarseStep; dy++) {
-                for (int dx = -coarseStep; dx <= coarseStep; dx++) {
-                  int nx = c.sx + dx;
-                  int ny = c.sy + dy;
-                  if (nx >= 0 && nx < searchW && ny >= 0 && ny < searchH) {
-                    refineSet.insert({nx, ny});
+              const int radius = std::min(coarseStep * level, 8);
+              std::set<std::pair<int, int>> fineSet;
+              for (const auto& c : candidates) {
+                const int cx = c.sx * level;
+                const int cy = c.sy * level;
+                for (int dy = -radius; dy <= radius; dy++) {
+                  const int ny = cy + dy;
+                  if (ny < 0 || ny >= fineSearchH) continue;
+                  for (int dx = -radius; dx <= radius; dx++) {
+                    const int nx = cx + dx;
+                    if (nx < 0 || nx >= fineSearchW) continue;
+                    fineSet.insert({nx, ny});
                   }
                 }
               }
-            }
 
-            double refineBestScore = -2;
-            int refineBestX = -1, refineBestY = -1;
-            for (auto& [sx, sy] : refineSet) {
-              double regSumB = 0, regSumG = 0, regSumR = 0;
-              for (int ty = 0; ty < tplH; ty++) {
-                for (int tx = 0; tx < tplW; tx++) {
-                  int rIdx = ((sy + ty) * regionW + (sx + tx)) * 4;
-                  if (rIdx + 3 >= (int)regionPixels.size()) continue;
-                  regSumB += regionPixels[rIdx];
-                  regSumG += regionPixels[rIdx + 1];
-                  regSumR += regionPixels[rIdx + 2];
+              std::vector<std::pair<int, int>> fineList(fineSet.begin(), fineSet.end());
+              std::vector<std::vector<MatchBox>> fineHits(8);
+              _parallelRows(static_cast<int>(fineList.size()), [&](int ti, int nThreads) {
+                auto& out = fineHits[static_cast<size_t>(ti)];
+                for (size_t i = static_cast<size_t>(ti); i < fineList.size(); i += static_cast<size_t>(nThreads)) {
+                  const auto& p = fineList[i];
+                  const double ncc = _nccAt(base, fineTpl, p.first, p.second);
+                  if (ncc >= threshold) {
+                    out.push_back({ncc, regionX + p.first, regionY + p.second, fineW, fineH});
+                  }
                 }
-              }
-              double regMeanB = regSumB / tplPixelCount;
-              double regMeanG = regSumG / tplPixelCount;
-              double regMeanR = regSumR / tplPixelCount;
-
-              double nccNum = 0, regFullVarSum = 0;
-              for (int ty = 0; ty < tplH; ty++) {
-                for (int tx = 0; tx < tplW; tx++) {
-                  int rIdx = ((sy + ty) * regionW + (sx + tx)) * 4;
-                  int tIdx = (ty * tplW + tx) * 4;
-                  if (rIdx + 3 >= (int)regionPixels.size() || tIdx + 3 >= (int)tplData.size()) continue;
-                  double rdB = regionPixels[rIdx] - regMeanB;
-                  double rdG = regionPixels[rIdx + 1] - regMeanG;
-                  double rdR = regionPixels[rIdx + 2] - regMeanR;
-                  double tdB = tplData[tIdx] - tplMeanB;
-                  double tdG = tplData[tIdx + 1] - tplMeanG;
-                  double tdR = tplData[tIdx + 2] - tplMeanR;
-                  nccNum += rdB * tdB + rdG * tdG + rdR * tdR;
-                  regFullVarSum += rdB * rdB + rdG * rdG + rdR * rdR;
-                }
-              }
-              double regFullNorm = sqrt(regFullVarSum);
-              if (regFullNorm < 1.0) regFullNorm = 1.0;
-              double ncc = nccNum / (tplFullNorm * regFullNorm);
-              if (ncc > 1.0) ncc = 1.0;
-
-              if (ncc > refineBestScore) {
-                refineBestScore = ncc;
-                refineBestX = regionX + sx;
-                refineBestY = regionY + sy;
-              }
+              });
+              for (const auto& v : fineHits) found.insert(found.end(), v.begin(), v.end());
             }
 
-            // Use the better of coarse and refine results
-            if (refineBestScore > bestScore) {
-              bestScore = refineBestScore;
-              bestX = refineBestX;
-              bestY = refineBestY;
+            // 跨尺度去重：按分数降序贪心保留，IoU 超阈值的丢弃
+            std::sort(found.begin(), found.end(),
+              [](const MatchBox& a, const MatchBox& b) { return a.score > b.score; });
+
+            std::vector<MatchBox> kept;
+            for (const auto& m : found) {
+              bool overlaps = false;
+              for (const auto& k : kept) {
+                int ix1 = std::max(m.x, k.x);
+                int iy1 = std::max(m.y, k.y);
+                int ix2 = std::min(m.x + m.w, k.x + k.w);
+                int iy2 = std::min(m.y + m.h, k.y + k.h);
+                int iw = ix2 - ix1;
+                int ih = iy2 - iy1;
+                if (iw <= 0 || ih <= 0) continue;
+                double inter = (double)iw * ih;
+                double uni = (double)m.w * m.h + (double)k.w * k.h - inter;
+                if (uni > 0 && inter / uni > 0.3) { overlaps = true; break; }
+              }
+              if (overlaps) continue;
+              kept.push_back(m);
+              if ((int)kept.size() >= maxResults) break;
             }
 
-            OutputDebugStringA(("[findImage] final: bestScore=" + std::to_string(bestScore) + " bestX=" + std::to_string(bestX) + " bestY=" + std::to_string(bestY) + "\n").c_str());
+            OutputDebugStringA(("[findImage] final: matches=" + std::to_string(kept.size()) + "\n").c_str());
+
+            {
+              std::lock_guard<std::mutex> lock(g_frame_cache_mutex);
+              g_frame_cache.valid = true;
+              g_frame_cache.regionHash = regionHash;
+              g_frame_cache.tplHash = tplHash;
+              g_frame_cache.regionX = regionX;
+              g_frame_cache.regionY = regionY;
+              g_frame_cache.regionW = regionW;
+              g_frame_cache.regionH = regionH;
+              g_frame_cache.threshold = threshold;
+              g_frame_cache.maxResults = maxResults;
+              g_frame_cache.scales = scales;
+              g_frame_cache.matches = kept;
+            }
 
             // Post result back to main thread via Windows message
             {
               FindImageResultData data;
               data.result_ptr = result_ptr;
-              data.bestScore = bestScore;
-              data.bestX = bestX;
-              data.bestY = bestY;
-              data.tplW = tplW;
-              data.tplH = tplH;
+              data.bestScore = kept.empty() ? -2.0 : kept.front().score;
+              data.bestX = kept.empty() ? -1 : kept.front().x;
+              data.bestY = kept.empty() ? -1 : kept.front().y;
+              data.tplW = kept.empty() ? tplW0 : kept.front().w;
+              data.tplH = kept.empty() ? tplH0 : kept.front().h;
+              data.matches = std::move(kept);
               std::lock_guard<std::mutex> lock(g_findimage_mutex);
-              g_findimage_results[resultId] = data;
+              g_findimage_results[resultId] = std::move(data);
             }
             PostMessage(hwnd, g_findimage_result_msg, (WPARAM)resultId, 0);
+          }).detach();
+        } else if (call.method_name() == "dumpElements") {
+          // Args: [maxDepth, maxElements, rootHwnd]
+          const auto* args = std::get_if<flutter::EncodableList>(call.arguments());
+          int maxDepth = 6;
+          int maxElements = 400;
+          int64_t rootHwnd = 0;
+          if (args) {
+            if (args->size() >= 1) maxDepth = GetInt(args->at(0));
+            if (args->size() >= 2) maxElements = GetInt(args->at(1));
+            if (args->size() >= 3) rootHwnd = GetInt64(args->at(2));
+          }
+          if (maxDepth < 1) maxDepth = 1;
+          if (maxDepth > 20) maxDepth = 20;
+          if (maxElements < 1) maxElements = 1;
+          if (maxElements > 4000) maxElements = 4000;
+
+          UINT elemDpi = GetDpiForWindow(nullptr);
+          if (elemDpi == 0) elemDpi = 96;
+          const double elemDpiScale = elemDpi / 96.0;
+
+          auto result_ptr = result.release();
+          const int elemResultId = g_elem_next_id.fetch_add(1);
+          HWND elemHwnd = GetHandle();
+          std::thread([result_ptr, maxDepth, maxElements, rootHwnd, elemDpiScale, elemResultId, elemHwnd]() {
+            CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+            ElementDumpResult data;
+            data.result_ptr = std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>(result_ptr);
+
+            IUIAutomation* automation = nullptr;
+            HRESULT hr = CoCreateInstance(__uuidof(CUIAutomation), nullptr, CLSCTX_INPROC_SERVER,
+                                          __uuidof(IUIAutomation), reinterpret_cast<void**>(&automation));
+            if (FAILED(hr) || !automation) {
+              data.error = "UI Automation 初始化失败";
+            } else {
+              IUIAutomationElement* root = nullptr;
+              if (rootHwnd != 0) {
+                automation->ElementFromHandle(reinterpret_cast<UIA_HWND>(static_cast<INT_PTR>(rootHwnd)), &root);
+              } else {
+                automation->GetRootElement(&root);
+              }
+              IUIAutomationTreeWalker* walker = nullptr;
+              automation->get_ControlViewWalker(&walker);
+              if (!root) {
+                data.error = "找不到根元素";
+              } else if (!walker) {
+                data.error = "控件树遍历器不可用";
+              } else {
+                ElementCollector collector;
+                collector.walker = walker;
+                collector.maxDepth = maxDepth;
+                collector.maxElements = maxElements;
+                collector.dpiScale = elemDpiScale;
+                collector.walk(root, 0);
+                data.elements = std::move(collector.out);
+                data.truncated = collector.truncated;
+              }
+              if (walker) walker->Release();
+              if (root) root->Release();
+              automation->Release();
+            }
+            CoUninitialize();
+
+            {
+              std::lock_guard<std::mutex> lock(g_elem_mutex);
+              g_elem_results[elemResultId] = std::move(data);
+            }
+            PostMessage(elemHwnd, g_elem_result_msg, (WPARAM)elemResultId, 0);
+          }).detach();
+        } else if (call.method_name() == "capturePng" || call.method_name() == "captureAnnotatedPng") {
+          // Args: [x, y, w, h] 或 [x, y, w, h, marks, maxWidth]
+          const bool annotated = call.method_name() == "captureAnnotatedPng";
+          const auto* args = std::get_if<flutter::EncodableList>(call.arguments());
+          if (!args || args->size() < 4) {
+            result->Error("INVALID_ARGS", annotated ? "Expected [x, y, w, h, marks, maxWidth?]" : "Expected [x, y, w, h, maxWidth?]");
+            return;
+          }
+          const int pngX = GetInt(args->at(0));
+          const int pngY = GetInt(args->at(1));
+          const int pngW = GetInt(args->at(2));
+          const int pngH = GetInt(args->at(3));
+          if (pngW <= 0 || pngH <= 0) {
+            result->Error("INVALID_ARGS", "Invalid region dimensions");
+            return;
+          }
+
+          std::vector<MarkRect> marks;
+          int maxWidth = 0;
+          if (annotated) {
+            if (args->size() >= 5) {
+              if (const auto* list = std::get_if<flutter::EncodableList>(&args->at(4))) {
+                for (const auto& item : *list) {
+                  const auto* m = std::get_if<flutter::EncodableMap>(&item);
+                  if (!m) continue;
+                  MarkRect mk;
+                  auto getI = [&](const char* key) -> int {
+                    auto it = m->find(flutter::EncodableValue(key));
+                    return it == m->end() ? 0 : GetInt(it->second);
+                  };
+                  mk.x = getI("x");
+                  mk.y = getI("y");
+                  mk.w = getI("width");
+                  mk.h = getI("height");
+                  auto it = m->find(flutter::EncodableValue("label"));
+                  if (it != m->end()) {
+                    if (const auto* s = std::get_if<std::string>(&it->second)) mk.label = _utf8ToWide(*s);
+                  }
+                  marks.push_back(std::move(mk));
+                }
+              }
+            }
+            if (args->size() >= 6) maxWidth = GetInt(args->at(5));
+          } else if (args->size() >= 5) {
+            maxWidth = GetInt(args->at(4));
+          }
+          if (maxWidth < 0) maxWidth = 0;
+          if (maxWidth > 8192) maxWidth = 8192;
+
+          const int outW = (maxWidth > 0 && maxWidth < pngW) ? maxWidth : pngW;
+          const int outH = (outW == pngW) ? pngH : static_cast<int>(std::lround(pngH * (double)outW / pngW));
+          const double pngScale = (double)outW / pngW;
+
+          auto result_ptr = result.release();
+          std::thread([result_ptr, pngX, pngY, pngW, pngH, outW, outH, pngScale, marks=std::move(marks)]() {
+            auto bgra = _captureAnnotatedBgra(pngX, pngY, pngW, pngH, outW, outH, marks, pngScale);
+            if (bgra.empty()) {
+              result_ptr->Error("CAPTURE_FAILED", "屏幕捕获失败");
+              delete result_ptr;
+              return;
+            }
+            auto png = _encodePngFromBgra(std::move(bgra), outW, outH);
+            if (png.empty()) {
+              result_ptr->Error("ENCODE_FAILED", "PNG 编码失败");
+              delete result_ptr;
+              return;
+            }
+            flutter::EncodableMap payload;
+            payload[flutter::EncodableValue("bytes")] = flutter::EncodableValue(png);
+            payload[flutter::EncodableValue("width")] = flutter::EncodableValue(outW);
+            payload[flutter::EncodableValue("height")] = flutter::EncodableValue(outH);
+            payload[flutter::EncodableValue("scale")] = flutter::EncodableValue(pngScale);
+            result_ptr->Success(flutter::EncodableValue(payload));
+            delete result_ptr;
           }).detach();
         } else if (call.method_name() == "ocrRegion") {
           // OCR a screen region using Windows.Media.Ocr (C++/WinRT)
@@ -3290,6 +3951,28 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     return 0;
   }
 
+  if (g_elem_result_msg != 0 && message == g_elem_result_msg) {
+    int id = (int)wparam;
+    ElementDumpResult data;
+    {
+      std::lock_guard<std::mutex> lock(g_elem_mutex);
+      auto it = g_elem_results.find(id);
+      if (it == g_elem_results.end()) return 0;
+      data = std::move(it->second);
+      g_elem_results.erase(it);
+    }
+    if (!data.error.empty()) {
+      data.result_ptr->Error("UIA_FAILED", data.error);
+      return 0;
+    }
+    flutter::EncodableMap payload;
+    payload[flutter::EncodableValue("elements")] = flutter::EncodableValue(data.elements);
+    payload[flutter::EncodableValue("count")] = flutter::EncodableValue(static_cast<int>(data.elements.size()));
+    payload[flutter::EncodableValue("truncated")] = flutter::EncodableValue(data.truncated);
+    data.result_ptr->Success(flutter::EncodableValue(payload));
+    return 0;
+  }
+
   if (g_findimage_result_msg != 0 && message == g_findimage_result_msg) {
     int id = (int)wparam;
     FindImageResultData data;
@@ -3300,17 +3983,18 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
       data = it->second;
       g_findimage_results.erase(it);
     }
-    // Always return best match with score so Dart can log it
-    flutter::EncodableMap match;
-    match[flutter::EncodableValue("x")] = flutter::EncodableValue(data.bestX);
-    match[flutter::EncodableValue("y")] = flutter::EncodableValue(data.bestY);
-    match[flutter::EncodableValue("width")] = flutter::EncodableValue(data.tplW);
-    match[flutter::EncodableValue("height")] = flutter::EncodableValue(data.tplH);
-    match[flutter::EncodableValue("score")] = flutter::EncodableValue(data.bestScore);
-    match[flutter::EncodableValue("matched")] = flutter::EncodableValue(data.bestX >= 0 && data.bestScore >= 0.3);
     flutter::EncodableList matches;
-    matches.push_back(flutter::EncodableValue(match));
-    OutputDebugStringA(("[findImage] main thread callback: bestScore=" + std::to_string(data.bestScore) + " bestX=" + std::to_string(data.bestX) + " bestY=" + std::to_string(data.bestY) + "\n").c_str());
+    for (const auto& box : data.matches) {
+      flutter::EncodableMap m;
+      m[flutter::EncodableValue("x")] = flutter::EncodableValue(box.x);
+      m[flutter::EncodableValue("y")] = flutter::EncodableValue(box.y);
+      m[flutter::EncodableValue("width")] = flutter::EncodableValue(box.w);
+      m[flutter::EncodableValue("height")] = flutter::EncodableValue(box.h);
+      m[flutter::EncodableValue("score")] = flutter::EncodableValue(box.score);
+      m[flutter::EncodableValue("matched")] = flutter::EncodableValue(true);
+      matches.push_back(flutter::EncodableValue(m));
+    }
+    OutputDebugStringA(("[findImage] main thread callback: matches=" + std::to_string(data.matches.size()) + "\n").c_str());
     data.result_ptr->Success(flutter::EncodableValue(matches));
     delete data.result_ptr;
     return 0;

@@ -34,6 +34,19 @@
 - **插件 SDK** — 完整 C API 头文件 + 项目模板，快速开发原生插件
 - 详见 [插件开发文档](docs/PLUGIN_DEV.md)
 
+### 内置 AI 模型
+- **随安装包分发，零下载** — ONNX Runtime 1.21.0、YOLOX-Nano 目标检测、PP-OCRv4 中英文识别，共约 30.9 MB
+- **全 MIT / Apache-2.0** — 避开了 AGPL-3.0 的 YOLO11n，闭源分发无许可风险
+- **推理全在 C++** — Dart 只做 FFI 调用，检测与 OCR 共用一份 ONNX Runtime，两个引擎可在同一进程内共存
+- **可选 OCR 引擎** — 默认用系统 Windows OCR，可在「图像识别 → 高级模型」切到 RapidOCR 拿到逐行坐标
+- 详见 [vendor 说明](plugins/ai_tracker/vendor/README.md)
+
+### 外部接口
+- **MCP + REST 共用一套能力注册表** — 53 个能力，AI 客户端用 MCP 直接接入，脚本用 REST / OpenAPI
+- **覆盖六大类** — 连点控制与参数配置、鼠标键盘注入、宏录制回放与增删改查、找图/OCR/取色/截图、定时任务、配置档案与脚本执行
+- **局域网 + 令牌鉴权** — 绑定 `0.0.0.0`，所有请求需携带令牌，四种传入方式
+- 详见 [外部接口文档](docs/外部接口.md)
+
 ### 其他
 - **悬浮窗** — 迷你控制面板，可拖拽，屏幕边缘自动收起/弹出
 - **后台执行** — 向后台窗口发送点击指令（Windows）
@@ -121,6 +134,14 @@ lib/
 │   ├── app_state.dart           # PC 端状态（调度走共享 ScheduleController）
 │   ├── mobile_app_state.dart    # 移动端状态（调度走共享 ScheduleController）
 │   ├── schedule_controller.dart # 定时任务调度器（PC / 移动共用，可注入时钟）
+│   ├── api/                     # 外部接口（MCP + REST 共用一份能力注册表）
+│   │   ├── api_action.dart      # 能力定义与注册表（含 JSON Schema）
+│   │   ├── api_schema.dart      # 参数宽容转换 / 必填校验 / schema 校验
+│   │   ├── api_capabilities.dart # 全部能力实现（连点 / 宏 / 视觉 / 定时 / 档案 / 脚本）
+│   │   ├── api_protocol.dart    # MCP JSON-RPC 与 REST 调用处理
+│   │   ├── api_openapi.dart     # OpenAPI 3.1 文档生成
+│   │   ├── api_token.dart       # 访问令牌生成 / 持久化 / 校验
+│   │   └── api_server.dart      # HTTP 服务（鉴权 / 路由 / CORS）
 │   ├── plugin_store.dart        # 插件商店（远程索引 / 下载 / SHA256 校验）
 │   ├── plugin/                  # 插件系统核心
 │   │   ├── plugin_manager.dart  # 安装 / 注册 / 激活
@@ -181,6 +202,12 @@ flutter test             # 运行 test/ 下的单元测试
 
 CI 在 push / PR 到 main 时自动跑 `flutter analyze` 与 `flutter test`，
 详见 `.github/workflows/ci.yml`。
+
+改动 `lib/services/api/api_capabilities.dart` 后，重新生成外部接口文档：
+
+```bash
+flutter test tool/gen_api_docs_test.dart   # 输出 docs/外部接口.md
+```
 
 ## 许可
 

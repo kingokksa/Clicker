@@ -9,6 +9,7 @@ import 'plugins/template_match_plugin.dart';
 import 'plugins/windows_ocr_plugin.dart';
 import 'plugins/android_ocr_plugin.dart';
 import 'plugins/yolo_detect_plugin.dart';
+import 'plugins/rapid_ocr_plugin.dart';
 
 class VisionPluginManager {
   final Map<String, VisionPlugin> _plugins = {};
@@ -31,6 +32,13 @@ class VisionPluginManager {
   /// Get the first plugin with a specific capability (prefers available, but returns registered if none available)
   /// Non-builtin plugins (e.g. PaddleOCR) are preferred over builtin ones
   VisionPlugin? getPluginForCapability(VisionCapability cap) {
+    final preferred = _preferredId == null ? null : _plugins[_preferredId!];
+    if (preferred != null &&
+        preferred.enabled &&
+        preferred.isAvailable &&
+        preferred.info.capabilities.contains(cap)) {
+      return preferred;
+    }
     VisionPlugin? builtin;
     VisionPlugin? builtinAvailable;
     VisionPlugin? external;
@@ -52,6 +60,15 @@ class VisionPluginManager {
     }
     // Prefer available plugins, fall back to registered (can be initialized later)
     return externalAvailable ?? builtinAvailable ?? external ?? builtin;
+  }
+
+  String? _preferredId;
+
+  /// 用户显式选择的插件 id（同一能力下有多个引擎时用于切换）
+  String? get preferredId => _preferredId;
+
+  void setPreferred(String? id) {
+    _preferredId = id;
   }
 
   bool _builtinRegistered = false;
@@ -132,6 +149,7 @@ class VisionPluginManager {
     await mgr.registerPlugin(TemplateMatchPlugin());
     if (Platform.isWindows) {
       await mgr.registerPlugin(WindowsOcrPlugin());
+      await mgr.registerPlugin(RapidOcrPlugin());
       // await mgr.registerPlugin(PaddleOcrPlugin()); // 暂时禁用，PaddlePaddle 3.x 与 PaddleOCR 不兼容
     }
     if (Platform.isWindows || Platform.isLinux) {

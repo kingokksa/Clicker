@@ -290,6 +290,9 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
               (e) => e.name == m['textMatchMode'], orElse: () => _TextMatchMode.fuzzy),
             targetObjectClass: m['targetObjectClass'] ?? '',
             detectConfidence: (m['detectConfidence'] as num?)?.toDouble() ?? 0.5,
+            targetElementName: m['targetElementName'] ?? '',
+            targetElementId: m['targetElementId'] ?? '',
+            targetElementType: m['targetElementType'] ?? '',
             actionX: m['actionX'] ?? 0, actionY: m['actionY'] ?? 0,
             actionKey: m['actionKey'] ?? '',
             macroId: m['macroId'] ?? '',
@@ -386,6 +389,9 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
       'textMatchMode': t.textMatchMode.name,
       'targetObjectClass': t.targetObjectClass,
       'detectConfidence': t.detectConfidence,
+      'targetElementName': t.targetElementName,
+      'targetElementId': t.targetElementId,
+      'targetElementType': t.targetElementType,
       'actionX': t.actionX, 'actionY': t.actionY,
       'actionKey': t.actionKey, 'macroId': t.macroId, 'intervalMs': t.intervalMs,
       'showTrackingBox': t.showTrackingBox,
@@ -411,7 +417,8 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     final hasExpensiveTriggers = enabledTriggers.any((t) =>
       t.conditionType == _TriggerConditionType.imageMatch ||
       t.conditionType == _TriggerConditionType.textMatch ||
-      t.conditionType == _TriggerConditionType.objectDetect);
+      t.conditionType == _TriggerConditionType.objectDetect ||
+      t.conditionType == _TriggerConditionType.elementMatch);
     if (hasExpensiveTriggers && interval < 1000) interval = 1000;
 
     debugPrint('[条件触发] 启动检测: interval=${interval}ms, triggers=${enabledTriggers.length}');
@@ -600,6 +607,37 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
               }
             }
             break;
+          case _TriggerConditionType.elementMatch:
+            if (_elementSummary(trigger) == '未设置') {
+              statusText = '未设置控件条件';
+            } else {
+              final el = await _vision.findElement(
+                name: trigger.targetElementName.isEmpty ? null : trigger.targetElementName,
+                automationId: trigger.targetElementId.isEmpty ? null : trigger.targetElementId,
+                controlType: trigger.targetElementType.isEmpty ? null : trigger.targetElementType,
+              );
+              conditionMet = el != null;
+              if (el != null) {
+                final label = el.name.isNotEmpty ? el.name : el.controlType;
+                statusText = '找到控件: $label';
+                _lastDetectionResults[trigger.id] = VisionMatchResult(
+                  x: el.x - trigger.x, y: el.y - trigger.y,
+                  width: el.width, height: el.height, score: 1.0, label: label,
+                );
+                if (trigger.showTrackingBox) {
+                  ScreenOverlayService.instance.showDetectionBoxes([{
+                    'x': el.x, 'y': el.y, 'w': el.width, 'h': el.height,
+                    'confidence': 1.0, 'class_name': label,
+                  }]);
+                }
+              } else {
+                statusText = '未找到控件';
+                if (trigger.showTrackingBox) {
+                  ScreenOverlayService.instance.hideDetectionBoxes();
+                }
+              }
+            }
+            break;
         }
       } catch (e) {
         statusText = '异常: $e';
@@ -771,11 +809,14 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
           _tabChip('条件触发', _selectedTab == 0, () => setState(() => _selectedTab = 0)),
           const SizedBox(width: 6),
           _tabChip('高级模型', _selectedTab == 1, () => setState(() => _selectedTab = 1)),
+          const SizedBox(width: 6),
+          _tabChip('控件查看', _selectedTab == 2, () => setState(() => _selectedTab = 2)),
         ]),
         const SizedBox(height: 16),
 
         if (_selectedTab == 0) ..._buildTriggers(isDark, state),
         if (_selectedTab == 1) const _AdvancedModelsTab(),
+        if (_selectedTab == 2) const _ElementInspectorTab(),
       ],
     );
   }
@@ -1083,6 +1124,16 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
                                   Text('${(t.detectConfidence * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
                                 ]),
                               ],
+                              if (t.conditionType == _TriggerConditionType.elementMatch) ...[
+                                const SizedBox(height: 4),
+                                Row(children: [
+                                  const Text('控件:', style: TextStyle(fontSize: 11)),
+                                  const SizedBox(width: 4),
+                                  Expanded(child: Text(_elementSummary(t),
+                                    style: const TextStyle(fontSize: 11, color: Color(0xFF7C4DFF)),
+                                    overflow: TextOverflow.ellipsis)),
+                                ]),
+                              ],
                               if (t.actionType == _TriggerActionType.click)
                                 Padding(padding: const EdgeInsets.only(top: 4), child: Text('→ 点击 (${t.actionX}, ${t.actionY})', style: TextStyle(fontSize: 11, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))))
                               else if (t.actionType == _TriggerActionType.clickTargetCenter)
@@ -1140,6 +1191,14 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     ];
   }
 
+  String _elementSummary(_TriggerEntry t) {
+    final parts = <String>[];
+    if (t.targetElementName.isNotEmpty) parts.add('名称="${t.targetElementName}"');
+    if (t.targetElementId.isNotEmpty) parts.add('ID="${t.targetElementId}"');
+    if (t.targetElementType.isNotEmpty) parts.add('类型=${t.targetElementType}');
+    return parts.isEmpty ? '未设置' : parts.join(' ');
+  }
+
   Color _conditionColor(_TriggerConditionType type) {
     switch (type) {
       case _TriggerConditionType.colorMatch: return const Color(0xFF00BCD4);
@@ -1148,6 +1207,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
       case _TriggerConditionType.imageMatch: return const Color(0xFF00E676);
       case _TriggerConditionType.textMatch: return const Color(0xFF448AFF);
       case _TriggerConditionType.objectDetect: return const Color(0xFFFF5252);
+      case _TriggerConditionType.elementMatch: return const Color(0xFF7C4DFF);
     }
   }
 
@@ -1159,6 +1219,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
       case _TriggerConditionType.imageMatch: return FluentIcons.image_pixel;
       case _TriggerConditionType.textMatch: return FluentIcons.font;
       case _TriggerConditionType.objectDetect: return FluentIcons.machine_learning;
+      case _TriggerConditionType.elementMatch: return FluentIcons.focus;
     }
   }
 
@@ -1303,6 +1364,10 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
 
   bool _onnxExists = false;
   bool _modelExists = false;
+  bool _bundledOrt = false;
+  bool _bundledDetector = false;
+  bool _bundledOcr = false;
+  String _ocrEngine = 'builtin_windows_ocr';
   // bool _paddleOcrExists = false;  // PaddleOCR 暂时禁用
 
   String _pluginDir = '';
@@ -1339,6 +1404,11 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
     return path;
   }
 
+  Future<String> _getBundledDir() async {
+    final exeDir = File(Platform.resolvedExecutable).parent.path;
+    return '$exeDir\\data\\plugins\\ai_tracker';
+  }
+
   bool _dllDeployed = false;
 
   Future<void> _checkDependencies() async {
@@ -1351,6 +1421,15 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
     _modelExists = await File('$dir\\models\\yolo11n.onnx').exists();
     // _paddleOcrExists = await _checkPaddleOcrInstalled();  // PaddleOCR 暂时禁用
     _dllDeployed = await _deployNativePlugin();
+
+    final bundled = await _getBundledDir();
+    _bundledOrt = await File('$bundled\\onnxruntime.dll').exists();
+    _bundledDetector = await File('$bundled\\models\\detector.onnx').exists();
+    _bundledOcr = await File('$bundled\\models\\ocr_det.onnx').exists() &&
+        await File('$bundled\\models\\ocr_rec.onnx').exists() &&
+        await File('$bundled\\models\\ocr_keys.txt').exists();
+
+    _ocrEngine = VisionPluginManager.instance.preferredId ?? 'builtin_windows_ocr';
 
     // 不自动下载，只检查状态，由用户手动触发下载
 
@@ -1851,17 +1930,23 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
             _buildDepCard(
               icon: FluentIcons.processing,
               name: 'ONNX Runtime v$_ortVersion',
-              desc: 'Microsoft 推理引擎 · YOLO目标检测必需 · ~200MB',
-              installed: _onnxExists,
+              desc: _bundledOrt
+                  ? 'Microsoft 推理引擎 · 已随安装包内置 · 12.4 MB'
+                  : 'Microsoft 推理引擎 · 目标检测与 RapidOCR 必需 · 下载约 200 MB',
+              installed: _bundledOrt || _onnxExists,
+              installedLabel: _bundledOrt ? '已内置' : null,
               isDark: isDark,
               accent: accent,
               onInstall: _downloading ? null : _downloadOnnxRuntime,
             ),
             _buildDepCard(
               icon: FluentIcons.machine_learning,
-              name: 'YOLO11n 模型',
-              desc: 'Ultralytics 目标检测模型 · 条件触发-目标检测必需 · ~6MB',
-              installed: _modelExists,
+              name: _bundledDetector ? 'YOLOX-Nano 检测模型' : 'YOLO11n 模型',
+              desc: _bundledDetector
+                  ? 'Apache-2.0 · 已随安装包内置 · 3.6 MB · 416×416 · COCO 80 类'
+                  : 'Ultralytics YOLO11n · AGPL-3.0 · 下载约 6 MB',
+              installed: _bundledDetector || _modelExists,
+              installedLabel: _bundledDetector ? '已内置' : null,
               isDark: isDark,
               accent: accent,
               onInstall: _downloading ? null : _downloadModel,
@@ -1911,6 +1996,28 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
             ),
           ],
         ]),
+
+        if (Platform.isWindows)
+          _buildSection('文字识别引擎', isDark, [
+            _buildEngineCard(
+              id: 'builtin_windows_ocr',
+              name: 'Windows OCR',
+              desc: '系统自带 · 无需额外文件 · 仅返回整段文本',
+              available: true,
+              isDark: isDark,
+              accent: accent,
+            ),
+            _buildEngineCard(
+              id: 'rapid_ocr',
+              name: 'RapidOCR (PP-OCRv4)',
+              desc: _bundledOcr
+                  ? 'Apache-2.0 · 已随安装包内置 · 15.2 MB · 支持逐行坐标与中英文混排'
+                  : 'PP-OCRv4 中英文识别 · 需要内置模型文件',
+              available: _bundledOcr,
+              isDark: isDark,
+              accent: accent,
+            ),
+          ]),
 
         Row(children: [
           FilledButton(
@@ -2005,6 +2112,75 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
     ]));
   }
 
+  Widget _buildEngineCard({
+    required String id,
+    required String name,
+    required String desc,
+    required bool available,
+    required bool isDark,
+    required Color accent,
+  }) {
+    final selected = _ocrEngine == id;
+    final cardBg = isDark ? const Color(0x80252540) : const Color(0x80F0F0FA);
+    final dimColor = isDark ? const Color(0xFF606080) : const Color(0xFFB0B0C0);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: MouseRegion(
+        cursor: available ? SystemMouseCursors.click : SystemMouseCursors.basic,
+        child: GestureDetector(
+          onTap: available ? () => _selectOcrEngine(id) : null,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: cardBg,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: selected ? accent : (isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)),
+                width: selected ? 1.5 : 1,
+              ),
+            ),
+            child: Row(children: [
+              Icon(
+                selected ? FluentIcons.radio_btn_on : FluentIcons.radio_btn_off,
+                size: 16,
+                color: available ? (selected ? accent : dimColor) : dimColor,
+              ),
+              const SizedBox(width: 10),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(name, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13,
+                  color: available ? null : dimColor)),
+                const SizedBox(height: 2),
+                Text(desc, style: TextStyle(fontSize: 11, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
+              ])),
+              if (!available)
+                Text('不可用', style: TextStyle(fontSize: 10, color: dimColor)),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _selectOcrEngine(String id) async {
+    if (_ocrEngine == id) return;
+    setState(() => _ocrEngine = id);
+
+    final mgr = VisionPluginManager.instance;
+    mgr.setPreferred(id == 'builtin_windows_ocr' ? null : id);
+    for (final p in mgr.plugins) {
+      if (p.info.capabilities.contains(VisionCapability.ocr)) {
+        p.enabled = p.info.id == id;
+      }
+    }
+    if (id == 'rapid_ocr') {
+      mgr.resetInitialized('rapid_ocr');
+      await mgr.ensureInitialized('rapid_ocr');
+    }
+    final plugin = mgr.getPlugin(id);
+    debugPrint('[图像识别] OCR引擎切换为 $id, available=${plugin?.isAvailable}');
+  }
+
   Widget _buildSection(String title, bool isDark, List<Widget> children) {
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Padding(padding: const EdgeInsets.only(bottom: 8), child: Row(children: [
@@ -2029,6 +2205,7 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
     required bool isDark,
     required Color accent,
     required VoidCallback? onInstall,
+    String? installedLabel,
   }) {
     final cardBg = isDark ? const Color(0x80252540) : const Color(0x80F0F0FA);
     final activeColor = installed ? accent : (isDark ? const Color(0xFF606080) : const Color(0xFFB0B0C0));
@@ -2065,7 +2242,7 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
                     : const Color(0x1FFF9800),
                   borderRadius: BorderRadius.circular(3),
                 ),
-                child: Text(installed ? '已安装' : '未安装',
+                child: Text(installedLabel ?? (installed ? '已安装' : '未安装'),
                   style: TextStyle(fontSize: 9, fontWeight: FontWeight.w600,
                     color: installed ? const Color(0xFF00E676) : const Color(0xFFFF9800))),
               ),
@@ -2091,9 +2268,244 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
   }
 }
 
+// ─── Element Inspector Tab ─────────────────────────────────
+
+class _ElementInspectorTab extends StatefulWidget {
+  const _ElementInspectorTab();
+
+  @override
+  State<_ElementInspectorTab> createState() => _ElementInspectorTabState();
+}
+
+class _ElementInspectorTabState extends State<_ElementInspectorTab> {
+  final VisionService _vision = VisionService.instance;
+  final TextEditingController _filterCtrl = TextEditingController();
+  ElementDump _dump = const ElementDump(elements: <UiElement>[]);
+  SetOfMarkResult? _mark;
+  bool _loading = false;
+  bool _onlyVisible = true;
+  String _filter = '';
+  String _error = '';
+  String _savedInfo = '';
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted) _refresh(); });
+  }
+
+  @override
+  void dispose() {
+    _filterCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _refresh() async {
+    setState(() { _loading = true; _error = ''; _savedInfo = ''; });
+    try {
+      final dump = await _vision.dumpElements(maxDepth: 8, maxElements: 600);
+      final mark = await _vision.setOfMark(maxDepth: 8, maxElements: 80);
+      if (!mounted) return;
+      setState(() {
+        _dump = dump;
+        _mark = mark;
+        _loading = false;
+        if (dump.hasError) {
+          _error = dump.error ?? '控件树读取失败';
+        } else if (mark == null) {
+          _error = '标注截图生成失败（可能不支持屏幕捕获）';
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() { _loading = false; _error = '$e'; });
+    }
+  }
+
+  Future<void> _savePng() async {
+    final mark = _mark;
+    if (mark == null) return;
+    try {
+      final dir = await AppPaths.getScreenshotsDir();
+      final ts = DateTime.now().toIso8601String().replaceAll(RegExp(r'[:.]'), '-');
+      final path = '$dir\\annotated_$ts.png';
+      await File(path).writeAsBytes(mark.png.bytes);
+      if (!mounted) return;
+      setState(() => _savedInfo = path);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = '保存失败: $e');
+    }
+  }
+
+  List<UiElement> get _filtered {
+    var list = _dump.elements;
+    if (_onlyVisible) {
+      list = list.where((e) => e.hasBounds && e.width > 0 && e.height > 0).toList();
+    }
+    final f = _filter.trim().toLowerCase();
+    if (f.isNotEmpty) {
+      list = list.where((e) =>
+          e.name.toLowerCase().contains(f) ||
+          e.automationId.toLowerCase().contains(f) ||
+          e.controlType.toLowerCase().contains(f) ||
+          e.className.toLowerCase().contains(f)).toList();
+    }
+    return list;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = FluentTheme.of(context).brightness == Brightness.dark;
+    final muted = isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A);
+    final list = _filtered;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        const Text('控件查看', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+        const SizedBox(width: 8),
+        Text('${list.length}/${_dump.elements.length} 个控件${_dump.truncated ? ' · 已截断' : ''}',
+            style: TextStyle(fontSize: 11, color: muted)),
+        const Spacer(),
+        SizedBox(width: 180, child: TextBox(
+          controller: _filterCtrl,
+          placeholder: '过滤名称 / ID / 类型',
+          onChanged: (v) => setState(() => _filter = v),
+        )),
+        const SizedBox(width: 8),
+        FilledButton(
+          onPressed: _loading ? null : _refresh,
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            if (_loading)
+              const Padding(padding: EdgeInsets.only(right: 6), child: SizedBox(width: 12, height: 12, child: ProgressRing(strokeWidth: 2)))
+            else
+              const Padding(padding: EdgeInsets.only(right: 6), child: Icon(FluentIcons.refresh, size: 12)),
+            const Text('刷新'),
+          ]),
+        ),
+      ]),
+      if (_error.isNotEmpty) ...[
+        const SizedBox(height: 8),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: const Color(0x1FFF5252),
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: const Color(0x4DFF5252)),
+          ),
+          child: Row(children: [
+            const Icon(FluentIcons.info, size: 12, color: Color(0xFFFF5252)),
+            const SizedBox(width: 6),
+            Expanded(child: Text(_error, style: const TextStyle(fontSize: 11, color: Color(0xFFFF5252)))),
+          ]),
+        ),
+      ],
+      const SizedBox(height: 10),
+      Expanded(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Expanded(flex: 3, child: _buildTree(isDark, muted, list)),
+        const SizedBox(width: 12),
+        Expanded(flex: 4, child: _buildMark(isDark, muted)),
+      ])),
+    ]);
+  }
+
+  Widget _buildTree(bool isDark, Color muted, List<UiElement> list) {
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF252540).withValues(alpha: 0.5) : const Color(0xFFF0F0FA).withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: isDark ? const Color(0xFF3A3A55) : const Color(0xFFE0E0E8)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
+          child: Row(children: [
+            const Text('控件树', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+            const Spacer(),
+            Checkbox(checked: _onlyVisible, onChanged: (v) => setState(() => _onlyVisible = v ?? true)),
+            const SizedBox(width: 4),
+            const Text('仅可见控件', style: TextStyle(fontSize: 11)),
+          ]),
+        ),
+        Expanded(child: list.isEmpty
+          ? Center(child: Text(_loading ? '读取中…' : '无匹配控件', style: TextStyle(fontSize: 12, color: muted)))
+          : ListView.builder(
+              padding: const EdgeInsets.fromLTRB(6, 0, 6, 8),
+              itemCount: list.length,
+              itemBuilder: (_, i) => _elementRow(muted, list[i]),
+            )),
+      ]),
+    );
+  }
+
+  Widget _elementRow(Color muted, UiElement el) {
+    final label = el.name.isNotEmpty ? el.name : (el.automationId.isNotEmpty ? el.automationId : el.className);
+    return Padding(
+      padding: EdgeInsets.only(left: 4.0 + el.depth * 10.0, top: 2, bottom: 2),
+      child: Row(children: [
+        Icon(FluentIcons.focus, size: 11, color: const Color(0xFF7C4DFF).withValues(alpha: 0.7)),
+        const SizedBox(width: 4),
+        Expanded(child: Text(label.isEmpty ? '(无名)' : label,
+          style: const TextStyle(fontSize: 11), overflow: TextOverflow.ellipsis)),
+        const SizedBox(width: 6),
+        Text(el.controlType, style: TextStyle(fontSize: 10, color: muted)),
+        const SizedBox(width: 6),
+        Text('${el.width}×${el.height}', style: TextStyle(fontSize: 10, color: muted)),
+      ]),
+    );
+  }
+
+  Widget _buildMark(bool isDark, Color muted) {
+    final mark = _mark;
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF252540).withValues(alpha: 0.5) : const Color(0xFFF0F0FA).withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: isDark ? const Color(0xFF3A3A55) : const Color(0xFFE0E0E8)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
+          child: Row(children: [
+            const Text('Set-of-Mark', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+            const SizedBox(width: 6),
+            if (mark != null)
+              Text('${mark.elements.length} 个编号${mark.truncated ? ' · 已截断' : ''}', style: TextStyle(fontSize: 11, color: muted)),
+            const Spacer(),
+            Button(
+              onPressed: mark == null ? null : _savePng,
+              child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(FluentIcons.save, size: 12),
+                SizedBox(width: 4),
+                Text('保存PNG', style: TextStyle(fontSize: 12)),
+              ]),
+            ),
+          ]),
+        ),
+        Expanded(child: Padding(
+          padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+          child: mark == null
+            ? Center(child: Text(_loading ? '截图中…' : '暂无标注截图', style: TextStyle(fontSize: 12, color: muted)))
+            : ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: Image.memory(mark.png.bytes, fit: BoxFit.contain, gaplessPlayback: true),
+              ),
+        )),
+        if (_savedInfo.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
+            child: Text('已保存: $_savedInfo',
+              style: const TextStyle(fontSize: 10, color: Color(0xFF00E676)),
+              overflow: TextOverflow.ellipsis),
+          ),
+      ]),
+    );
+  }
+}
+
 // ─── Data Classes ────────────────────────────────────────────
 
-enum _TriggerConditionType { colorMatch, colorChange, colorDisappear, imageMatch, textMatch, objectDetect }
+enum _TriggerConditionType { colorMatch, colorChange, colorDisappear, imageMatch, textMatch, objectDetect, elementMatch }
 extension on _TriggerConditionType {
   String get label {
     switch (this) {
@@ -2103,9 +2515,19 @@ extension on _TriggerConditionType {
       case _TriggerConditionType.imageMatch: return '图像匹配';
       case _TriggerConditionType.textMatch: return '文字匹配';
       case _TriggerConditionType.objectDetect: return '目标检测';
+      case _TriggerConditionType.elementMatch: return '控件匹配';
     }
   }
 }
+
+const List<String> _uiaControlTypes = [
+  '', 'Button', 'Calendar', 'CheckBox', 'ComboBox', 'Custom', 'DataGrid', 'DataItem',
+  'Document', 'Edit', 'Group', 'Header', 'HeaderItem', 'Hyperlink', 'Image', 'List',
+  'ListItem', 'Menu', 'MenuBar', 'MenuItem', 'Pane', 'ProgressBar', 'RadioButton',
+  'ScrollBar', 'Separator', 'Slider', 'Spinner', 'SplitButton', 'StatusBar', 'Tab',
+  'TabItem', 'Table', 'Text', 'Thumb', 'TitleBar', 'ToolBar', 'ToolTip', 'Tree',
+  'TreeItem', 'Window',
+];
 
 enum _TriggerActionType { click, clickTargetCenter, keyPress, startClicker, stopClicker, runMacro }
 extension on _TriggerActionType {
@@ -2157,6 +2579,9 @@ class _TriggerEntry {
   final _TextMatchMode textMatchMode;
   final String targetObjectClass;
   final double detectConfidence;
+  final String targetElementName;
+  final String targetElementId;
+  final String targetElementType;
   final int actionX, actionY;
   final String actionKey;
   final String macroId;
@@ -2172,6 +2597,9 @@ class _TriggerEntry {
     this.textMatchMode = _TextMatchMode.fuzzy,
     this.targetObjectClass = '',
     this.detectConfidence = 0.5,
+    this.targetElementName = '',
+    this.targetElementId = '',
+    this.targetElementType = '',
     this.actionX = 0, this.actionY = 0,
     this.actionKey = '', this.macroId = '',
     this.intervalMs = 500,
@@ -2191,6 +2619,9 @@ class _TriggerConfig {
   final _TextMatchMode textMatchMode;
   final String targetObjectClass;
   final double detectConfidence;
+  final String targetElementName;
+  final String targetElementId;
+  final String targetElementType;
   final int actionX, actionY;
   final String actionKey;
   final String macroId;
@@ -2204,6 +2635,9 @@ class _TriggerConfig {
     this.textMatchMode = _TextMatchMode.fuzzy,
     this.targetObjectClass = '',
     this.detectConfidence = 0.5,
+    this.targetElementName = '',
+    this.targetElementId = '',
+    this.targetElementType = '',
     this.actionX = 0, this.actionY = 0,
     this.actionKey = '', this.macroId = '',
     this.intervalMs = 500,
@@ -2250,6 +2684,9 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
   String _templateInfo = '';
   String _targetObjectClass = '';
   double _detectConfidence = 0.5;
+  String _targetElementName = '';
+  String _targetElementId = '';
+  String _targetElementType = '';
   bool _showTrackingBox = true;
 
   @override
@@ -2267,6 +2704,9 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
       _textMatchMode = t.textMatchMode;
       _targetObjectClass = t.targetObjectClass;
       _detectConfidence = t.detectConfidence;
+      _targetElementName = t.targetElementName;
+      _targetElementId = t.targetElementId;
+      _targetElementType = t.targetElementType;
       _actionX = t.actionX; _actionY = t.actionY;
       _actionKey = t.actionKey;
       _macroId = t.macroId;
@@ -2471,7 +2911,7 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
             Text('${(_detectConfidence * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
           ]),
           const SizedBox(height: 4),
-          const Text('需要先在「高级模型」中下载 ONNX Runtime 和 YOLO 模型', style: TextStyle(fontSize: 11, color: Color(0xFFFF9800))),
+          const Text('需要先安装 ONNX Runtime 与检测模型（安装包已内置，可在「高级模型」中检查）', style: TextStyle(fontSize: 11, color: Color(0xFFFF9800))),
           const SizedBox(height: 6),
           Row(children: [
             Checkbox(
@@ -2481,6 +2921,47 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
             const SizedBox(width: 4),
             const Text('显示追踪框', style: TextStyle(fontSize: 13)),
           ]),
+        ],
+
+        if (_conditionType == _TriggerConditionType.elementMatch) ...[
+          const SizedBox(height: 8),
+          const Text('控件名称:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
+          TextBox(placeholder: '包含匹配，留空表示不限', onChanged: (v) => _targetElementName = v),
+          const SizedBox(height: 6),
+          const Text('自动化 ID:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
+          TextBox(placeholder: '如 btnSave，留空表示不限', onChanged: (v) => _targetElementId = v),
+          const SizedBox(height: 6),
+          const Text('控件类型:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
+          ComboBox<String>(
+            value: _targetElementType,
+            items: _uiaControlTypes.map((e) => ComboBoxItem<String>(
+              value: e,
+              child: Text(e.isEmpty ? '不限' : e, style: const TextStyle(fontSize: 12)),
+            )).toList(),
+            onChanged: (v) => setState(() => _targetElementType = v ?? ''),
+            isExpanded: true,
+          ),
+          const SizedBox(height: 6),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: const Color(0x1F7C4DFF),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: const Color(0x4D7C4DFF)),
+            ),
+            child: const Row(children: [
+              Icon(FluentIcons.info, size: 12, color: Color(0xFF7C4DFF)),
+              SizedBox(width: 4),
+              Expanded(child: Text(
+                '走 Windows UI Automation，按屏幕全局查找，不使用上面的监控区域。三项至少填一项。',
+                style: TextStyle(fontSize: 10, color: Color(0xFF7C4DFF)),
+              )),
+            ]),
+          ),
         ],
 
         const SizedBox(height: 12),
@@ -2608,6 +3089,9 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
           textMatchMode: _textMatchMode,
           targetObjectClass: _targetObjectClass,
           detectConfidence: _detectConfidence,
+          targetElementName: _targetElementName,
+          targetElementId: _targetElementId,
+          targetElementType: _targetElementType,
           actionX: _actionX, actionY: _actionY,
           actionKey: _actionKey,
           macroId: _macroId,
