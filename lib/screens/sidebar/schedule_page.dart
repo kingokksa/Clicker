@@ -10,6 +10,7 @@ import 'package:fluent_ui/fluent_ui.dart';
 import 'package:provider/provider.dart';
 import '../../models/clicker_config.dart';
 import '../../services/app_state.dart';
+import '../../services/schedule_controller.dart';
 
 class SchedulePage extends StatelessWidget {
   const SchedulePage({super.key});
@@ -221,18 +222,8 @@ class _ScheduleCard extends StatelessWidget {
     child: Text(text, style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
   );
 
-  String _formatFireAt(int epochMs) {
-    if (epochMs <= 0) return '未布防';
-    final t = DateTime.fromMillisecondsSinceEpoch(epochMs);
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final day = DateTime(t.year, t.month, t.day);
-    final diff = day.difference(today).inDays;
-    final hm = '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
-    if (diff == 0) return '今天 $hm';
-    if (diff == 1) return '明天 $hm';
-    return '${t.month}-${t.day} $hm';
-  }
+  // 复用共享逻辑（移动端同一份实现），避免两端文案漂移。
+  String _formatFireAt(int epochMs) => ScheduleController.formatFireAt(epochMs);
 
   Widget _chip(BuildContext context, String label, bool selected, VoidCallback onTap) {
     final isDark = FluentTheme.of(context).brightness == Brightness.dark;

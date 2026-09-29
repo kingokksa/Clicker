@@ -89,6 +89,66 @@ class ClickService {
   int _lastMoveX = -1;
   int _lastMoveY = -1;
 
+  // 随机偏移原点（_anchor*）与上一拍实际落点（_lastLanding*）。
+  // 偏移必须始终围绕原点计算：若每拍都读一次光标，而上一拍的偏移已经把光标
+  // 挪走了，下一拍就会在「已偏移的位置」上再偏一次 —— 偏移逐拍累积，鼠标会
+  // 随机游走越跑越远。只有检测到光标被外部移动过才重新锚定。
+  int _anchorX = -1;
+  int _anchorY = -1;
+  int _lastLandingX = -1;
+  int _lastLandingY = -1;
+
+  /// 解析「跟随光标」模式下的随机偏移原点。
+  ///
+  /// 固定 / 拾取坐标模式不需要它：原点恒为配置坐标，本就不会漂移。
+  /// 跟随光标模式下原点在首拍锚定并复用；只有检测到光标被**外部**移动过
+  /// （读到的位置 != 上一拍的落点，说明用户或其它程序动过鼠标）才重新锚定。
+  /// 若每拍都以读到的光标为原点，而上一拍的偏移已经把光标挪走了，偏移就会
+  /// 逐拍叠加 —— 鼠标随机游走、越点越偏。
+  Future<void> _resolveAnchor() async {
+    if (!Platform.isWindows) return;
+    final pos = await _readCursorPosition();
+    if (pos == null) return;
+    final (cx, cy) = pos;
+    if (_anchorX < 0 || _anchorY < 0) {
+      // 首拍：锚定到当前光标
+      _anchorX = cx;
+      _anchorY = cy;
+    } else if (cx != _lastLandingX || cy != _lastLandingY) {
+      // 光标被外部移动过 — 跟随到新位置
+      _anchorX = cx;
+      _anchorY = cy;
+    }
+  }
+
+  Future<(int, int)?> _readCursorPosition() async {
+    try {
+      final pos = await _platformChannel.invokeMethod<Map>('getCursorPosition');
+      final x = pos?['x'] as int?;
+      final y = pos?['y'] as int?;
+      if (x == null || y == null) return null;
+      return (x, y);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 围绕 [x]/[y] 施加随机偏移，并把落点记入 [_lastLandingX]/[_lastLandingY]，
+  /// 供下一拍判断光标是否被外部移动过。偏移量恒在 [min, max] 内。
+  (int, int) _applyRandomOffset(int x, int y) {
+    final offsetMin = _config.randomOffsetMinPx;
+    final offsetMax = _config.randomOffsetMaxPx;
+    // 配置反了（max < min）时兜底，避免 nextInt 收到非正数抛异常
+    final range = (offsetMax - offsetMin + 1) > 0 ? offsetMax - offsetMin + 1 : 1;
+    final nx = x +
+        (offsetMin + _random.nextInt(range)) * (_random.nextBool() ? 1 : -1);
+    final ny = y +
+        (offsetMin + _random.nextInt(range)) * (_random.nextBool() ? 1 : -1);
+    _lastLandingX = nx;
+    _lastLandingY = ny;
+    return (nx, ny);
+  }
+
   // Native fast clicker channel
   static const _platformChannel = MethodChannel('com.clicker.pro/platform');
   bool _usingNativeClicker = false;
@@ -162,6 +222,11 @@ class ClickService {
     // 重新开始点击时重置贝塞尔移动缓存，确保目标点即使没变也会重新移动到位
     _lastMoveX = -1;
     _lastMoveY = -1;
+    // 随机偏移原点：每次启动重新锚定（跟随启动时的光标位置）
+    _anchorX = -1;
+    _anchorY = -1;
+    _lastLandingX = -1;
+    _lastLandingY = -1;
     // Clear any emergency stop flag from native layer
     floatingPanelPaused = false;
 
@@ -476,16 +541,15 @@ class ClickService {
       }
     }
 
-    // Apply random offset to point actions (tap/longPress only).
+    // 随机偏移（仅 tap / longPress）。触摸模式每拍都从配置或屏幕中心重新取原点，
+    // 本身不会累积漂移；这里复用同一个偏移实现以保证两端行为一致。
     if (_config.randomOffsetEnabled &&
         x >= 0 && y >= 0 &&
         (_config.touchAction == TouchAction.tap ||
             _config.touchAction == TouchAction.longPress)) {
-      final offsetMin = _config.randomOffsetMinPx;
-      final offsetMax = _config.randomOffsetMaxPx;
-      final range = offsetMax - offsetMin + 1;
-      x += offsetMin + _random.nextInt(range) * (_random.nextBool() ? 1 : -1);
-      y += offsetMin + _random.nextInt(range) * (_random.nextBool() ? 1 : -1);
+      final p = _applyRandomOffset(x, y);
+      x = p.$1;
+      y = p.$2;
     }
 
     switch (_config.touchAction) {
@@ -563,18 +627,11 @@ class ClickService {
         ? _config.fixedY
         : -1;
 
-    // In current-position mode with random offset enabled, resolve the real
-    // cursor position first so the offset can jitter around it. Without this,
-    // offset was silently skipped (x/y stay -1) in the default position mode.
-    if (x < 0 && y < 0 && _config.randomOffsetEnabled && Platform.isWindows) {
-      try {
-        final pos =
-            await _platformChannel.invokeMethod<Map>('getCursorPosition');
-        x = pos?['x'] as int? ?? -1;
-        y = pos?['y'] as int? ?? -1;
-      } catch (_) {
-        // Keep -1 → click at current position without offset (legacy behavior)
-      }
+    // 跟随光标模式 + 随机偏移：解析锚定原点（不直接读光标当原点，否则偏移逐拍累积）
+    if (x < 0 && y < 0 && _config.randomOffsetEnabled) {
+      await _resolveAnchor();
+      x = _anchorX;
+      y = _anchorY;
     }
 
     // 固定目标点（随机偏移之前），供贝塞尔移动使用
@@ -594,15 +651,11 @@ class ClickService {
       }
     }
 
-    // Apply random offset if enabled（点击瞬时的微调，不触发贝塞尔拖动）
+    // 应用随机偏移（点击瞬时的微调，不触发贝塞尔拖动）
     if (x >= 0 && y >= 0 && _config.randomOffsetEnabled) {
-      final offsetMin = _config.randomOffsetMinPx;
-      final offsetMax = _config.randomOffsetMaxPx;
-      final range = offsetMax - offsetMin + 1;
-      final offsetX = offsetMin + _random.nextInt(range) * (_random.nextBool() ? 1 : -1);
-      final offsetY = offsetMin + _random.nextInt(range) * (_random.nextBool() ? 1 : -1);
-      x += offsetX;
-      y += offsetY;
+      final p = _applyRandomOffset(x, y);
+      x = p.$1;
+      y = p.$2;
     }
 
     // mouseClick already handles SetCursorPos for fixed positions,
@@ -625,15 +678,11 @@ class ClickService {
         ? _config.fixedY
         : -1;
 
-    // Resolve live cursor position so random offset can jitter around it even
-    // in "follow mouse" mode (otherwise offset is silently skipped).
-    if (x < 0 && y < 0 && _config.randomOffsetEnabled && Platform.isWindows) {
-      try {
-        final pos =
-            await _platformChannel.invokeMethod<Map>('getCursorPosition');
-        x = pos?['x'] as int? ?? -1;
-        y = pos?['y'] as int? ?? -1;
-      } catch (_) {}
+    // 跟随光标模式 + 随机偏移：解析锚定原点（同 _performMouseClick，防逐拍累积）
+    if (x < 0 && y < 0 && _config.randomOffsetEnabled) {
+      await _resolveAnchor();
+      x = _anchorX;
+      y = _anchorY;
     }
 
     // 固定目标点（随机偏移之前）
@@ -652,11 +701,9 @@ class ClickService {
     }
 
     if (x >= 0 && y >= 0 && _config.randomOffsetEnabled) {
-      final offsetMin = _config.randomOffsetMinPx;
-      final offsetMax = _config.randomOffsetMaxPx;
-      final range = offsetMax - offsetMin + 1;
-      x += offsetMin + _random.nextInt(range) * (_random.nextBool() ? 1 : -1);
-      y += offsetMin + _random.nextInt(range) * (_random.nextBool() ? 1 : -1);
+      final p = _applyRandomOffset(x, y);
+      x = p.$1;
+      y = p.$2;
     }
 
     for (final item in _config.mouseSequence) {

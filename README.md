@@ -92,8 +92,7 @@ lib/
 │   ├── clicker/                 # 连点器页面
 │   ├── macro/                   # 宏录制页面
 │   ├── settings/                # 设置页面
-│   ├── mobile/                  # 移动端页面
-│   ├── sidebar/                 # 侧边栏页面
+│   ├── sidebar/                 # 侧边栏页面（PC）
 │   │   ├── image_recognition_page.dart    # 图像识别 + 条件触发
 │   │   ├── hold_trigger_page.dart         # 按键触发
 │   │   ├── plugin_page.dart               # 插件管理
@@ -102,7 +101,16 @@ lib/
 │   │   ├── humanize_page.dart             # 拟人化设置
 │   │   └── schedule_page.dart             # 定时任务
 │   ├── floating_window.dart     # 悬浮窗
-│   └── home_screen.dart         # 主界面
+│   ├── home_screen.dart         # 主界面（PC）
+│   └── mobile/                  # 移动端页面（Material）
+│       ├── mobile_home_screen.dart      # 底部导航容器
+│       ├── mobile_clicker_page.dart     # 连点
+│       ├── mobile_macro_page.dart       # 宏
+│       ├── mobile_hold_trigger_page.dart # 长按触发
+│       ├── mobile_schedule_page.dart    # 定时任务（与 PC 同逻辑）
+│       ├── mobile_humanize_page.dart    # 拟人模式（与 PC 同逻辑）
+│       ├── mobile_vision_page.dart      # 图像识别
+│       └── mobile_settings_page.dart    # 设置
 ├── services/
 │   ├── click_service.dart       # 点击引擎（定时循环 + Stopwatch 漂移补偿）
 │   ├── macro_service.dart       # 录制 / 回放引擎
@@ -110,6 +118,9 @@ lib/
 │   ├── storage_service.dart     # 配置持久化
 │   ├── local_storage.dart       # 轻量键值存储
 │   ├── app_paths.dart           # 数据 / 插件 / 临时目录
+│   ├── app_state.dart           # PC 端状态（调度走共享 ScheduleController）
+│   ├── mobile_app_state.dart    # 移动端状态（调度走共享 ScheduleController）
+│   ├── schedule_controller.dart # 定时任务调度器（PC / 移动共用，可注入时钟）
 │   ├── plugin_store.dart        # 插件商店（远程索引 / 下载 / SHA256 校验）
 │   ├── plugin/                  # 插件系统核心
 │   │   ├── plugin_manager.dart  # 安装 / 注册 / 激活

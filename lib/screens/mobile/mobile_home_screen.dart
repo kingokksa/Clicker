@@ -7,6 +7,8 @@ import '../../services/mobile_app_state.dart';
 import 'mobile_clicker_page.dart';
 import 'mobile_macro_page.dart';
 import 'mobile_hold_trigger_page.dart';
+import 'mobile_schedule_page.dart';
+import 'mobile_humanize_page.dart';
 import 'mobile_vision_page.dart';
 import 'mobile_settings_page.dart';
 
@@ -25,9 +27,14 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
     MobileClickerPage(),
     MobileMacroPage(),
     MobileHoldTriggerPage(),
+    const MobileSchedulePage(),
+    const MobileHumanizePage(),
     MobileVisionPage(key: _visionKey),
     MobileSettingsPage(),
   ];
+
+  /// 识别 tab 在底部导航中的下标 — 切到该页时重新检查无障碍服务状态。
+  static const int _visionTabIndex = 5;
 
   @override
   Widget build(BuildContext context) {
@@ -46,7 +53,7 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
           setState(() => _currentIndex = i);
           // Re-check the accessibility service each time the 识别 (vision) tab is
           // selected, so toggling it in Settings is reflected without an app restart.
-          if (i == 3) _visionKey.currentState?.checkAccessibility();
+          if (i == _visionTabIndex) _visionKey.currentState?.checkAccessibility();
         },
         backgroundColor: isDark ? const Color(0xFF1A1A2E) : Colors.white,
         indicatorColor: accent.withValues(alpha: 0.2),
@@ -66,6 +73,16 @@ class _MobileHomeScreenState extends State<MobileHomeScreen> {
             icon: Icon(Icons.back_hand_outlined, color: isDark ? Colors.grey : Colors.grey),
             selectedIcon: Icon(Icons.back_hand, color: accent),
             label: '长按',
+          ),
+          NavigationDestination(
+            icon: const Icon(Icons.schedule_outlined, color: Colors.grey),
+            selectedIcon: Icon(Icons.schedule, color: accent),
+            label: '定时',
+          ),
+          NavigationDestination(
+            icon: const Icon(Icons.people_outline, color: Colors.grey),
+            selectedIcon: Icon(Icons.people, color: accent),
+            label: '拟人',
           ),
           NavigationDestination(
             icon: Icon(Icons.center_focus_weak_outlined, color: isDark ? Colors.grey : Colors.grey),
