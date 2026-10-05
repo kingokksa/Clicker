@@ -404,6 +404,15 @@ static std::string _bstrToUtf8(BSTR b) {
   return out;
 }
 
+static std::string _wideToUtf8(const std::wstring& w) {
+  if (w.empty()) return std::string();
+  const int need = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
+  if (need <= 0) return std::string();
+  std::string out(static_cast<size_t>(need), '\0');
+  WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), out.data(), need, nullptr, nullptr);
+  return out;
+}
+
 static const char* _uiaControlTypeName(CONTROLTYPEID id) {
   switch (id) {
     case UIA_ButtonControlTypeId: return "Button";
@@ -1491,6 +1500,7 @@ bool FlutterWindow::OnCreate() {
   g_elem_result_msg = RegisterWindowMessageW(L"ClickerElementDumpResult");
 
   HWND hwnd = GetHandle();
+  DragAcceptFiles(hwnd, TRUE);
 
   // Extend DWM frame slightly to keep window shadow and rounded corners.
   // Do NOT use {-1,-1,-1,-1} — it breaks rendering with acrylic.
@@ -1615,6 +1625,117 @@ bool FlutterWindow::OnCreate() {
           } else {
             result->Error("FAILED", "GetCursorPos failed");
           }
+        } else if (call.method_name() == "getClipboardImage") {
+          if (!OpenClipboard(nullptr)) {
+            result->Error("CLIPBOARD_BUSY", "OpenClipboard failed");
+            return;
+          }
+
+          HANDLE hDrop = GetClipboardData(CF_HDROP);
+          if (hDrop) {
+            HDROP drop = static_cast<HDROP>(hDrop);
+            const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+            flutter::EncodableList paths;
+            for (UINT i = 0; i < count; ++i) {
+              const UINT len = DragQueryFileW(drop, i, nullptr, 0);
+              if (len == 0) continue;
+              std::wstring buf(len + 1, L'\0');
+              DragQueryFileW(drop, i, buf.data(), len + 1);
+              buf.resize(len);
+              paths.push_back(flutter::EncodableValue(_wideToUtf8(buf)));
+            }
+            CloseClipboard();
+            if (!paths.empty()) {
+              flutter::EncodableMap out;
+              out[flutter::EncodableValue("paths")] = flutter::EncodableValue(paths);
+              result->Success(flutter::EncodableValue(out));
+              return;
+            }
+          }
+
+          HANDLE hDib = GetClipboardData(CF_DIBV5);
+          if (!hDib) hDib = GetClipboardData(CF_DIB);
+          if (!hDib) {
+            CloseClipboard();
+            result->Error("NO_IMAGE", "clipboard has no image");
+            return;
+          }
+
+          const size_t totalBytes = GlobalSize(hDib);
+          const auto* src = static_cast<const uint8_t*>(GlobalLock(hDib));
+          if (!src || totalBytes < sizeof(BITMAPINFOHEADER)) {
+            if (src) GlobalUnlock(hDib);
+            CloseClipboard();
+            result->Error("LOCK_FAILED", "GlobalLock failed");
+            return;
+          }
+
+          const auto* bih = reinterpret_cast<const BITMAPINFOHEADER*>(src);
+          const int width = bih->biWidth;
+          const int height = bih->biHeight < 0 ? -bih->biHeight : bih->biHeight;
+          if (width <= 0 || height <= 0 || width > 16384 || height > 16384) {
+            GlobalUnlock(hDib);
+            CloseClipboard();
+            result->Error("INVALID_SIZE", "clipboard image size out of range");
+            return;
+          }
+
+          size_t headerBytes = static_cast<size_t>(bih->biSize);
+          if (bih->biBitCount <= 8) {
+            const size_t entries = bih->biClrUsed ? bih->biClrUsed : (static_cast<size_t>(1) << bih->biBitCount);
+            headerBytes += entries * 4;
+          } else if (bih->biCompression == BI_BITFIELDS && bih->biSize == sizeof(BITMAPINFOHEADER)) {
+            headerBytes += 12;
+          }
+          if (headerBytes >= totalBytes) {
+            GlobalUnlock(hDib);
+            CloseClipboard();
+            result->Error("INVALID_DIB", "clipboard DIB header out of range");
+            return;
+          }
+          const uint8_t* srcBits = src + headerBytes;
+
+          HDC hdc = GetDC(nullptr);
+          BITMAPINFO target = {};
+          target.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+          target.bmiHeader.biWidth = width;
+          target.bmiHeader.biHeight = height;
+          target.bmiHeader.biPlanes = 1;
+          target.bmiHeader.biBitCount = 32;
+          target.bmiHeader.biCompression = BI_RGB;
+
+          void* bits = nullptr;
+          HBITMAP hbm = CreateDIBSection(hdc, &target, DIB_RGB_COLORS, &bits, nullptr, 0);
+          int copied = 0;
+          if (hbm && bits) {
+            copied = SetDIBits(hdc, hbm, 0, height, srcBits, reinterpret_cast<const BITMAPINFO*>(src), DIB_RGB_COLORS);
+          }
+
+          std::vector<uint8_t> pixels;
+          if (copied != 0 && bits) {
+            const size_t stride = static_cast<size_t>(width) * 4;
+            const auto* p = static_cast<const uint8_t*>(bits);
+            pixels.resize(stride * height);
+            for (int y = 0; y < height; ++y) {
+              memcpy(pixels.data() + static_cast<size_t>(y) * stride, p + static_cast<size_t>(height - 1 - y) * stride, stride);
+            }
+          }
+
+          if (hbm) DeleteObject(hbm);
+          ReleaseDC(nullptr, hdc);
+          GlobalUnlock(hDib);
+          CloseClipboard();
+
+          if (pixels.empty()) {
+            result->Error("CONVERT_FAILED", "SetDIBits failed");
+            return;
+          }
+
+          flutter::EncodableMap out;
+          out[flutter::EncodableValue("width")] = flutter::EncodableValue(width);
+          out[flutter::EncodableValue("height")] = flutter::EncodableValue(height);
+          out[flutter::EncodableValue("pixels")] = flutter::EncodableValue(pixels);
+          result->Success(flutter::EncodableValue(out));
         } else if (call.method_name() == "getPixelColor") {
           const auto* args = std::get_if<flutter::EncodableList>(call.arguments());
           if (!args || args->size() < 2) {
@@ -3903,6 +4024,29 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  if (message == WM_DROPFILES) {
+    HDROP drop = reinterpret_cast<HDROP>(wparam);
+    const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+    flutter::EncodableList paths;
+    for (UINT i = 0; i < count; ++i) {
+      const UINT len = DragQueryFileW(drop, i, nullptr, 0);
+      if (len == 0) continue;
+      std::wstring buf(len + 1, L'\0');
+      DragQueryFileW(drop, i, buf.data(), len + 1);
+      buf.resize(len);
+      paths.push_back(flutter::EncodableValue(_wideToUtf8(buf)));
+    }
+    DragFinish(drop);
+    if (!paths.empty() && platform_channel_) {
+      platform_channel_->InvokeMethod(
+          "onFilesDropped",
+          std::make_unique<flutter::EncodableValue>(flutter::EncodableMap{
+              {flutter::EncodableValue("paths"), flutter::EncodableValue(paths)},
+          }));
+    }
+    return 0;
+  }
+
   // Handle system-level hotkey messages.
   if (message == WM_HOTKEY) {
     int id = static_cast<int>(wparam);

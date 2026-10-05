@@ -12,6 +12,7 @@ import '../../services/app_state.dart';
 import '../../services/macro_service.dart';
 import '../../services/screen_monitor_service.dart';
 import '../../services/vision_service.dart';
+import '../../services/image_import_service.dart';
 import '../../services/vision_plugin.dart';
 import '../../services/vision_plugin_manager.dart';
 import '../../services/platform/windows_input.dart';
@@ -748,12 +749,15 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
           _tabChip('高级模型', _selectedTab == 1, () => setState(() => _selectedTab = 1)),
           const SizedBox(width: 6),
           _tabChip('控件查看', _selectedTab == 2, () => setState(() => _selectedTab = 2)),
+          const SizedBox(width: 6),
+          _tabChip('图片测试', _selectedTab == 3, () => setState(() => _selectedTab = 3)),
         ]),
         const SizedBox(height: 16),
 
         if (_selectedTab == 0) ..._buildTriggers(isDark, state),
         if (_selectedTab == 1) const _AdvancedModelsTab(),
         if (_selectedTab == 2) const _ElementInspectorTab(),
+        if (_selectedTab == 3) const _ImageTestTab(),
       ],
     );
   }
@@ -869,11 +873,19 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
       ),
       const SizedBox(height: 10),
 
-      SizedBox(width: double.infinity, child: Button(onPressed: () => _addTrigger(isDark, state), child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-        Icon(FluentIcons.add, size: 14),
-        SizedBox(width: 6),
-        Text('添加触发条件'),
-      ]))),
+      Row(children: [
+        Expanded(child: Button(onPressed: () => _addTrigger(isDark, state), child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Icon(FluentIcons.add, size: 14),
+          SizedBox(width: 6),
+          Text('添加触发条件'),
+        ]))),
+        const SizedBox(width: 8),
+        Button(onPressed: () => _addTriggerFromImage(isDark, state), child: const Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(FluentIcons.image_pixel, size: 14),
+          SizedBox(width: 6),
+          Text('用图片定位'),
+        ])),
+      ]),
       const SizedBox(height: 10),
 
       if (_triggers.isEmpty)
@@ -1255,6 +1267,71 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     }
   }
 
+  void _addTriggerFromImage(bool isDark, AppState state) async {
+    final template = await ImageImportService.instance.fromFile();
+    if (template == null || !mounted) return;
+    final screen = await _vision.getScreenSize();
+    if (screen == null || !mounted) return;
+
+    var hits = await _vision.findImageAll(
+      regionX: 0, regionY: 0, regionW: screen.width, regionH: screen.height,
+      template: template, threshold: 0.8, maxResults: 1,
+    );
+    if (hits.isEmpty && mounted) {
+      hits = await _vision.findImageAll(
+        regionX: 0, regionY: 0, regionW: screen.width, regionH: screen.height,
+        template: template, threshold: 0.8, maxResults: 1,
+        scales: const [1.0, 1.25, 1.5, 2.0],
+      );
+    }
+    if (!mounted) return;
+
+    if (hits.isEmpty) {
+      await showDialog<void>(context: context, builder: (ctx) => ContentDialog(
+        title: const Text('没有找到'),
+        content: const Text('屏幕上没有找到与这张图片匹配的区域。请换一张更清晰、更独特的图片，或先让目标画面显示在屏幕上。'),
+        actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('好'))],
+      ));
+      return;
+    }
+
+    final hit = hits.first;
+    final result = await showDialog<_TriggerConfig>(context: context, builder: (ctx) => _AddTriggerDialog(
+      initialX: hit.x, initialY: hit.y,
+      initialW: hit.width, initialH: hit.height,
+      onPickActionPos: _startPick,
+      onCaptureTemplate: _captureTemplate,
+    ));
+    if (result != null && mounted) {
+      setState(() {
+        _triggers.add(_TriggerEntry(
+          id: DateTime.now().millisecondsSinceEpoch.toString(),
+          name: result.name,
+          conditionType: result.conditionType,
+          actionType: result.actionType,
+          x: result.x, y: result.y, w: result.w, h: result.h,
+          targetColor: result.targetColor,
+          templateData: result.templateData,
+          matchThreshold: result.matchThreshold,
+          targetText: result.targetText,
+          textMatchMode: result.textMatchMode,
+          targetObjectClass: result.targetObjectClass,
+          detectConfidence: result.detectConfidence,
+          targetElementName: result.targetElementName,
+          targetElementId: result.targetElementId,
+          targetElementType: result.targetElementType,
+          actionX: result.actionX, actionY: result.actionY,
+          actionKey: result.actionKey,
+          macroId: result.macroId,
+          intervalMs: result.intervalMs,
+          showTrackingBox: result.showTrackingBox,
+          enabled: true,
+        ));
+      });
+      _saveTriggers();
+      if (_triggerRunning) _startTriggerChecker();
+    }
+  }
 }
 
 class _AdvancedModelsTab extends StatefulWidget {
@@ -2320,6 +2397,303 @@ class _ElementInspectorTabState extends State<_ElementInspectorTab> {
 }
 
 
+class _TestBox {
+  final int x, y, width, height;
+  final double score;
+  final String label;
+  const _TestBox({required this.x, required this.y, required this.width, required this.height, this.score = 1.0, this.label = ''});
+}
+
+class _ImageTestTab extends StatefulWidget {
+  const _ImageTestTab();
+
+  @override
+  State<_ImageTestTab> createState() => _ImageTestTabState();
+}
+
+class _ImageTestTabState extends State<_ImageTestTab> {
+  final VisionService _vision = VisionService.instance;
+
+  TemplateData? _template;
+  int _operation = 0;
+  double _threshold = 0.8;
+  double _confidence = 0.5;
+  bool _busy = false;
+  String _status = '';
+  ScreenshotPng? _shot;
+  List<_TestBox> _boxes = const [];
+  List<OcrLine> _ocrLines = const [];
+  int _regionX = 0, _regionY = 0, _regionW = 0, _regionH = 0;
+  bool _hasRegion = false;
+
+  static const _operationNames = ['模板匹配', '文字识别', '目标检测'];
+
+  Future<void> _pickRegion() async {
+    final sel = await ScreenOverlayService.instance.startAreaSelect();
+    if (sel == null || !mounted) return;
+    final (x1, y1, x2, y2) = sel;
+    setState(() {
+      _regionX = x1;
+      _regionY = y1;
+      _regionW = (x2 - x1).abs();
+      _regionH = (y2 - y1).abs();
+      _hasRegion = _regionW > 0 && _regionH > 0;
+    });
+  }
+
+  Future<void> _run() async {
+    if (_busy) return;
+    final screen = await _vision.getScreenSize();
+    if (!mounted) return;
+    if (screen == null) {
+      setState(() => _status = '无法获取屏幕尺寸');
+      return;
+    }
+    final x = (_hasRegion ? _regionX : 0).clamp(0, screen.width - 1);
+    final y = (_hasRegion ? _regionY : 0).clamp(0, screen.height - 1);
+    final w = (_hasRegion ? _regionW : screen.width).clamp(1, screen.width - x);
+    final h = (_hasRegion ? _regionH : screen.height).clamp(1, screen.height - y);
+
+    setState(() {
+      _busy = true;
+      _status = '运行中...';
+      _boxes = const [];
+      _ocrLines = const [];
+    });
+
+    try {
+      if (_operation == 0) {
+        final tpl = _template;
+        if (tpl == null) {
+          setState(() => _status = '请先选择测试图片');
+          return;
+        }
+        final sw = Stopwatch()..start();
+        final hits = await _vision.findImageAll(
+          regionX: x, regionY: y, regionW: w, regionH: h,
+          template: tpl, threshold: _threshold, maxResults: 50,
+        );
+        sw.stop();
+        if (!mounted) return;
+        setState(() {
+          _boxes = hits.map((m) => _TestBox(
+            x: m.x - x, y: m.y - y, width: m.width, height: m.height,
+            score: m.score, label: '${(m.score * 100).toStringAsFixed(1)}%',
+          )).toList();
+          _status = hits.isEmpty
+              ? '未找到匹配 · ${sw.elapsedMilliseconds}ms'
+              : '找到 ${hits.length} 处 · ${sw.elapsedMilliseconds}ms';
+        });
+      } else if (_operation == 1) {
+        final sw = Stopwatch()..start();
+        final lines = await _vision.ocrLines(x: x, y: y, w: w, h: h);
+        sw.stop();
+        if (!mounted) return;
+        setState(() {
+          _ocrLines = lines;
+          _boxes = lines.map((l) => _TestBox(x: l.x, y: l.y, width: l.width, height: l.height, label: l.text)).toList();
+          _status = lines.isEmpty
+              ? '未识别到文字 · ${sw.elapsedMilliseconds}ms'
+              : '识别到 ${lines.length} 行 · ${sw.elapsedMilliseconds}ms';
+        });
+      } else {
+        final manager = VisionPluginManager.instance;
+        final detector = manager.getPluginForCapability(VisionCapability.objectDetect);
+        if (detector == null) {
+          setState(() => _status = '没有可用的目标检测插件');
+          return;
+        }
+        await manager.ensureInitialized(detector.info.id);
+        if (!detector.isAvailable) {
+          setState(() => _status = '检测插件不可用：${detector.info.name}');
+          return;
+        }
+        final sw = Stopwatch()..start();
+        final hits = await detector.detectObjects(
+          regionX: x, regionY: y, regionW: w, regionH: h, confidence: _confidence,
+        );
+        sw.stop();
+        if (!mounted) return;
+        setState(() {
+          _boxes = hits.map((m) => _TestBox(
+            x: m.x, y: m.y, width: m.width, height: m.height, score: m.score,
+            label: '${m.label == null || m.label!.isEmpty ? '' : '${m.label} '}${(m.score * 100).toStringAsFixed(1)}%',
+          )).toList();
+          _status = hits.isEmpty
+              ? '未检测到目标 · ${sw.elapsedMilliseconds}ms'
+              : '检测到 ${hits.length} 个目标 · ${sw.elapsedMilliseconds}ms';
+        });
+      }
+
+      final png = await _vision.capturePng(x: x, y: y, w: w, h: h);
+      if (mounted) setState(() => _shot = png);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Widget _card(bool isDark, Widget child) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF252538) : Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)),
+      ),
+      child: child,
+    );
+  }
+
+  Widget _chip(String label, bool selected, VoidCallback onTap) {
+    final isDark = FluentTheme.of(context).brightness == Brightness.dark;
+    final accent = FluentTheme.of(context).accentColor;
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: selected ? accent.withValues(alpha: 0.15) : Colors.transparent,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: selected ? accent : (isDark ? const Color(0xFF404060) : const Color(0xFFD0D0D8))),
+          ),
+          child: Text(label, style: TextStyle(
+            fontSize: 12, fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+            color: selected ? accent : (isDark ? const Color(0xFFC0C0D8) : const Color(0xFF5A5A70)),
+          )),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = FluentTheme.of(context).brightness == Brightness.dark;
+    return SingleChildScrollView(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _card(isDark, Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(FluentIcons.image_pixel, size: 16, color: Color(0xFF7C4DFF)),
+          const SizedBox(width: 8),
+          const Text('测试图片', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+          const SizedBox(width: 12),
+          if (_template != null) ...[
+            const Icon(FluentIcons.completed, size: 14, color: Color(0xFF00E676)),
+            const SizedBox(width: 4),
+            Text('${_template!.width}x${_template!.height}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+            const SizedBox(width: 8),
+            Button(onPressed: () => setState(() => _template = null), child: const Text('清除')),
+          ],
+        ]),
+        const SizedBox(height: 8),
+        _ImageSourceRow(onPicked: (t) => setState(() {
+          _template = t;
+          _operation = 0;
+        })),
+      ])),
+      const SizedBox(height: 10),
+      _card(isDark, Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Text('方式', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+          const SizedBox(width: 12),
+          for (var i = 0; i < _operationNames.length; i++) ...[
+            _chip(_operationNames[i], _operation == i, () => setState(() => _operation = i)),
+            const SizedBox(width: 6),
+          ],
+        ]),
+        if (_operation == 0) ...[
+          const SizedBox(height: 10),
+          Row(children: [
+            const SizedBox(width: 56, child: Text('阈值', style: TextStyle(fontSize: 12))),
+            Expanded(child: AppSlider(value: _threshold, min: 0.5, max: 0.99, divisions: 49, label: '${(_threshold * 100).toStringAsFixed(0)}%', onChanged: (v) => setState(() => _threshold = v))),
+            const SizedBox(width: 8),
+            Text('${(_threshold * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+          ]),
+        ],
+        if (_operation == 2) ...[
+          const SizedBox(height: 10),
+          Row(children: [
+            const SizedBox(width: 56, child: Text('置信度', style: TextStyle(fontSize: 12))),
+            Expanded(child: AppSlider(value: _confidence, min: 0.1, max: 0.95, divisions: 17, label: '${(_confidence * 100).toStringAsFixed(0)}%', onChanged: (v) => setState(() => _confidence = v))),
+            const SizedBox(width: 8),
+            Text('${(_confidence * 100).toStringAsFixed(0)}%', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+          ]),
+        ],
+        const SizedBox(height: 10),
+        Row(children: [
+          Button(onPressed: _busy ? null : _pickRegion, child: const Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(FluentIcons.crop, size: 13),
+            SizedBox(width: 6),
+            Text('限定区域'),
+          ])),
+          if (_hasRegion) ...[
+            const SizedBox(width: 8),
+            Text('$_regionX,$_regionY  $_regionW×$_regionH', style: const TextStyle(fontSize: 11)),
+            const SizedBox(width: 8),
+            Button(onPressed: () => setState(() => _hasRegion = false), child: const Text('全屏')),
+          ],
+          const Spacer(),
+          FilledButton(onPressed: _busy ? null : _run, child: Row(mainAxisSize: MainAxisSize.min, children: [
+            if (_busy) const SizedBox(width: 12, height: 12, child: ProgressRing(strokeWidth: 2))
+            else const Icon(FluentIcons.play, size: 12),
+            const SizedBox(width: 6),
+            const Text('运行'),
+          ])),
+        ]),
+        if (_status.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text(_status, style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
+        ],
+      ])),
+      if (_shot != null) ...[
+        const SizedBox(height: 10),
+        _card(isDark, Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('结果 ${_shot!.width}×${_shot!.height}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+          const SizedBox(height: 8),
+          SizedBox(height: 360, child: LayoutBuilder(builder: (context, c) {
+            final shot = _shot!;
+            final sx = c.maxWidth / shot.width;
+            final sy = c.maxHeight / shot.height;
+            final scale = sx < sy ? sx : sy;
+            return Center(child: SizedBox(
+              width: shot.width * scale,
+              height: shot.height * scale,
+              child: Stack(children: [
+                Positioned.fill(child: Image.memory(shot.bytes, fit: BoxFit.fill, gaplessPlayback: true)),
+                for (final b in _boxes) Positioned(
+                  left: b.x * scale,
+                  top: b.y * scale,
+                  width: b.width * scale,
+                  height: b.height * scale,
+                  child: IgnorePointer(child: Container(
+                    decoration: BoxDecoration(border: Border.all(color: const Color(0xFF00E676), width: 1.5)),
+                    child: Align(alignment: Alignment.topLeft, child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
+                      color: const Color(0xCC00E676),
+                      child: Text(b.label, style: const TextStyle(fontSize: 9, color: Colors.black)),
+                    )),
+                  )),
+                ),
+              ]),
+            ));
+          })),
+        ])),
+      ],
+      if (_ocrLines.isNotEmpty) ...[
+        const SizedBox(height: 10),
+        _card(isDark, Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('识别文字', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+          const SizedBox(height: 8),
+          for (final l in _ocrLines) Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Text('${l.text}   (${l.x},${l.y} ${l.width}×${l.height})', style: const TextStyle(fontSize: 12)),
+          ),
+        ])),
+      ],
+    ]));
+  }
+}
+
 enum _TriggerConditionType { colorMatch, colorChange, colorDisappear, imageMatch, textMatch, objectDetect, elementMatch }
 extension on _TriggerConditionType {
   String get label {
@@ -2377,6 +2751,78 @@ extension on _TextMatchMode {
       case _TextMatchMode.regex: return 'OCR文本匹配正则表达式时触发';
       case _TextMatchMode.fuzzy: return '忽略空格和标点，模糊匹配文字';
     }
+  }
+}
+
+class _ImageSourceRow extends StatefulWidget {
+  const _ImageSourceRow({required this.onPicked});
+
+  final ValueChanged<TemplateData> onPicked;
+
+  @override
+  State<_ImageSourceRow> createState() => _ImageSourceRowState();
+}
+
+class _ImageSourceRowState extends State<_ImageSourceRow> {
+  StreamSubscription<TemplateData>? _dropSub;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    ImageImportService.instance.ensureDropHandler();
+    _dropSub = ImageImportService.instance.onDropped.listen((template) {
+      if (!mounted) return;
+      widget.onPicked(template);
+    });
+  }
+
+  @override
+  void dispose() {
+    _dropSub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _run(Future<TemplateData?> Function() task) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      final template = await task();
+      if (template != null && mounted) widget.onPicked(template);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(children: [
+      Button(
+        onPressed: _busy ? null : () => _run(() => ImageImportService.instance.fromFile()),
+        child: const Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(FluentIcons.open_file, size: 13),
+          SizedBox(width: 6),
+          Text('从图片文件选'),
+        ]),
+      ),
+      const SizedBox(width: 8),
+      Button(
+        onPressed: _busy ? null : () => _run(() => ImageImportService.instance.fromClipboard()),
+        child: const Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(FluentIcons.paste, size: 13),
+          SizedBox(width: 6),
+          Text('从剪贴板'),
+        ]),
+      ),
+      const SizedBox(width: 10),
+      const Icon(FluentIcons.drag_object, size: 12, color: Colors.grey),
+      const SizedBox(width: 4),
+      const Text('可拖入图片', style: TextStyle(fontSize: 11, color: Colors.grey)),
+      if (_busy) ...[
+        const SizedBox(width: 10),
+        const SizedBox(width: 14, height: 14, child: ProgressRing(strokeWidth: 2)),
+      ],
+    ]);
   }
 }
 
@@ -2653,6 +3099,11 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
                 child: const Text('清除')),
             ],
           ]),
+          const SizedBox(height: 8),
+          _ImageSourceRow(onPicked: (tpl) => setState(() {
+            _templateData = tpl;
+            _templateInfo = '${tpl.width}x${tpl.height}';
+          })),
           const SizedBox(height: 8),
           Row(children: [
             const Text('匹配阈值: ', style: TextStyle(fontSize: 13)),
