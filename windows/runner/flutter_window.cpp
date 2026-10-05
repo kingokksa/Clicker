@@ -2207,24 +2207,28 @@ bool FlutterWindow::OnCreate() {
               const int searchH = reg.h - coarseH + 1;
               if (searchW <= 0 || searchH <= 0) continue;
 
-              const int coarseStep = 2;
-              const double coarseThreshold = 0.2;
-
               struct CoarseHit { int sx; int sy; double score; };
-              const int rows = (searchH + coarseStep - 1) / coarseStep;
-              std::vector<std::vector<CoarseHit>> hits(8);
+
+              const long long tplArea = static_cast<long long>(coarseW) * coarseH;
+              const long long gridPositions = static_cast<long long>(searchW) * searchH;
+              const int coarseStep = (tplArea <= 4096 && tplArea * gridPositions <= 1500000000LL) ? 1 : 2;
+
+              const int coarseRows = (searchH + coarseStep - 1) / coarseStep;
+              const int coarseCols = (searchW + coarseStep - 1) / coarseStep;
+              std::vector<double> coarseMap(static_cast<size_t>(coarseRows) * coarseCols, -2.0);
               std::vector<double> coarseMax(8, -1.0);
 
-              _parallelRows(rows, [&](int ti, int nThreads) {
-                auto& out = hits[static_cast<size_t>(ti)];
+              _parallelRows(coarseRows, [&](int ti, int nThreads) {
                 double localMax = -1.0;
-                for (int r = ti; r < rows; r += nThreads) {
+                for (int r = ti; r < coarseRows; r += nThreads) {
                   const int sy = r * coarseStep;
                   if (sy >= searchH) continue;
-                  for (int sx = 0; sx < searchW; sx += coarseStep) {
+                  double* row = coarseMap.data() + static_cast<size_t>(r) * coarseCols;
+                  int col = 0;
+                  for (int sx = 0; sx < searchW; sx += coarseStep, col++) {
                     const double ncc = _nccAt(reg, coarseTpl, sx, sy);
+                    row[col] = ncc;
                     if (ncc > localMax) localMax = ncc;
-                    if (ncc >= coarseThreshold) out.push_back({sx, sy, ncc});
                   }
                 }
                 coarseMax[static_cast<size_t>(ti)] = localMax;
@@ -2232,11 +2236,59 @@ bool FlutterWindow::OnCreate() {
 
               for (double v : coarseMax) { if (v > globalBest) globalBest = v; }
 
-              std::vector<CoarseHit> candidates;
-              for (const auto& v : hits) candidates.insert(candidates.end(), v.begin(), v.end());
-              std::sort(candidates.begin(), candidates.end(),
+              std::vector<CoarseHit> maxima;
+              for (int r = 0; r < coarseRows; r++) {
+                const double* row = coarseMap.data() + static_cast<size_t>(r) * coarseCols;
+                const double* up = r > 0 ? row - coarseCols : nullptr;
+                const double* down = r + 1 < coarseRows ? row + coarseCols : nullptr;
+                for (int c = 0; c < coarseCols; c++) {
+                  const double v = row[c];
+                  if (v < -1.5) continue;
+                  bool isMax = true;
+                  for (int dr = -1; dr <= 1 && isMax; dr++) {
+                    const double* nb = dr < 0 ? up : (dr > 0 ? down : row);
+                    if (nb == nullptr) continue;
+                    for (int dc = -1; dc <= 1; dc++) {
+                      if (dr == 0 && dc == 0) continue;
+                      const int nc = c + dc;
+                      if (nc < 0 || nc >= coarseCols) continue;
+                      if (nb[nc] > v) { isMax = false; break; }
+                    }
+                  }
+                  if (isMax) maxima.push_back({c * coarseStep, r * coarseStep, v});
+                }
+              }
+
+              std::sort(maxima.begin(), maxima.end(),
                         [](const CoarseHit& a, const CoarseHit& b) { return a.score > b.score; });
-              if (candidates.size() > 64) candidates.resize(64);
+
+              std::vector<CoarseHit> candidates;
+              const int candidateLimit = 256;
+              for (const auto& m : maxima) {
+                bool overlaps = false;
+                for (const auto& k : candidates) {
+                  const int ix1 = std::max(m.sx, k.sx);
+                  const int iy1 = std::max(m.sy, k.sy);
+                  const int ix2 = std::min(m.sx + coarseW, k.sx + coarseW);
+                  const int iy2 = std::min(m.sy + coarseH, k.sy + coarseH);
+                  if (ix2 <= ix1 || iy2 <= iy1) continue;
+                  const double inter = static_cast<double>(ix2 - ix1) * (iy2 - iy1);
+                  const double uni = 2.0 * coarseW * coarseH - inter;
+                  if (uni > 0.0 && inter / uni >= 0.5) { overlaps = true; break; }
+                }
+                if (overlaps) continue;
+                candidates.push_back(m);
+                if (static_cast<int>(candidates.size()) >= candidateLimit) break;
+              }
+
+              if (level == 1 && coarseStep == 1) {
+                for (const auto& m : maxima) {
+                  if (m.score >= threshold) {
+                    found.push_back({m.score, regionX + m.sx, regionY + m.sy, coarseW, coarseH});
+                  }
+                }
+                continue;
+              }
 
               const int fineW = static_cast<int>(std::lround(tplW0 * scale));
               const int fineH = static_cast<int>(std::lround(tplH0 * scale));
@@ -2250,7 +2302,7 @@ bool FlutterWindow::OnCreate() {
               const int fineSearchH = base.h - fineH + 1;
               if (fineSearchW <= 0 || fineSearchH <= 0) continue;
 
-              const int radius = std::min(coarseStep * level, 8);
+              const int radius = std::min(2 * level, 8);
               std::set<std::pair<int, int>> fineSet;
               for (const auto& c : candidates) {
                 const int cx = c.sx * level;
