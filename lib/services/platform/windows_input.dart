@@ -6,6 +6,7 @@ import 'package:ffi/ffi.dart';
 import 'package:flutter/services.dart';
 import 'package:win32/win32.dart';
 import 'platform_input.dart';
+import '../key_alias_service.dart';
 import '../../models/hotkey_config.dart';
 
 class WindowsInput extends PlatformInput {
@@ -422,18 +423,45 @@ class WindowsInput extends PlatformInput {
 
   @override
   Future<void> keyPress(String key) async {
-    final vk = _vk[key.toLowerCase()] ??
-        (key.length == 1 ? key.toUpperCase().codeUnitAt(0) : null);
+    final resolved = KeyAliasService.instance.resolve(key);
+    if (KeyAliasService.isMouseKey(resolved)) {
+      await _mouseAlias(resolved, down: true);
+      return;
+    }
+    final vk = _vk[resolved.toLowerCase()] ??
+        (resolved.length == 1 ? resolved.toUpperCase().codeUnitAt(0) : null);
     if (vk == null) return;
     _sendKey(vk, const KEYBD_EVENT_FLAGS(0));
   }
 
   @override
   Future<void> keyRelease(String key) async {
-    final vk = _vk[key.toLowerCase()] ??
-        (key.length == 1 ? key.toUpperCase().codeUnitAt(0) : null);
+    final resolved = KeyAliasService.instance.resolve(key);
+    if (KeyAliasService.isMouseKey(resolved)) {
+      await _mouseAlias(resolved, down: false);
+      return;
+    }
+    final vk = _vk[resolved.toLowerCase()] ??
+        (resolved.length == 1 ? resolved.toUpperCase().codeUnitAt(0) : null);
     if (vk == null) return;
     _sendKey(vk, const KEYBD_EVENT_FLAGS(KEYEVENTF_KEYUP));
+  }
+
+  Future<void> _mouseAlias(String spec, {required bool down}) async {
+    final button = KeyAliasService.mouseButtonOf(spec);
+    if (button == 'scrollUp') {
+      if (down) await mouseScroll(dy: 1);
+      return;
+    }
+    if (button == 'scrollDown') {
+      if (down) await mouseScroll(dy: -1);
+      return;
+    }
+    if (down) {
+      await mouseDown(x: -1, y: -1, button: button);
+    } else {
+      await mouseUp(x: -1, y: -1, button: button);
+    }
   }
 
   @override

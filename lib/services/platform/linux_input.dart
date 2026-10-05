@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/services.dart';
 import 'platform_input.dart';
+import '../key_alias_service.dart';
 
 class LinuxInput extends PlatformInput {
   static const _channel = MethodChannel('com.clicker.pro/platform');
@@ -132,19 +133,23 @@ class LinuxInput extends PlatformInput {
 
   @override
   Future<void> keyPress(String key) async {
+    final resolved = KeyAliasService.instance.resolve(key);
+    if (KeyAliasService.isMouseKey(resolved)) return;
     try {
-      await _channel.invokeMethod('keyPress', {'key': key});
+      await _channel.invokeMethod('keyPress', {'key': resolved});
     } catch (_) {
-      await Process.run('xdotool', ['key', key]);
+      await Process.run('xdotool', ['key', resolved]);
     }
   }
 
   @override
   Future<void> keyRelease(String key) async {
+    final resolved = KeyAliasService.instance.resolve(key);
+    if (KeyAliasService.isMouseKey(resolved)) return;
     try {
-      await _channel.invokeMethod('keyRelease', {'key': key});
+      await _channel.invokeMethod('keyRelease', {'key': resolved});
     } catch (_) {
-      await Process.run('xdotool', ['keyup', key]);
+      await Process.run('xdotool', ['keyup', resolved]);
     }
   }
 

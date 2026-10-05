@@ -3,6 +3,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/services.dart';
 import 'platform_input.dart';
+import '../key_alias_service.dart';
 
 class AndroidInput extends PlatformInput {
   static const _inputChannel = MethodChannel('clicker/input');
@@ -183,15 +184,19 @@ class AndroidInput extends PlatformInput {
 
   @override
   Future<void> keyPress(String key) async {
+    final resolved = KeyAliasService.instance.resolve(key);
+    if (KeyAliasService.isMouseKey(resolved)) return;
     try {
-      await _inputChannel.invokeMethod('keyPress', {'key': key});
+      await _inputChannel.invokeMethod('keyPress', {'key': resolved});
     } catch (_) {}
   }
 
   @override
   Future<void> keyRelease(String key) async {
+    final resolved = KeyAliasService.instance.resolve(key);
+    if (KeyAliasService.isMouseKey(resolved)) return;
     try {
-      await _inputChannel.invokeMethod('keyRelease', {'key': key});
+      await _inputChannel.invokeMethod('keyRelease', {'key': resolved});
     } catch (_) {}
   }
 

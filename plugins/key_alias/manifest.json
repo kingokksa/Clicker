@@ -1,0 +1,13 @@
+{
+  "id": "key_alias",
+  "name": "按键别名",
+  "version": "1.0.0",
+  "author": "Clicker",
+  "description": "为按键与鼠标键定义别名，按场景切换方案",
+  "category": "input",
+  "platforms": ["windows", "linux", "macos"],
+  "type": "dart",
+  "dartPluginId": "key_alias",
+  "icon": "keyboard_classic",
+  "minAppVersion": 1
+}

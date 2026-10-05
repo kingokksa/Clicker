@@ -26,6 +26,7 @@ import '../services/platform/android_input.dart';
 import '../services/platform/linux_input.dart';
 import '../services/system_tray_service.dart';
 import '../services/schedule_controller.dart';
+import '../services/key_alias_service.dart';
 import 'package:window_manager/window_manager.dart';
 
 class AppState extends ChangeNotifier {
@@ -701,11 +702,12 @@ class AppState extends ChangeNotifier {
           break;
         case HoldTriggerAction.keyRepeat:
           action = 1;
-          actionParam = k.keyToRepeat;
+          actionParam = KeyAliasService.instance.resolve(k.keyToRepeat);
           break;
         case HoldTriggerAction.keyCombo:
           action = 2;
-          actionParam = k.comboKeys;
+          actionParam =
+              k.comboKeys.map((c) => KeyAliasService.instance.resolve(c)).toList();
           break;
       }
 

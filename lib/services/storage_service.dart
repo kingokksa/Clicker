@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'dart:io';
 import 'app_paths.dart';
 import 'local_storage.dart';
+import 'key_alias_service.dart';
 import '../models/clicker_config.dart';
 import '../models/hold_trigger_key.dart';
 import '../models/hotkey_config.dart';
@@ -28,6 +29,7 @@ class StorageService {
 
   Future<void> init() async {
     await LocalStorage.instance.init();
+    await KeyAliasService.instance.ensureLoaded();
     _macrosDir = await AppPaths.getMacrosDir();
     await Directory(_macrosDir).create(recursive: true);
   }

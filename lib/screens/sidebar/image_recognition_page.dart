@@ -19,6 +19,7 @@ import '../../services/platform/windows_input.dart';
 import '../../services/app_paths.dart';
 import '../../widgets/app_slider.dart';
 import '../../services/screen_overlay_service.dart';
+import '../../services/key_alias_service.dart';
 import '../../models/macro_model.dart';
 import '../macro/macro_page.dart';
 
@@ -721,7 +722,24 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
         break;
       case _TriggerActionType.keyPress:
         if (trigger.actionKey.isNotEmpty) {
-          await _platformChannel.invokeMethod('sendKeyPress', trigger.actionKey);
+          final spec = KeyAliasService.instance.resolve(trigger.actionKey);
+          if (KeyAliasService.isMouseKey(spec)) {
+            final button = KeyAliasService.mouseButtonOf(spec);
+            final idx = _mouseButtonIndex(button);
+            if (button == 'scrollUp' || button == 'scrollDown') {
+              await context.read<AppState>().platformInput.mouseScroll(
+                  dy: button == 'scrollUp' ? 1 : -1);
+            } else if (idx != null) {
+              await _platformChannel.invokeMethod('sendClick', [trigger.actionX, trigger.actionY, idx]);
+            } else {
+              await context.read<AppState>().platformInput.mouseClick(
+                  x: trigger.actionX, y: trigger.actionY, button: button);
+            }
+          } else {
+            final input = context.read<AppState>().platformInput;
+            await input.keyPress(spec);
+            await input.keyRelease(spec);
+          }
         }
         break;
       case _TriggerActionType.startClicker:
@@ -1261,6 +1279,18 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
         ...children,
       ]),
     );
+  }
+
+  int? _mouseButtonIndex(String button) {
+    switch (button) {
+      case 'left':
+        return 0;
+      case 'right':
+        return 1;
+      case 'middle':
+        return 2;
+    }
+    return null;
   }
 
   String _actionSummary(_TriggerEntry t) {

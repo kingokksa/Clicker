@@ -6,6 +6,8 @@ import '../../services/app_state.dart';
 import '../../services/screen_overlay_service.dart';
 import '../../models/clicker_config.dart';
 import '../../models/hotkey_config.dart';
+import '../../models/key_alias.dart';
+import '../../services/key_alias_service.dart';
 
 class ClickerPage extends StatefulWidget {
   const ClickerPage({super.key});
@@ -901,6 +903,32 @@ class _KeyPickerDialogState extends State<_KeyPickerDialog> {
           child: Text(_selectedKey.toUpperCase(), style: TextStyle(color: accent, fontWeight: FontWeight.w700, fontFamily: 'monospace', fontSize: 18)),
         )),
         const SizedBox(height: 12),
+        if (KeyAliasService.instance.keyboardAliases.isNotEmpty) ...[
+          const Text('别名', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+          const SizedBox(height: 4),
+          Wrap(spacing: 3, runSpacing: 3, children:
+              KeyAliasService.instance.keyboardAliases.map((a) {
+            final value = '$keyAliasPrefix${a.name}';
+            final sel = _selectedKey.toLowerCase() == value.toLowerCase();
+            return GestureDetector(
+              onTap: () => setState(() => _selectedKey = value),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: sel ? accent.withValues(alpha: 0.2) : unselectedBg,
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: sel ? accent : unselectedBorder),
+                ),
+                child: Text(value,
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: sel ? accent : unselectedText,
+                        fontWeight: sel ? FontWeight.w600 : FontWeight.normal)),
+              ),
+            );
+          }).toList()),
+          const SizedBox(height: 8),
+        ],
         ..._categories.map((cat) => Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(cat.$1, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
           const SizedBox(height: 4),

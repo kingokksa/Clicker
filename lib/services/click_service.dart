@@ -9,6 +9,7 @@ import '../models/clicker_config.dart';
 import 'platform/platform_input.dart';
 import 'platform/windows_input.dart';
 import 'platform/android_input.dart';
+import 'key_alias_service.dart';
 
 void _playSystemSound() {
   if (!Platform.isWindows) return;
@@ -281,7 +282,8 @@ class ClickService {
         Platform.isWindows &&
         !wantsRandom &&
         !wantsSequence &&
-        !hasFollowTarget;
+        !hasFollowTarget &&
+        !_usesMouseAlias;
 
     if (useNative) {
       _log('using native fast clicker (base=${baseUs}us)');
@@ -387,6 +389,19 @@ class ClickService {
     }
   }
 
+  bool get _usesMouseAlias {
+    if (_config.clickMode != ClickMode.keyboard) return false;
+    final svc = KeyAliasService.instance;
+    if (KeyAliasService.isMouseKey(svc.resolve(_config.keyToRepeat))) return true;
+    for (final key in _config.comboKeys) {
+      if (KeyAliasService.isMouseKey(svc.resolve(key))) return true;
+    }
+    for (final item in _config.keySequence) {
+      if (KeyAliasService.isMouseKey(svc.resolve(item.key))) return true;
+    }
+    return false;
+  }
+
   static int _keyToVk(String key) {
     const vkMap = <String, int>{
       'enter': 0x0D, 'tab': 0x09, 'escape': 0x1B, 'backspace': 0x08,
@@ -410,9 +425,10 @@ class ClickService {
       'multiply': 0x6A, 'add': 0x6B, 'subtract': 0x6D,
       'decimal': 0x6E, 'divide': 0x6F,
     };
-    final lower = key.toLowerCase();
+    final resolved = KeyAliasService.instance.resolve(key);
+    final lower = resolved.toLowerCase();
     if (vkMap.containsKey(lower)) return vkMap[lower]!;
-    if (key.length == 1) return key.toUpperCase().codeUnitAt(0);
+    if (resolved.length == 1) return resolved.toUpperCase().codeUnitAt(0);
     return 0;
   }
 
