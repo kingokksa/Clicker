@@ -78,6 +78,8 @@ class ClickService {
   int _anchorY = -1;
   int _lastLandingX = -1;
   int _lastLandingY = -1;
+  int _followX = -1;
+  int _followY = -1;
 
   Future<void> _resolveAnchor() async {
     if (!Platform.isWindows) return;
@@ -134,6 +136,18 @@ class ClickService {
   ClickerConfig get config => _config;
   int get clickCount => _clickCount;
   bool get isRunning => _status == ClickerStatus.running;
+
+  bool get hasFollowTarget => _followX >= 0 && _followY >= 0;
+
+  void setFollowTarget(int x, int y) {
+    _followX = x;
+    _followY = y;
+  }
+
+  void clearFollowTarget() {
+    _followX = -1;
+    _followY = -1;
+  }
 
   void handleNativeClickerStopped(int count, {int? generation}) {
     if (generation != null && generation != _nativeGeneration) {
@@ -253,8 +267,11 @@ class ClickService {
         _config.randomDelayMaxMs > 0 ||
         _config.randomOffsetEnabled;
     final wantsSequence = _config.clickType == ClickType.sequence;
-    final useNative =
-        baseUs <= 50000 && Platform.isWindows && !wantsRandom && !wantsSequence;
+    final useNative = baseUs <= 50000 &&
+        Platform.isWindows &&
+        !wantsRandom &&
+        !wantsSequence &&
+        !hasFollowTarget;
 
     if (useNative) {
       _log('using native fast clicker (base=${baseUs}us)');
@@ -539,14 +556,19 @@ class ClickService {
   }
 
   Future<void> _performMouseClick() async {
-    int x = _config.positionMode == PositionMode.fixed ||
-            _config.positionMode == PositionMode.pick
-        ? _config.fixedX
-        : -1;
-    int y = _config.positionMode == PositionMode.fixed ||
-            _config.positionMode == PositionMode.pick
-        ? _config.fixedY
-        : -1;
+    final bool following = hasFollowTarget;
+    int x = following
+        ? _followX
+        : (_config.positionMode == PositionMode.fixed ||
+                _config.positionMode == PositionMode.pick
+            ? _config.fixedX
+            : -1);
+    int y = following
+        ? _followY
+        : (_config.positionMode == PositionMode.fixed ||
+                _config.positionMode == PositionMode.pick
+            ? _config.fixedY
+            : -1);
 
     if (x < 0 && y < 0 && _config.randomOffsetEnabled) {
       await _resolveAnchor();
@@ -556,7 +578,8 @@ class ClickService {
 
     final int targetX = x;
     final int targetY = y;
-    final bool hasFixedTarget = _config.positionMode == PositionMode.fixed ||
+    final bool hasFixedTarget = following ||
+        _config.positionMode == PositionMode.fixed ||
         _config.positionMode == PositionMode.pick;
 
     if (hasFixedTarget && _config.humanLikeEnabled && _config.humanLikeBezierCurve &&
@@ -726,6 +749,7 @@ class ClickService {
   }
 
   void stop() {
+    clearFollowTarget();
     _timer?.cancel();
     _timer = null;
     _uiUpdateTimer?.cancel();

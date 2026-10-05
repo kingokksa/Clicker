@@ -148,6 +148,9 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
   String? _highlightedTriggerId;
   final Map<String, String> _triggerStatus = {};
   final Map<String, DateTime> _triggerLastCheck = {};
+  final Map<String, int> _triggerHitCount = {};
+  final Map<String, DateTime> _triggerLastHit = {};
+  String? _followTriggerId;
 
   static const _platformChannel = MethodChannel('com.clicker.pro/platform');
 
@@ -384,6 +387,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     _triggerCheckTimer?.cancel();
     _triggerCheckTimer = null;
     ScreenOverlayService.instance.hideDetectionBoxes();
+    _stopFollowClicker();
   }
 
   bool _checkingTriggers = false;
@@ -394,7 +398,10 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     try {
     final now = DateTime.now();
     for (final trigger in List.of(_triggers)) {
-      if (!trigger.enabled) continue;
+      if (!trigger.enabled) {
+        if (_followTriggerId == trigger.id) _stopFollowClicker(trigger.id);
+        continue;
+      }
 
       final lastFired = _triggerLastFired[trigger.id];
       if (lastFired != null && now.difference(lastFired).inMilliseconds < trigger.intervalMs) continue;
@@ -601,6 +608,17 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
 
       if (conditionMet) {
         _triggerLastFired[trigger.id] = now;
+        _triggerHitCount[trigger.id] = (_triggerHitCount[trigger.id] ?? 0) + 1;
+        _triggerLastHit[trigger.id] = now;
+      }
+
+      if (trigger.actionType == _TriggerActionType.followClicker) {
+        if (conditionMet) {
+          await _runFollowClicker(trigger);
+        } else {
+          _stopFollowClicker(trigger.id);
+        }
+      } else if (conditionMet) {
         await _executeTriggerAction(trigger);
       }
     }
@@ -617,6 +635,26 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     final dg = ((a.g - b.g) * 255).round().abs();
     final db = ((a.b - b.b) * 255).round().abs();
     return (dr + dg + db) / 3.0;
+  }
+
+  Future<void> _runFollowClicker(_TriggerEntry t) async {
+    final det = _lastDetectionResults[t.id];
+    final cx = det != null ? t.x + det.centerX : t.x + t.w ~/ 2;
+    final cy = det != null ? t.y + det.centerY : t.y + t.h ~/ 2;
+    final svc = context.read<AppState>().clickService;
+    _followTriggerId = t.id;
+    svc.setFollowTarget(cx, cy);
+    if (!svc.isRunning) await svc.start();
+    _triggerStatus[t.id] = svc.isRunning ? '连点中 ($cx, $cy)' : '连点未启动';
+  }
+
+  void _stopFollowClicker([String? id]) {
+    final owner = _followTriggerId;
+    if (owner == null) return;
+    if (id != null && owner != id) return;
+    _followTriggerId = null;
+    context.read<AppState>().clickService.stop();
+    _triggerStatus[owner] = '已停止连点';
   }
 
   void _highlightTriggerRegion(_TriggerEntry t) {
@@ -684,7 +722,20 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
         }
         break;
       case _TriggerActionType.startClicker:
+        final startSvc = context.read<AppState>().clickService;
+        if (!startSvc.isRunning) {
+          if (!context.read<AppState>().clickerConfig.autoClickEnabled) {
+            _triggerStatus[trigger.id] = '自动连点未启用';
+          } else {
+            await startSvc.start();
+            _triggerStatus[trigger.id] = startSvc.isRunning ? '连点中' : '连点未启动';
+          }
+        }
+        break;
       case _TriggerActionType.stopClicker:
+        context.read<AppState>().clickService.stop();
+        break;
+      case _TriggerActionType.followClicker:
         break;
       case _TriggerActionType.runMacro:
         if (trigger.macroId.isNotEmpty) {
@@ -805,7 +856,20 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
   List<Widget> _buildTriggers(bool isDark, AppState state) {
     final cardBg = isDark ? const Color(0xFF252540).withValues(alpha: 0.5) : const Color(0xFFF0F0FA).withValues(alpha: 0.5);
     final ocrPlugins = _vision.getPluginsFor(VisionCapability.ocr);
+    final enabledCount = _triggers.where((t) => t.enabled).length;
+    final totalHits = _triggerHitCount.values.fold<int>(0, (a, b) => a + b);
+    final stoppedColor = isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A);
     return [
+      Row(children: [
+        Expanded(child: _statTile('${_triggers.length}', '条件', state.accentColor, FluentIcons.process_meta_task, isDark)),
+        const SizedBox(width: 8),
+        Expanded(child: _statTile('$enabledCount', '已启用', const Color(0xFF00A050), FluentIcons.checkbox_composite, isDark)),
+        const SizedBox(width: 8),
+        Expanded(child: _statTile(_triggerRunning ? '运行中' : '已停止', '监控状态', _triggerRunning ? const Color(0xFF00E676) : stoppedColor, _triggerRunning ? FluentIcons.play : FluentIcons.stop, isDark)),
+        const SizedBox(width: 8),
+        Expanded(child: _statTile('$totalHits', '命中次数', const Color(0xFFFF8C00), FluentIcons.diagnostic, isDark)),
+      ]),
+      const SizedBox(height: 12),
       Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
@@ -886,26 +950,25 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
               ),
             )).toList())),
           ]),
+          const SizedBox(height: 10),
+          Container(height: 1, color: isDark ? const Color(0xFF303050) : const Color(0xFFE0E0EA)),
+          const SizedBox(height: 10),
+          Row(children: [
+            Expanded(child: Button(onPressed: () => _addTrigger(isDark, state), child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(FluentIcons.add, size: 14),
+              SizedBox(width: 6),
+              Text('添加触发条件'),
+            ]))),
+            const SizedBox(width: 8),
+            Button(onPressed: () => _addTriggerFromImage(isDark, state), child: const Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(FluentIcons.image_pixel, size: 14),
+              SizedBox(width: 6),
+              Text('用图片定位'),
+            ])),
+          ]),
         ]),
       ),
-      const SizedBox(height: 10),
-      Container(height: 1, color: isDark ? const Color(0xFF303050) : const Color(0xFFE0E0EA)),
-      const SizedBox(height: 10),
-
-      Row(children: [
-        Expanded(child: Button(onPressed: () => _addTrigger(isDark, state), child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Icon(FluentIcons.add, size: 14),
-          SizedBox(width: 6),
-          Text('添加触发条件'),
-        ]))),
-        const SizedBox(width: 8),
-        Button(onPressed: () => _addTriggerFromImage(isDark, state), child: const Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(FluentIcons.image_pixel, size: 14),
-          SizedBox(width: 6),
-          Text('用图片定位'),
-        ])),
-      ]),
-      const SizedBox(height: 10),
+      const SizedBox(height: 12),
 
       if (_triggers.isEmpty)
         Center(child: Padding(padding: const EdgeInsets.all(40), child: Column(children: [
@@ -921,181 +984,264 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
           const Text('暂无触发条件', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
         ])))
       else
-        ..._triggers.map((t) {
-          final condColor = _conditionColor(t.conditionType);
-          final condIcon = _conditionIcon(t.conditionType);
-          final isHighlighted = _highlightedTriggerId == t.id;
-          final muted = isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A);
-          return MouseRegion(
-            onEnter: (_) => _highlightTriggerRegion(t),
-            onExit: (_) => _clearHighlight(),
-            child: Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: isHighlighted ? condColor.withValues(alpha: 0.08) : cardBg,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: isHighlighted ? condColor : (isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)), width: isHighlighted ? 1.5 : 1),
-                ),
-                child: IntrinsicHeight(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Container(
-                        width: 4,
-                        margin: const EdgeInsets.all(1),
-                        decoration: BoxDecoration(
-                          color: condColor,
-                          borderRadius: const BorderRadius.horizontal(left: Radius.circular(7)),
-                        ),
-                      ),
+        LayoutBuilder(builder: (context, constraints) {
+          final columns = constraints.maxWidth >= 880 ? 2 : 1;
+          const gap = 10.0;
+          final rows = <Widget>[];
+          for (var i = 0; i < _triggers.length; i += columns) {
+            final slice = _triggers.sublist(i, (i + columns).clamp(0, _triggers.length));
+            rows.add(Padding(
+              padding: const EdgeInsets.only(bottom: gap),
+              child: IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (var j = 0; j < columns; j++)
                       Expanded(
                         child: Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(children: [
-                                Icon(condIcon, size: 14, color: condColor),
-                                const SizedBox(width: 6),
-                                Expanded(child: Text(t.name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13))),
-                                ToggleSwitch(checked: t.enabled, onChanged: (v) { setState(() => t.enabled = v); _saveTriggers(); if (_triggerRunning) _startTriggerChecker(); }),
-                                const SizedBox(width: 4),
-                                IconButton(icon: Icon(FluentIcons.edit, size: 12, color: state.accentColor), onPressed: () async {
-                                  final result = await showDialog<_TriggerConfig>(context: context, builder: (_) => _AddTriggerDialog(
-                                    initialX: t.x, initialY: t.y, initialW: t.w, initialH: t.h,
-                                    onPickActionPos: _startPick,
-                                    onCaptureTemplate: _captureTemplate,
-                                    initialTrigger: t,
-                                  ));
-                                  if (result != null) {
-                                    setState(() {
-                                      final idx = _triggers.indexOf(t);
-                                      if (idx >= 0) {
-                                        _triggers[idx] = _TriggerEntry(
-                                          id: t.id,
-                                          name: result.name,
-                                          conditionType: result.conditionType,
-                                          actionType: result.actionType,
-                                          enabled: t.enabled,
-                                          x: result.x, y: result.y, w: result.w, h: result.h,
-                                          targetColor: result.targetColor,
-                                          templateData: result.templateData,
-                                          matchThreshold: result.matchThreshold,
-                                          targetText: result.targetText,
-                                          textMatchMode: result.textMatchMode,
-                                          targetObjectClass: result.targetObjectClass,
-                                          detectConfidence: result.detectConfidence,
-                                          targetElementName: result.targetElementName,
-                                          targetElementId: result.targetElementId,
-                                          targetElementType: result.targetElementType,
-                                          actionX: result.actionX, actionY: result.actionY,
-                                          actionKey: result.actionKey,
-                                          macroId: result.macroId,
-                                          intervalMs: result.intervalMs,
-                                          showTrackingBox: result.showTrackingBox,
-                                        );
-                                      }
-                                    });
-                                    _saveTriggers();
-                                    if (_triggerRunning) _startTriggerChecker();
-                                  }
-                                }),
-                                const SizedBox(width: 2),
-                                IconButton(icon: Icon(FluentIcons.delete, size: 12, color: Colors.red.withValues(alpha: 0.7)), onPressed: () {
-                                  setState(() => _triggers.remove(t));
-                                  _saveTriggers();
-                                  if (_triggerRunning) _startTriggerChecker();
-                                }),
-                              ]),
-                              const SizedBox(height: 8),
-                              Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                                Expanded(flex: 3, child: _triggerBlock('条件', condColor, [
-                                  Text(t.conditionType.label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: condColor)),
-                                  const SizedBox(height: 3),
-                                  if (t.conditionType == _TriggerConditionType.elementMatch)
-                                    Text(_elementSummary(t), style: const TextStyle(fontSize: 11, color: Color(0xFF7C4DFF)), maxLines: 2, overflow: TextOverflow.ellipsis)
-                                  else
-                                    Text('区域 ${t.x}, ${t.y}  ${t.w}x${t.h}', style: TextStyle(fontSize: 11, color: muted)),
-                                  if (t.conditionType == _TriggerConditionType.imageMatch) ...[
-                                    const SizedBox(height: 2),
-                                    Text('模板 ${t.templateData != null ? '${t.templateData!.width}x${t.templateData!.height}' : '未设置'}  阈值 ${(t.matchThreshold * 100).toStringAsFixed(0)}%', style: TextStyle(fontSize: 11, color: muted)),
-                                  ],
-                                  if (t.conditionType == _TriggerConditionType.textMatch) ...[
-                                    const SizedBox(height: 2),
-                                    Text(t.targetText.isNotEmpty ? '"${t.targetText}"  ${t.textMatchMode.label}' : '未设置目标文字', style: TextStyle(fontSize: 11, color: muted), maxLines: 2, overflow: TextOverflow.ellipsis),
-                                  ],
-                                  if (t.conditionType == _TriggerConditionType.objectDetect) ...[
-                                    const SizedBox(height: 2),
-                                    Text('${t.targetObjectClass.isNotEmpty ? _cocoEnToZh(t.targetObjectClass) : '所有目标'}  置信度 ${(t.detectConfidence * 100).toStringAsFixed(0)}%', style: TextStyle(fontSize: 11, color: muted)),
-                                  ],
-                                  if (t.targetColor != null) ...[
-                                    const SizedBox(height: 4),
-                                    Row(children: [
-                                      Text('目标色', style: TextStyle(fontSize: 11, color: muted)),
-                                      const SizedBox(width: 5),
-                                      Container(width: 13, height: 13, decoration: BoxDecoration(
-                                        color: t.targetColor,
-                                        borderRadius: BorderRadius.circular(3),
-                                        border: Border.all(color: isDark ? const Color(0xFF404060) : const Color(0xFFD0D0D8)),
-                                      )),
-                                    ]),
-                                  ],
-                                ])),
-                                const SizedBox(width: 8),
-                                Expanded(flex: 2, child: _triggerBlock('动作', state.accentColor, [
-                                  Text(t.actionType.label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: state.accentColor)),
-                                  const SizedBox(height: 3),
-                                  Text(_actionSummary(t), style: TextStyle(fontSize: 11, color: muted), maxLines: 3, overflow: TextOverflow.ellipsis),
-                                ])),
-                              ]),
-                              const SizedBox(height: 8),
-                              Row(children: [
-                                Icon(FluentIcons.speed_high, size: 11, color: muted),
-                                const SizedBox(width: 4),
-                                Text('间隔', style: TextStyle(fontSize: 11, color: muted)),
-                                const SizedBox(width: 6),
-                                Expanded(child: AppSlider(
-                                  value: t.intervalMs.toDouble(),
-                                  min: 100, max: 5000, divisions: 49,
-                                  label: '${t.intervalMs}ms',
-                                  onChanged: (v) => setState(() => t.intervalMs = v.round()),
-                                  onChangeEnd: (v) {
-                                    setState(() => t.intervalMs = v.round());
-                                    _saveTriggers();
-                                    if (_triggerRunning) _startTriggerChecker();
-                                  },
-                                )),
-                                const SizedBox(width: 6),
-                                Text('${t.intervalMs}ms', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
-                              ]),
-                              if (_triggerRunning && _triggerStatus.containsKey(t.id)) ...[
-                                const SizedBox(height: 6),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                  decoration: BoxDecoration(
-                                    color: (isDark ? const Color(0xFF1A1A30) : const Color(0xFFF5F5FA)),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Row(children: [
-                                    Icon(FluentIcons.info, size: 10, color: muted),
-                                    const SizedBox(width: 4),
-                                    Expanded(child: Text(_triggerStatus[t.id]!, style: TextStyle(fontSize: 10, color: muted))),
-                                  ]),
-                                ),
-                              ],
-                            ],
-                          ),
+                          padding: EdgeInsets.only(left: j == 0 ? 0 : gap / 2, right: j == columns - 1 ? 0 : gap / 2),
+                          child: j < slice.length ? _triggerCard(slice[j], isDark, state) : const SizedBox(),
                         ),
                       ),
-                    ],
-                  ),
+                  ],
                 ),
               ),
-            ),
-          );
+            ));
+          }
+          return Column(children: rows);
         }),
     ];
+  }
+
+  Widget _triggerCard(_TriggerEntry t, bool isDark, AppState state) {
+    final cardBg = isDark ? const Color(0xFF252540).withValues(alpha: 0.5) : const Color(0xFFF0F0FA).withValues(alpha: 0.5);
+    final condColor = _conditionColor(t.conditionType);
+    final condIcon = _conditionIcon(t.conditionType);
+    final isHighlighted = _highlightedTriggerId == t.id;
+    final hits = _triggerHitCount[t.id] ?? 0;
+    final lastHit = _triggerLastHit[t.id];
+    final muted = isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A);
+    return MouseRegion(
+      onEnter: (_) => _highlightTriggerRegion(t),
+      onExit: (_) => _clearHighlight(),
+      child: Padding(
+        padding: EdgeInsets.zero,
+        child: Container(
+          decoration: BoxDecoration(
+            color: isHighlighted ? condColor.withValues(alpha: 0.08) : cardBg,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: isHighlighted ? condColor : (isDark ? const Color(0xFF303050) : const Color(0xFFD0D0E0)), width: isHighlighted ? 1.5 : 1),
+          ),
+          child: IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(
+                  width: 4,
+                  margin: const EdgeInsets.all(1),
+                  decoration: BoxDecoration(
+                    color: condColor,
+                    borderRadius: const BorderRadius.horizontal(left: Radius.circular(7)),
+                  ),
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(children: [
+                          Icon(condIcon, size: 14, color: condColor),
+                          const SizedBox(width: 6),
+                          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(t.name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13), maxLines: 1, overflow: TextOverflow.ellipsis),
+                            Text(
+                              hits == 0 ? '尚未命中' : '命中 $hits 次${lastHit == null ? '' : ' · ${_agoText(lastHit)}'}',
+                              style: TextStyle(fontSize: 10, color: muted),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ])),
+                          Container(
+                            width: 7,
+                            height: 7,
+                            margin: const EdgeInsets.only(right: 6),
+                            decoration: BoxDecoration(
+                              color: t.enabled && _triggerRunning && hits > 0 ? const Color(0xFF00E676) : (isDark ? const Color(0xFF505070) : const Color(0xFFC0C0CC)),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                          ),
+                          ToggleSwitch(checked: t.enabled, onChanged: (v) { setState(() => t.enabled = v); _saveTriggers(); if (_triggerRunning) _startTriggerChecker(); }),
+                          const SizedBox(width: 4),
+                          IconButton(icon: Icon(FluentIcons.edit, size: 12, color: state.accentColor), onPressed: () async {
+                            final result = await showDialog<_TriggerConfig>(context: context, builder: (_) => _AddTriggerDialog(
+                              initialX: t.x, initialY: t.y, initialW: t.w, initialH: t.h,
+                              onPickActionPos: _startPick,
+                              onCaptureTemplate: _captureTemplate,
+                              initialTrigger: t,
+                            ));
+                            if (result != null) {
+                              setState(() {
+                                final idx = _triggers.indexOf(t);
+                                if (idx >= 0) {
+                                  _triggers[idx] = _TriggerEntry(
+                                    id: t.id,
+                                    name: result.name,
+                                    conditionType: result.conditionType,
+                                    actionType: result.actionType,
+                                    enabled: t.enabled,
+                                    x: result.x, y: result.y, w: result.w, h: result.h,
+                                    targetColor: result.targetColor,
+                                    templateData: result.templateData,
+                                    matchThreshold: result.matchThreshold,
+                                    targetText: result.targetText,
+                                    textMatchMode: result.textMatchMode,
+                                    targetObjectClass: result.targetObjectClass,
+                                    detectConfidence: result.detectConfidence,
+                                    targetElementName: result.targetElementName,
+                                    targetElementId: result.targetElementId,
+                                    targetElementType: result.targetElementType,
+                                    actionX: result.actionX, actionY: result.actionY,
+                                    actionKey: result.actionKey,
+                                    macroId: result.macroId,
+                                    intervalMs: result.intervalMs,
+                                    showTrackingBox: result.showTrackingBox,
+                                  );
+                                }
+                              });
+                              _saveTriggers();
+                              if (_triggerRunning) _startTriggerChecker();
+                            }
+                          }),
+                          const SizedBox(width: 2),
+                          IconButton(icon: Icon(FluentIcons.delete, size: 12, color: Colors.red.withValues(alpha: 0.7)), onPressed: () {
+                            setState(() {
+                              _triggers.remove(t);
+                              _triggerHitCount.remove(t.id);
+                              _triggerLastHit.remove(t.id);
+                              _triggerStatus.remove(t.id);
+                              _triggerLastFired.remove(t.id);
+                              _triggerLastCheck.remove(t.id);
+                              _lastDetectionResults.remove(t.id);
+                            });
+                            if (_followTriggerId == t.id) _stopFollowClicker(t.id);
+                            _saveTriggers();
+                            if (_triggerRunning) _startTriggerChecker();
+                          }),
+                        ]),
+                        const SizedBox(height: 8),
+                        Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                          Expanded(flex: 3, child: _triggerBlock('条件', condColor, [
+                            Text(t.conditionType.label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: condColor)),
+                            const SizedBox(height: 3),
+                            if (t.conditionType == _TriggerConditionType.elementMatch)
+                              Text(_elementSummary(t), style: const TextStyle(fontSize: 11, color: Color(0xFF7C4DFF)), maxLines: 2, overflow: TextOverflow.ellipsis)
+                            else
+                              Text('区域 ${t.x}, ${t.y}  ${t.w}x${t.h}', style: TextStyle(fontSize: 11, color: muted)),
+                            if (t.conditionType == _TriggerConditionType.imageMatch) ...[
+                              const SizedBox(height: 2),
+                              Text('模板 ${t.templateData != null ? '${t.templateData!.width}x${t.templateData!.height}' : '未设置'}  阈值 ${(t.matchThreshold * 100).toStringAsFixed(0)}%', style: TextStyle(fontSize: 11, color: muted)),
+                            ],
+                            if (t.conditionType == _TriggerConditionType.textMatch) ...[
+                              const SizedBox(height: 2),
+                              Text(t.targetText.isNotEmpty ? '"${t.targetText}"  ${t.textMatchMode.label}' : '未设置目标文字', style: TextStyle(fontSize: 11, color: muted), maxLines: 2, overflow: TextOverflow.ellipsis),
+                            ],
+                            if (t.conditionType == _TriggerConditionType.objectDetect) ...[
+                              const SizedBox(height: 2),
+                              Text('${t.targetObjectClass.isNotEmpty ? _cocoEnToZh(t.targetObjectClass) : '所有目标'}  置信度 ${(t.detectConfidence * 100).toStringAsFixed(0)}%', style: TextStyle(fontSize: 11, color: muted)),
+                            ],
+                            if (t.targetColor != null) ...[
+                              const SizedBox(height: 4),
+                              Row(children: [
+                                Text('目标色', style: TextStyle(fontSize: 11, color: muted)),
+                                const SizedBox(width: 5),
+                                Container(width: 13, height: 13, decoration: BoxDecoration(
+                                  color: t.targetColor,
+                                  borderRadius: BorderRadius.circular(3),
+                                  border: Border.all(color: isDark ? const Color(0xFF404060) : const Color(0xFFD0D0D8)),
+                                )),
+                              ]),
+                            ],
+                          ])),
+                          const SizedBox(width: 8),
+                          Expanded(flex: 2, child: _triggerBlock('动作', state.accentColor, [
+                            Text(t.actionType.label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: state.accentColor)),
+                            const SizedBox(height: 3),
+                            Text(_actionSummary(t), style: TextStyle(fontSize: 11, color: muted), maxLines: 3, overflow: TextOverflow.ellipsis),
+                          ])),
+                        ]),
+                        const SizedBox(height: 8),
+                        Row(children: [
+                          Icon(FluentIcons.speed_high, size: 11, color: muted),
+                          const SizedBox(width: 4),
+                          Text('间隔', style: TextStyle(fontSize: 11, color: muted)),
+                          const SizedBox(width: 6),
+                          Expanded(child: AppSlider(
+                            value: t.intervalMs.toDouble(),
+                            min: 100, max: 5000, divisions: 49,
+                            label: '${t.intervalMs}ms',
+                            onChanged: (v) => setState(() => t.intervalMs = v.round()),
+                            onChangeEnd: (v) {
+                              setState(() => t.intervalMs = v.round());
+                              _saveTriggers();
+                              if (_triggerRunning) _startTriggerChecker();
+                            },
+                          )),
+                          const SizedBox(width: 6),
+                          Text('${t.intervalMs}ms', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+                        ]),
+                        if (_triggerRunning && _triggerStatus.containsKey(t.id)) ...[
+                          const SizedBox(height: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: (isDark ? const Color(0xFF1A1A30) : const Color(0xFFF5F5FA)),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Row(children: [
+                              Icon(FluentIcons.info, size: 10, color: muted),
+                              const SizedBox(width: 4),
+                              Expanded(child: Text(_triggerStatus[t.id]!, style: TextStyle(fontSize: 10, color: muted))),
+                            ]),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _statTile(String value, String label, Color color, IconData icon, bool isDark) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.22)),
+      ),
+      child: Row(children: [
+        Icon(icon, size: 16, color: color),
+        const SizedBox(width: 8),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(value, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: color), maxLines: 1, overflow: TextOverflow.ellipsis),
+          Text(label, style: TextStyle(fontSize: 10, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
+        ])),
+      ]),
+    );
+  }
+
+  String _agoText(DateTime t) {
+    final d = DateTime.now().difference(t);
+    if (d.inSeconds < 60) return '${d.inSeconds} 秒前';
+    if (d.inMinutes < 60) return '${d.inMinutes} 分钟前';
+    if (d.inHours < 24) return '${d.inHours} 小时前';
+    return '${d.inDays} 天前';
   }
 
   Widget _triggerBlock(String title, Color color, List<Widget> children) {
@@ -1129,6 +1275,8 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
         return '启动连点';
       case _TriggerActionType.stopClicker:
         return '停止连点';
+      case _TriggerActionType.followClicker:
+        return '匹配启动连点 / 失去停止';
     }
   }
 
@@ -2711,7 +2859,7 @@ const List<String> _uiaControlTypes = [
   'TreeItem', 'Window',
 ];
 
-enum _TriggerActionType { click, clickTargetCenter, keyPress, startClicker, stopClicker, runMacro }
+enum _TriggerActionType { click, clickTargetCenter, keyPress, startClicker, stopClicker, runMacro, followClicker }
 extension on _TriggerActionType {
   String get label {
     switch (this) {
@@ -2721,6 +2869,7 @@ extension on _TriggerActionType {
       case _TriggerActionType.startClicker: return '启动连点';
       case _TriggerActionType.stopClicker: return '停止连点';
       case _TriggerActionType.runMacro: return '执行宏';
+      case _TriggerActionType.followClicker: return '目标连点';
     }
   }
 }
@@ -3300,6 +3449,41 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
                 '检测到目标后，自动点击目标中心位置',
                 style: TextStyle(fontSize: 11, color: Color(0xFFFF5252)),
               )),
+            ]),
+          ),
+        ] else if (_actionType == _TriggerActionType.followClicker) ...[
+          const SizedBox(height: 4),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF00B0FF).withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: const Color(0xFF00B0FF).withValues(alpha: 0.25)),
+            ),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Row(children: [
+                Icon(FluentIcons.play, size: 13, color: Color(0xFF00B0FF)),
+                SizedBox(width: 6),
+                Expanded(child: Text('匹配到目标：启动连点，落点跟随目标中心',
+                  style: TextStyle(fontSize: 11, color: Color(0xFF00B0FF)))),
+              ]),
+              const SizedBox(height: 4),
+              const Row(children: [
+                Icon(FluentIcons.stop, size: 13, color: Color(0xFF00B0FF)),
+                SizedBox(width: 6),
+                Expanded(child: Text('失去目标：自动停止连点',
+                  style: TextStyle(fontSize: 11, color: Color(0xFF00B0FF)))),
+              ]),
+              if (!context.read<AppState>().clickerConfig.autoClickEnabled) ...[
+                const SizedBox(height: 4),
+                const Row(children: [
+                  Icon(FluentIcons.warning, size: 13, color: Color(0xFFFF5252)),
+                  SizedBox(width: 6),
+                  Expanded(child: Text('自动连点未启用，需先在功能管理中开启',
+                    style: TextStyle(fontSize: 11, color: Color(0xFFFF5252)))),
+                ]),
+              ],
             ]),
           ),
         ] else if (_actionType == _TriggerActionType.keyPress) ...[
