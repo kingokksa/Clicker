@@ -183,14 +183,28 @@ static std::vector<uint8_t> _bgraToGray(const uint8_t* bgra, int w, int h) {
 static std::vector<uint8_t> _resampleGray(const std::vector<uint8_t>& src, int sw, int sh, int dw, int dh) {
   std::vector<uint8_t> out(static_cast<size_t>(dw) * dh);
   for (int y = 0; y < dh; y++) {
-    int sy = static_cast<int>(static_cast<int64_t>(y) * sh / dh);
-    if (sy >= sh) sy = sh - 1;
-    const uint8_t* srow = src.data() + static_cast<size_t>(sy) * sw;
+    int y0 = static_cast<int>(static_cast<int64_t>(y) * sh / dh);
+    int y1 = static_cast<int>(static_cast<int64_t>(y + 1) * sh / dh);
+    if (y0 >= sh) y0 = sh - 1;
+    if (y1 <= y0) y1 = y0 + 1;
+    if (y1 > sh) y1 = sh;
     uint8_t* drow = out.data() + static_cast<size_t>(y) * dw;
     for (int x = 0; x < dw; x++) {
-      int sx = static_cast<int>(static_cast<int64_t>(x) * sw / dw);
-      if (sx >= sw) sx = sw - 1;
-      drow[x] = srow[sx];
+      int x0 = static_cast<int>(static_cast<int64_t>(x) * sw / dw);
+      int x1 = static_cast<int>(static_cast<int64_t>(x + 1) * sw / dw);
+      if (x0 >= sw) x0 = sw - 1;
+      if (x1 <= x0) x1 = x0 + 1;
+      if (x1 > sw) x1 = sw;
+      int sum = 0;
+      int cnt = 0;
+      for (int sy = y0; sy < y1; sy++) {
+        const uint8_t* srow = src.data() + static_cast<size_t>(sy) * sw;
+        for (int sx = x0; sx < x1; sx++) {
+          sum += srow[sx];
+          cnt++;
+        }
+      }
+      drow[x] = cnt > 0 ? static_cast<uint8_t>((sum + cnt / 2) / cnt) : 0;
     }
   }
   return out;
@@ -350,6 +364,7 @@ struct FrameCache {
   int maxResults = 0;
   std::vector<double> scales;
   std::vector<MatchBox> matches;
+  double bestScore = -1.0;
 };
 static std::mutex g_frame_cache_mutex;
 static FrameCache g_frame_cache;
@@ -363,7 +378,7 @@ static inline uint64_t _fnv1a(const uint8_t* data, size_t len) {
   return h;
 }
 
-static flutter::EncodableList _matchesToEncodable(const std::vector<MatchBox>& matches) {
+static flutter::EncodableList _matchesToEncodable(const std::vector<MatchBox>& matches, double bestScore = -1.0) {
   flutter::EncodableList out;
   for (const auto& b : matches) {
     flutter::EncodableMap m;
@@ -375,6 +390,9 @@ static flutter::EncodableList _matchesToEncodable(const std::vector<MatchBox>& m
     m[flutter::EncodableValue("matched")] = flutter::EncodableValue(true);
     out.push_back(flutter::EncodableValue(m));
   }
+  flutter::EncodableMap meta;
+  meta[flutter::EncodableValue("best_score")] = flutter::EncodableValue(bestScore);
+  out.push_back(flutter::EncodableValue(meta));
   return out;
 }
 
@@ -2134,7 +2152,7 @@ bool FlutterWindow::OnCreate() {
                 g_frame_cache.threshold == threshold &&
                 g_frame_cache.maxResults == maxResults &&
                 g_frame_cache.scales == scales) {
-              result->Success(flutter::EncodableValue(_matchesToEncodable(g_frame_cache.matches)));
+              result->Success(flutter::EncodableValue(_matchesToEncodable(g_frame_cache.matches, g_frame_cache.bestScore)));
               return;
             }
           }
@@ -2170,6 +2188,8 @@ bool FlutterWindow::OnCreate() {
               return 1;
             };
 
+            double globalBest = -1.0;
+
             for (double scale : scales) {
               if (!(scale > 0.0)) continue;
               const int level = levelFor(scale);
@@ -2187,31 +2207,36 @@ bool FlutterWindow::OnCreate() {
               const int searchH = reg.h - coarseH + 1;
               if (searchW <= 0 || searchH <= 0) continue;
 
-              int coarseStep = 4;
-              if (static_cast<int64_t>(searchW) * searchH > 1000000) coarseStep = 8;
-              const double coarseThreshold = std::max(threshold - 0.15, 0.3);
+              const int coarseStep = 2;
+              const double coarseThreshold = 0.2;
 
               struct CoarseHit { int sx; int sy; double score; };
               const int rows = (searchH + coarseStep - 1) / coarseStep;
               std::vector<std::vector<CoarseHit>> hits(8);
+              std::vector<double> coarseMax(8, -1.0);
 
               _parallelRows(rows, [&](int ti, int nThreads) {
                 auto& out = hits[static_cast<size_t>(ti)];
+                double localMax = -1.0;
                 for (int r = ti; r < rows; r += nThreads) {
                   const int sy = r * coarseStep;
                   if (sy >= searchH) continue;
                   for (int sx = 0; sx < searchW; sx += coarseStep) {
                     const double ncc = _nccAt(reg, coarseTpl, sx, sy);
+                    if (ncc > localMax) localMax = ncc;
                     if (ncc >= coarseThreshold) out.push_back({sx, sy, ncc});
                   }
                 }
+                coarseMax[static_cast<size_t>(ti)] = localMax;
               });
+
+              for (double v : coarseMax) { if (v > globalBest) globalBest = v; }
 
               std::vector<CoarseHit> candidates;
               for (const auto& v : hits) candidates.insert(candidates.end(), v.begin(), v.end());
               std::sort(candidates.begin(), candidates.end(),
                         [](const CoarseHit& a, const CoarseHit& b) { return a.score > b.score; });
-              if (candidates.size() > 20) candidates.resize(20);
+              if (candidates.size() > 64) candidates.resize(64);
 
               const int fineW = static_cast<int>(std::lround(tplW0 * scale));
               const int fineH = static_cast<int>(std::lround(tplH0 * scale));
@@ -2243,16 +2268,21 @@ bool FlutterWindow::OnCreate() {
 
               std::vector<std::pair<int, int>> fineList(fineSet.begin(), fineSet.end());
               std::vector<std::vector<MatchBox>> fineHits(8);
+              std::vector<double> fineMax(8, -1.0);
               _parallelRows(static_cast<int>(fineList.size()), [&](int ti, int nThreads) {
                 auto& out = fineHits[static_cast<size_t>(ti)];
+                double localMax = -1.0;
                 for (size_t i = static_cast<size_t>(ti); i < fineList.size(); i += static_cast<size_t>(nThreads)) {
                   const auto& p = fineList[i];
                   const double ncc = _nccAt(base, fineTpl, p.first, p.second);
+                  if (ncc > localMax) localMax = ncc;
                   if (ncc >= threshold) {
                     out.push_back({ncc, regionX + p.first, regionY + p.second, fineW, fineH});
                   }
                 }
+                fineMax[static_cast<size_t>(ti)] = localMax;
               });
+              for (double v : fineMax) { if (v > globalBest) globalBest = v; }
               for (const auto& v : fineHits) found.insert(found.end(), v.begin(), v.end());
             }
 
@@ -2295,13 +2325,14 @@ bool FlutterWindow::OnCreate() {
               g_frame_cache.maxResults = maxResults;
               g_frame_cache.scales = scales;
               g_frame_cache.matches = kept;
+              g_frame_cache.bestScore = globalBest;
             }
 
             // Post result back to main thread via Windows message
             {
               FindImageResultData data;
               data.result_ptr = result_ptr;
-              data.bestScore = kept.empty() ? -2.0 : kept.front().score;
+              data.bestScore = globalBest;
               data.bestX = kept.empty() ? -1 : kept.front().x;
               data.bestY = kept.empty() ? -1 : kept.front().y;
               data.tplW = kept.empty() ? tplW0 : kept.front().w;
@@ -4138,6 +4169,9 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
       m[flutter::EncodableValue("matched")] = flutter::EncodableValue(true);
       matches.push_back(flutter::EncodableValue(m));
     }
+    flutter::EncodableMap meta;
+    meta[flutter::EncodableValue("best_score")] = flutter::EncodableValue(data.bestScore);
+    matches.push_back(flutter::EncodableValue(meta));
     OutputDebugStringA(("[findImage] main thread callback: matches=" + std::to_string(data.matches.size()) + "\n").c_str());
     data.result_ptr->Success(flutter::EncodableValue(matches));
     delete data.result_ptr;

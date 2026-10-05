@@ -16,6 +16,10 @@ class VisionService {
   static final Expando<String> _templateKeys = Expando<String>();
   static final Set<String> _warmTemplates = <String>{};
 
+  static const List<double> defaultScales = <double>[1.0, 0.95, 1.05, 0.9, 1.1];
+
+  double? lastBestScore;
+
   static String _templateKeyOf(TemplateData template) {
     final cached = _templateKeys[template];
     if (cached != null) return cached;
@@ -94,48 +98,47 @@ class VisionService {
     String? pluginId,
   }) async {
     final limit = maxResults < 1 ? 1 : maxResults;
-    final multiScale = scales != null && scales.length > 1;
+    final effectiveScales = scales ?? defaultScales;
+    final multiScale = effectiveScales.length > 1;
 
-    if (!multiScale) {
-      VisionPlugin? plugin;
-      if (pluginId != null) {
-        plugin = _pluginManager.getPlugin(pluginId);
-        await _pluginManager.ensureInitialized(pluginId);
-      } else {
-        plugin = _pluginManager.getPluginForCapability(VisionCapability.templateMatch);
-        if (plugin != null) await _pluginManager.ensureInitialized(plugin.info.id);
-      }
+    VisionPlugin? plugin;
+    if (pluginId != null) {
+      plugin = _pluginManager.getPlugin(pluginId);
+      await _pluginManager.ensureInitialized(pluginId);
+    } else {
+      final candidate = _pluginManager.getPluginForCapability(VisionCapability.templateMatch);
+      if (candidate != null && !candidate.info.isBuiltin) plugin = candidate;
+    }
 
-      if (plugin != null && plugin.isAvailable) {
-        try {
-          final results = await plugin.findTemplate(
-            regionX: regionX,
-            regionY: regionY,
-            regionW: regionW,
-            regionH: regionH,
-            templatePixels: template.pixels,
-            templateWidth: template.width,
-            templateHeight: template.height,
-            threshold: threshold,
-            maxResults: limit,
-          ).timeout(const Duration(seconds: 15));
-          final out = <MatchResult>[];
-          for (final r in results) {
-            if (r.score < threshold) continue;
-            out.add(MatchResult(x: r.x, y: r.y, width: r.width, height: r.height, score: r.score));
-            if (out.length >= limit) break;
-          }
-          return out;
-        } catch (e) {
-          debugPrint('[findImage] plugin异常: $e');
+    if (plugin != null && plugin.isAvailable && !multiScale) {
+      try {
+        final results = await plugin.findTemplate(
+          regionX: regionX,
+          regionY: regionY,
+          regionW: regionW,
+          regionH: regionH,
+          templatePixels: template.pixels,
+          templateWidth: template.width,
+          templateHeight: template.height,
+          threshold: threshold,
+          maxResults: limit,
+        ).timeout(const Duration(seconds: 15));
+        final out = <MatchResult>[];
+        for (final r in results) {
+          if (r.score < threshold) continue;
+          out.add(MatchResult(x: r.x, y: r.y, width: r.width, height: r.height, score: r.score));
+          if (out.length >= limit) break;
         }
+        return out;
+      } catch (e) {
+        debugPrint('[findImage] plugin异常: $e');
       }
     }
 
     return _findImageDirect(
       regionX, regionY, regionW, regionH, template, threshold,
       maxResults: limit,
-      scales: scales,
+      scales: effectiveScales,
     );
   }
 
@@ -202,13 +205,21 @@ class VisionService {
     if (result == null || result.isEmpty) return const <MatchResult>[];
 
     final out = <MatchResult>[];
+    double? best;
     for (final item in result) {
       if (item is! Map) continue;
+      final bs = (item['best_score'] as num?)?.toDouble();
+      if (bs != null) {
+        best = bs;
+        continue;
+      }
       final score = (item['score'] as num?)?.toDouble() ?? 0.0;
       final matched = item['matched'] as bool? ?? (score >= threshold);
       final x = (item['x'] as num?)?.toInt() ?? -1;
       final y = (item['y'] as num?)?.toInt() ?? -1;
-      if (!matched || x < 0 || y < 0 || score < threshold) continue;
+      if (x < 0 || y < 0) continue;
+      if (best == null || score > best) best = score;
+      if (!matched || score < threshold) continue;
       out.add(MatchResult(
         x: x,
         y: y,
@@ -217,6 +228,7 @@ class VisionService {
         score: score,
       ));
     }
+    lastBestScore = (best != null && best >= 0) ? best : null;
     return out;
   }
 

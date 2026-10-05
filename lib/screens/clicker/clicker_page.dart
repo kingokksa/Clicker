@@ -95,6 +95,10 @@ class _ClickerPageState extends State<ClickerPage> {
     final pageContent = ScaffoldPage.scrollable(
       padding: const EdgeInsets.all(20),
       children: [
+        if (state.followClickerActive) ...[
+          _buildFollowBanner(state),
+          const SizedBox(height: 12),
+        ],
         if (isWide)
           Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Expanded(child: Column(children: modeSections)),
@@ -786,6 +790,21 @@ class _ClickerPageState extends State<ClickerPage> {
           ]),
         ),
       ),
+    );
+  }
+
+  Widget _buildFollowBanner(AppState state) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(color: const Color(0xFF00B0FF).withValues(alpha: 0.1), borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF00B0FF).withValues(alpha: 0.35))),
+      child: Row(children: [
+        const Icon(FluentIcons.machine_learning, size: 16, color: Color(0xFF00B0FF)),
+        const SizedBox(width: 8),
+        const Text('由图像识别控制', style: TextStyle(color: Color(0xFF00B0FF), fontSize: 13, fontWeight: FontWeight.w600)),
+        const SizedBox(width: 10),
+        Text('落点跟随目标中心 · ${state.clickService.followIntervalMs}ms', style: TextStyle(color: const Color(0xFF00B0FF).withValues(alpha: 0.8), fontSize: 12)),
+      ]),
     );
   }
 

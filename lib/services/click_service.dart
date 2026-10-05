@@ -80,6 +80,7 @@ class ClickService {
   int _lastLandingY = -1;
   int _followX = -1;
   int _followY = -1;
+  int _followIntervalMs = 200;
 
   Future<void> _resolveAnchor() async {
     if (!Platform.isWindows) return;
@@ -129,6 +130,7 @@ class ClickService {
 
   void Function(ClickerStatus status, int count)? onStatusChanged;
   void Function(String message)? onError;
+  void Function(bool following)? onFollowChanged;
 
   ClickService(this._input);
 
@@ -138,15 +140,21 @@ class ClickService {
   bool get isRunning => _status == ClickerStatus.running;
 
   bool get hasFollowTarget => _followX >= 0 && _followY >= 0;
+  int get followIntervalMs => _followIntervalMs;
 
-  void setFollowTarget(int x, int y) {
+  void setFollowTarget(int x, int y, int intervalMs) {
+    final wasFollowing = hasFollowTarget;
     _followX = x;
     _followY = y;
+    if (intervalMs > 0) _followIntervalMs = intervalMs;
+    if (!wasFollowing) onFollowChanged?.call(true);
   }
 
   void clearFollowTarget() {
+    final wasFollowing = hasFollowTarget;
     _followX = -1;
     _followY = -1;
+    if (wasFollowing) onFollowChanged?.call(false);
   }
 
   void handleNativeClickerStopped(int count, {int? generation}) {
@@ -206,7 +214,7 @@ class ClickService {
     _lastLandingY = -1;
     floatingPanelPaused = false;
 
-    switch (_config.repeatMode) {
+    switch (hasFollowTarget ? ClickRepeatMode.infinite : _config.repeatMode) {
       case ClickRepeatMode.count:
         _targetCount = _config.repeatCount;
         break;
@@ -218,6 +226,7 @@ class ClickService {
         _targetCount = -1;
         break;
     }
+    if (hasFollowTarget) _durationLimit = null;
 
     _status = ClickerStatus.running;
     _startUiUpdateTimer();
@@ -261,12 +270,13 @@ class ClickService {
   void _scheduleClick({Stopwatch? prevActionElapsed}) {
     if (_status != ClickerStatus.running) return;
 
-    final baseUs = (_config.intervalMs * 1000).round();
+    final baseUs = ((hasFollowTarget ? _followIntervalMs : _config.intervalMs) * 1000).round();
 
-    final wantsRandom = _config.randomDelayMinMs > 0 ||
-        _config.randomDelayMaxMs > 0 ||
-        _config.randomOffsetEnabled;
-    final wantsSequence = _config.clickType == ClickType.sequence;
+    final wantsRandom = !hasFollowTarget &&
+        (_config.randomDelayMinMs > 0 ||
+            _config.randomDelayMaxMs > 0 ||
+            _config.randomOffsetEnabled);
+    final wantsSequence = !hasFollowTarget && _config.clickType == ClickType.sequence;
     final useNative = baseUs <= 50000 &&
         Platform.isWindows &&
         !wantsRandom &&
@@ -437,6 +447,10 @@ class ClickService {
 
   Future<void> _performAction() async {
     if (floatingPanelPaused) return;
+    if (hasFollowTarget) {
+      await _performMouseClick();
+      return;
+    }
     if (_config.clickMode == ClickMode.keyboard) {
       await _performKeyAction();
     } else if (_config.clickMode == ClickMode.touch) {
@@ -570,7 +584,7 @@ class ClickService {
             ? _config.fixedY
             : -1);
 
-    if (x < 0 && y < 0 && _config.randomOffsetEnabled) {
+    if (!following && x < 0 && y < 0 && _config.randomOffsetEnabled) {
       await _resolveAnchor();
       x = _anchorX;
       y = _anchorY;
@@ -582,8 +596,8 @@ class ClickService {
         _config.positionMode == PositionMode.fixed ||
         _config.positionMode == PositionMode.pick;
 
-    if (hasFixedTarget && _config.humanLikeEnabled && _config.humanLikeBezierCurve &&
-        targetX >= 0 && targetY >= 0) {
+    if (!following && hasFixedTarget && _config.humanLikeEnabled &&
+        _config.humanLikeBezierCurve && targetX >= 0 && targetY >= 0) {
       if (_lastMoveX != targetX || _lastMoveY != targetY) {
         await _moveMouseBezier(targetX, targetY);
         _lastMoveX = targetX;
@@ -591,7 +605,7 @@ class ClickService {
       }
     }
 
-    if (x >= 0 && y >= 0 && _config.randomOffsetEnabled) {
+    if (!following && x >= 0 && y >= 0 && _config.randomOffsetEnabled) {
       final p = _applyRandomOffset(x, y);
       x = p.$1;
       y = p.$2;
@@ -600,8 +614,8 @@ class ClickService {
     await _input.mouseClick(
       x: x,
       y: y,
-      button: _config.mouseButton.name,
-      doubleClick: _config.clickType == ClickType.double,
+      button: following ? MouseButton.left.name : _config.mouseButton.name,
+      doubleClick: !following && _config.clickType == ClickType.double,
     );
   }
 

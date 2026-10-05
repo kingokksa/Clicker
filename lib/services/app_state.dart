@@ -54,6 +54,7 @@ class AppState extends ChangeNotifier {
   double _uiScale = 1.15;
 
   ClickerStatus _clickerStatus = ClickerStatus.idle;
+  bool _followClickerActive = false;
   MacroStatus _macroStatus = MacroStatus.idle;
   int _clickCount = 0;
   int _recordingEventCount = 0;
@@ -89,6 +90,7 @@ class AppState extends ChangeNotifier {
   double get uiScale => _uiScale;
   ClickService get clickService => _clickService;
   ClickerStatus get clickerStatus => _clickerStatus;
+  bool get followClickerActive => _followClickerActive;
   MacroStatus get macroStatus => _macroStatus;
   int get clickCount => _clickCount;
   int get recordingEventCount => _recordingEventCount;
@@ -190,6 +192,11 @@ class AppState extends ChangeNotifier {
         _clickCount = count;
         clickCountNotifier.value = count;
         if (statusChanged) notifyListeners();
+      };
+
+      _clickService.onFollowChanged = (following) {
+        _followClickerActive = following;
+        notifyListeners();
       };
 
       _platformInput.onFastClickerStopped = (count, generation) {

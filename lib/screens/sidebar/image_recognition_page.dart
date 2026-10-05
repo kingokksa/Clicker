@@ -465,7 +465,10 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
                 threshold: trigger.matchThreshold,
               );
               conditionMet = result != null;
-              statusText = conditionMet ? '匹配成功 score=${result.score.toStringAsFixed(2)}' : '未找到匹配';
+              final best = _vision.lastBestScore;
+              statusText = conditionMet
+                  ? '匹配成功 score=${result.score.toStringAsFixed(2)}'
+                  : (best != null ? '未找到匹配 (最高 ${best.toStringAsFixed(2)})' : '未找到匹配');
               debugPrint('[图像匹配] 结果: $statusText');
 
               if (conditionMet) {
@@ -643,9 +646,9 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     final cy = det != null ? t.y + det.centerY : t.y + t.h ~/ 2;
     final svc = context.read<AppState>().clickService;
     _followTriggerId = t.id;
-    svc.setFollowTarget(cx, cy);
+    svc.setFollowTarget(cx, cy, t.intervalMs);
     if (!svc.isRunning) await svc.start();
-    _triggerStatus[t.id] = svc.isRunning ? '连点中 ($cx, $cy)' : '连点未启动';
+    _triggerStatus[t.id] = svc.isRunning ? '连点中 ($cx, $cy) ${t.intervalMs}ms' : '连点未启动';
   }
 
   void _stopFollowClicker([String? id]) {
@@ -1174,7 +1177,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
                         Row(children: [
                           Icon(FluentIcons.speed_high, size: 11, color: muted),
                           const SizedBox(width: 4),
-                          Text('间隔', style: TextStyle(fontSize: 11, color: muted)),
+                          Text(t.actionType == _TriggerActionType.followClicker ? '连点间隔' : '间隔', style: TextStyle(fontSize: 11, color: muted)),
                           const SizedBox(width: 6),
                           Expanded(child: AppSlider(
                             value: t.intervalMs.toDouble(),
@@ -2561,6 +2564,7 @@ class _ImageTestTabState extends State<_ImageTestTab> {
   double _confidence = 0.5;
   bool _busy = false;
   String _status = '';
+  double? _bestScore;
   ScreenshotPng? _shot;
   List<_TestBox> _boxes = const [];
   List<OcrLine> _ocrLines = const [];
@@ -2600,6 +2604,7 @@ class _ImageTestTabState extends State<_ImageTestTab> {
       _status = '运行中...';
       _boxes = const [];
       _ocrLines = const [];
+      _bestScore = null;
     });
 
     try {
@@ -2621,9 +2626,11 @@ class _ImageTestTabState extends State<_ImageTestTab> {
             x: m.x - x, y: m.y - y, width: m.width, height: m.height,
             score: m.score, label: '${(m.score * 100).toStringAsFixed(1)}%',
           )).toList();
+          _bestScore = _vision.lastBestScore;
+          final bestText = _bestScore != null ? ' · 最高 ${(_bestScore! * 100).toStringAsFixed(1)}%' : '';
           _status = hits.isEmpty
-              ? '未找到匹配 · ${sw.elapsedMilliseconds}ms'
-              : '找到 ${hits.length} 处 · ${sw.elapsedMilliseconds}ms';
+              ? '未找到匹配$bestText · ${sw.elapsedMilliseconds}ms'
+              : '找到 ${hits.length} 处$bestText · ${sw.elapsedMilliseconds}ms';
         });
       } else if (_operation == 1) {
         final sw = Stopwatch()..start();
@@ -3475,6 +3482,13 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
                 Expanded(child: Text('失去目标：自动停止连点',
                   style: TextStyle(fontSize: 11, color: Color(0xFF00B0FF)))),
               ]),
+              const SizedBox(height: 4),
+              const Row(children: [
+                Icon(FluentIcons.settings, size: 13, color: Color(0xFF00B0FF)),
+                SizedBox(width: 6),
+                Expanded(child: Text('不受「连点」页设置影响：固定鼠标左键单击、无限重复，间隔用下方「连点间隔」',
+                  style: TextStyle(fontSize: 11, color: Color(0xFF00B0FF)))),
+              ]),
               if (!context.read<AppState>().clickerConfig.autoClickEnabled) ...[
                 const SizedBox(height: 4),
                 const Row(children: [
@@ -3536,7 +3550,7 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
         _dialogSectionTitle('其它'),
         const SizedBox(height: 10),
         Row(children: [
-          const Text('检查间隔: ', style: TextStyle(fontSize: 13)),
+          Text(_actionType == _TriggerActionType.followClicker ? '连点间隔: ' : '检查间隔: ', style: const TextStyle(fontSize: 13)),
           Expanded(child: AppSlider(value: _intervalMs.toDouble(), min: 100, max: 5000, divisions: 49, label: '${_intervalMs}ms', onChanged: (v) => setState(() => _intervalMs = v.round()))),
           const SizedBox(width: 8),
           Text('$_intervalMs ms', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
