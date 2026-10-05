@@ -13,6 +13,7 @@ import '../services/hotkey_service.dart';
 import '../services/storage_service.dart';
 import '../services/window_detect_service.dart';
 import '../services/script_engine.dart';
+import '../services/raw_input_service.dart';
 import 'api/api_action.dart';
 import 'api/api_capabilities.dart';
 import 'api/api_server.dart';
@@ -193,11 +194,16 @@ class AppState extends ChangeNotifier {
         _clickCount = count;
         clickCountNotifier.value = count;
         if (statusChanged) notifyListeners();
+        _syncUserInputMonitor();
       };
 
       _clickService.onFollowChanged = (following) {
         _followClickerActive = following;
         notifyListeners();
+      };
+
+      RawInputService.instance.onUserInput = (kind, vk, message, delta) {
+        _clickService.noteUserInput();
       };
 
       _platformInput.onFastClickerStopped = (count, generation) {
@@ -336,6 +342,14 @@ class AppState extends ChangeNotifier {
     _clickService.updateConfig(config);
     _storage.saveClickerConfig(config);
     notifyListeners();
+    _syncUserInputMonitor();
+  }
+
+  Future<void> _syncUserInputMonitor() async {
+    final want = _clickerConfig.userInterventionEnabled &&
+        _clickerStatus == ClickerStatus.running;
+    if (want == RawInputService.instance.monitoring) return;
+    await RawInputService.instance.setUserInputMonitor(want);
   }
 
   void toggleClicker() {

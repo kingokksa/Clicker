@@ -339,6 +339,10 @@ class ClickerConfig {
   int targetClientX;
   int targetClientY;
 
+  bool userInterventionEnabled;
+  bool userInterventionStop;
+  int userInterventionResumeMs;
+
   ClickerConfig({
     this.clickMode = ClickMode.mouse,
     this.clickType = ClickType.single,
@@ -409,6 +413,9 @@ class ClickerConfig {
     this.targetWindowTitle = '',
     this.targetClientX = 0,
     this.targetClientY = 0,
+    this.userInterventionEnabled = false,
+    this.userInterventionStop = false,
+    this.userInterventionResumeMs = 1500,
   });
 
   factory ClickerConfig.fromJson(Map<String, dynamic> json) {
@@ -524,6 +531,9 @@ class ClickerConfig {
       targetWindowTitle: json['targetWindowTitle'] ?? '',
       targetClientX: json['targetClientX'] ?? 0,
       targetClientY: json['targetClientY'] ?? 0,
+      userInterventionEnabled: json['userInterventionEnabled'] ?? false,
+      userInterventionStop: json['userInterventionStop'] ?? false,
+      userInterventionResumeMs: json['userInterventionResumeMs'] ?? 1500,
     );
   }
 
@@ -597,6 +607,9 @@ class ClickerConfig {
         'targetWindowTitle': targetWindowTitle,
         'targetClientX': targetClientX,
         'targetClientY': targetClientY,
+        'userInterventionEnabled': userInterventionEnabled,
+        'userInterventionStop': userInterventionStop,
+        'userInterventionResumeMs': userInterventionResumeMs,
       };
 
   ClickerConfig copyWith({
@@ -669,6 +682,9 @@ class ClickerConfig {
     String? targetWindowTitle,
     int? targetClientX,
     int? targetClientY,
+    bool? userInterventionEnabled,
+    bool? userInterventionStop,
+    int? userInterventionResumeMs,
   }) {
     return ClickerConfig(
       clickMode: clickMode ?? this.clickMode,
@@ -740,6 +756,9 @@ class ClickerConfig {
       targetWindowTitle: targetWindowTitle ?? this.targetWindowTitle,
       targetClientX: targetClientX ?? this.targetClientX,
       targetClientY: targetClientY ?? this.targetClientY,
+      userInterventionEnabled: userInterventionEnabled ?? this.userInterventionEnabled,
+      userInterventionStop: userInterventionStop ?? this.userInterventionStop,
+      userInterventionResumeMs: userInterventionResumeMs ?? this.userInterventionResumeMs,
     );
   }
 }

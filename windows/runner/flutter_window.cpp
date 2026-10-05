@@ -1106,6 +1106,26 @@ static int g_hook_hotkey_count = 0;
 static int g_hook_modifiers = 0;  // Current modifier key state (tracked in hook)
 static flutter::MethodChannel<flutter::EncodableValue>* g_hotkey_channel = nullptr;
 
+// -- Raw input / user input monitoring --------------------------------------
+
+static bool g_raw_input_enabled = false;
+static bool g_user_input_monitor = false;
+static flutter::MethodChannel<flutter::EncodableValue>* g_raw_input_channel = nullptr;
+static POINT g_user_move_last = {0, 0};
+
+static bool RegisterRawInputDevicesFor(HWND hwnd, bool enable) {
+  RAWINPUTDEVICE devices[2] = {};
+  devices[0].usUsagePage = 0x01;
+  devices[0].usUsage = 0x02;
+  devices[1].usUsagePage = 0x01;
+  devices[1].usUsage = 0x06;
+  for (auto& device : devices) {
+    device.dwFlags = enable ? RIDEV_INPUTSINK : RIDEV_REMOVE;
+    device.hwndTarget = enable ? hwnd : nullptr;
+  }
+  return RegisterRawInputDevices(devices, 2, sizeof(RAWINPUTDEVICE)) == TRUE;
+}
+
 // -- Overlay Window Implementation -------------------------------------------
 
 OverlayState g_overlay;
@@ -3819,6 +3839,53 @@ bool FlutterWindow::OnCreate() {
         }
       });
 
+  // -- Raw input channel ----------------------------------------------------
+  raw_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(),
+          "com.clicker.pro/rawinput",
+          &flutter::StandardMethodCodec::GetInstance());
+  g_raw_input_channel = raw_channel_.get();
+
+  raw_channel_->SetMethodCallHandler(
+      [this](const flutter::MethodCall<flutter::EncodableValue>& call,
+             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
+                 result) {
+        const auto* arguments = call.arguments();
+        const auto* list =
+            arguments ? std::get_if<flutter::EncodableList>(arguments) : nullptr;
+        const bool enable =
+            list != nullptr && !list->empty() &&
+            std::get_if<bool>(&list->at(0)) != nullptr &&
+            std::get<bool>(list->at(0));
+        if (call.method_name() == "setRawInputEnabled") {
+          if (enable == g_raw_input_enabled) {
+            result->Success(flutter::EncodableValue(g_raw_input_enabled));
+            return;
+          }
+          if (RegisterRawInputDevicesFor(GetHandle(), enable)) {
+            g_raw_input_enabled = enable;
+            result->Success(flutter::EncodableValue(enable));
+          } else {
+            result->Error("RAW_INPUT_FAILED", "RegisterRawInputDevices failed");
+          }
+        } else if (call.method_name() == "setUserInputMonitor") {
+          if (enable && !keyboard_hook_) {
+            g_flutter_window_for_hooks = this;
+            keyboard_hook_ =
+                SetWindowsHookExW(WH_KEYBOARD_LL, KeyboardHookProc, nullptr, 0);
+            mouse_hook_ =
+                SetWindowsHookExW(WH_MOUSE_LL, MouseHookProc, nullptr, 0);
+          }
+          g_user_input_monitor = enable;
+          GetCursorPos(&g_user_move_last);
+          result->Success(flutter::EncodableValue(
+              enable ? (keyboard_hook_ != nullptr) : true));
+        } else {
+          result->NotImplemented();
+        }
+      });
+
   // -- Macro recording channel ----------------------------------------------
   record_channel_ =
       std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
@@ -3990,6 +4057,16 @@ LRESULT CALLBACK FlutterWindow::KeyboardHookProc(int code, WPARAM wparam, LPARAM
     bool key_up = (wparam == WM_KEYUP || wparam == WM_SYSKEYUP);
     bool is_injected = (kb->flags & LLKHF_INJECTED) != 0;
 
+    if (g_user_input_monitor && !is_injected && (key_down || key_up) &&
+        g_raw_input_channel) {
+      flutter::EncodableMap map;
+      map[flutter::EncodableValue("kind")] = flutter::EncodableValue("keyboard");
+      map[flutter::EncodableValue("vk")] = flutter::EncodableValue(vk);
+      map[flutter::EncodableValue("down")] = flutter::EncodableValue(key_down);
+      g_raw_input_channel->InvokeMethod(
+          "onUserInput", std::make_unique<flutter::EncodableValue>(map));
+    }
+
     // Track modifier key state for hook-based hotkeys
     if (!is_injected) {
       if (vk == VK_MENU || vk == VK_LMENU || vk == VK_RMENU) {
@@ -4069,6 +4146,30 @@ LRESULT CALLBACK FlutterWindow::MouseHookProc(int code, WPARAM wparam, LPARAM lp
     // Hold trigger: detect mouse button down/up for registered mouse triggers
     // Ignore injected events (from SendInput) to prevent feedback loop
     bool is_mouse_injected = (ms->flags & LLMHF_INJECTED) != 0;
+
+    if (g_user_input_monitor && !is_mouse_injected && g_raw_input_channel) {
+      int kind_delta = 0;
+      if (wparam == WM_MOUSEMOVE) {
+        kind_delta = std::abs(static_cast<int>(ms->pt.x) - g_user_move_last.x) +
+                     std::abs(static_cast<int>(ms->pt.y) - g_user_move_last.y);
+        g_user_move_last = ms->pt;
+      }
+      const bool button_event =
+          wparam == WM_LBUTTONDOWN || wparam == WM_LBUTTONUP ||
+          wparam == WM_RBUTTONDOWN || wparam == WM_RBUTTONUP ||
+          wparam == WM_MBUTTONDOWN || wparam == WM_MBUTTONUP ||
+          wparam == WM_XBUTTONDOWN || wparam == WM_XBUTTONUP ||
+          wparam == WM_MOUSEWHEEL || wparam == WM_MOUSEHWHEEL;
+      if (button_event || kind_delta >= 4) {
+        flutter::EncodableMap map;
+        map[flutter::EncodableValue("kind")] = flutter::EncodableValue("mouse");
+        map[flutter::EncodableValue("message")] =
+            flutter::EncodableValue(static_cast<int>(wparam));
+        map[flutter::EncodableValue("dx")] = flutter::EncodableValue(kind_delta);
+        g_raw_input_channel->InvokeMethod(
+            "onUserInput", std::make_unique<flutter::EncodableValue>(map));
+      }
+    }
     if (g_hold_trigger_count > 0 && !is_mouse_injected &&
         (wparam == WM_LBUTTONDOWN || wparam == WM_LBUTTONUP ||
          wparam == WM_RBUTTONDOWN || wparam == WM_RBUTTONUP ||
@@ -4130,6 +4231,50 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  if (message == WM_INPUT) {
+    if (g_raw_input_enabled && raw_channel_) {
+      UINT size = 0;
+      auto handle = reinterpret_cast<HRAWINPUT>(lparam);
+      if (GetRawInputData(handle, RID_INPUT, nullptr, &size,
+                          sizeof(RAWINPUTHEADER)) == 0 &&
+          size > 0 && size <= sizeof(RAWINPUT)) {
+        RAWINPUT raw;
+        if (GetRawInputData(handle, RID_INPUT, &raw, &size,
+                            sizeof(RAWINPUTHEADER)) == size) {
+          if (raw.header.dwType == RIM_TYPEMOUSE) {
+            const auto& mouse = raw.data.mouse;
+            if ((mouse.usFlags & MOUSE_MOVE_ABSOLUTE) == 0 &&
+                (mouse.lLastX != 0 || mouse.lLastY != 0)) {
+              flutter::EncodableMap map;
+              map[flutter::EncodableValue("dx")] =
+                  flutter::EncodableValue(static_cast<int>(mouse.lLastX));
+              map[flutter::EncodableValue("dy")] =
+                  flutter::EncodableValue(static_cast<int>(mouse.lLastY));
+              map[flutter::EncodableValue("buttons")] =
+                  flutter::EncodableValue(static_cast<int>(mouse.usButtonFlags));
+              raw_channel_->InvokeMethod(
+                  "onRawMouseMove",
+                  std::make_unique<flutter::EncodableValue>(map));
+            }
+          } else if (raw.header.dwType == RIM_TYPEKEYBOARD) {
+            const auto& keyboard = raw.data.keyboard;
+            if (keyboard.VKey != 255) {
+              flutter::EncodableMap map;
+              map[flutter::EncodableValue("vk")] =
+                  flutter::EncodableValue(static_cast<int>(keyboard.VKey));
+              map[flutter::EncodableValue("down")] = flutter::EncodableValue(
+                  (keyboard.Flags & RI_KEY_BREAK) == 0);
+              map[flutter::EncodableValue("scan")] =
+                  flutter::EncodableValue(static_cast<int>(keyboard.MakeCode));
+              raw_channel_->InvokeMethod(
+                  "onRawKey", std::make_unique<flutter::EncodableValue>(map));
+            }
+          }
+        }
+      }
+    }
+  }
+
   if (message == WM_DROPFILES) {
     HDROP drop = reinterpret_cast<HDROP>(wparam);
     const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);

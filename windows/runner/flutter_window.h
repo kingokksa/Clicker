@@ -41,6 +41,9 @@ class FlutterWindow : public Win32Window {
   // Method channel for macro recording hooks.
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> record_channel_;
 
+  // Method channel for raw input / user input monitoring.
+  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> raw_channel_;
+
   // System tray
   NOTIFYICONDATAW tray_icon_data_ = {};
   bool tray_icon_created_ = false;

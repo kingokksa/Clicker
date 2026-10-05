@@ -96,6 +96,8 @@ class _ClickerPageState extends State<ClickerPage> {
         _spacing,
         _section(title: '按下保持', icon: FluentIcons.timer, child: _buildHoldSelector(config, state, theme)),
       ],
+      _spacing,
+      _section(title: '用户介入', icon: FluentIcons.pause, child: _buildUserIntervention(config, state, theme)),
     ];
 
     final pageContent = ScaffoldPage.scrollable(
@@ -114,7 +116,7 @@ class _ClickerPageState extends State<ClickerPage> {
         else
           ...modeSections,
         if (!isWide) ...settingsSections,
-        if (state.isClickerRunning) ...[
+        if (state.isClickerRunning || state.clickService.isUserPaused) ...[
           const SizedBox(height: 12),
           _buildStatusBar(state, theme),
         ],
@@ -623,6 +625,49 @@ class _ClickerPageState extends State<ClickerPage> {
     ]);
   }
 
+  Widget _buildUserIntervention(ClickerConfig config, AppState state, FluentThemeData theme) {
+    return Builder(builder: (context) {
+      final isDark = FluentTheme.of(context).brightness == Brightness.dark;
+      final muted = isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A);
+      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Expanded(child: Text('真实鼠标/键盘输入时', style: TextStyle(fontSize: 13, color: muted))),
+          ToggleSwitch(
+            checked: config.userInterventionEnabled,
+            onChanged: (v) => state.setClickerConfig(config.copyWith(userInterventionEnabled: v)),
+          ),
+        ]),
+        if (config.userInterventionEnabled) ...[
+          const SizedBox(height: 8),
+          Row(children: [
+            _selectChip('暂停后自动恢复', !config.userInterventionStop,
+                () => state.setClickerConfig(config.copyWith(userInterventionStop: false))),
+            const SizedBox(width: 8),
+            _selectChip('直接停止', config.userInterventionStop,
+                () => state.setClickerConfig(config.copyWith(userInterventionStop: true))),
+          ]),
+          if (!config.userInterventionStop) ...[
+            const SizedBox(height: 8),
+            Row(children: [
+              Text('恢复延迟', style: TextStyle(fontSize: 13, color: muted)),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 90,
+                child: _DebouncedIntervalTextBox(
+                  value: config.userInterventionResumeMs.toDouble(),
+                  onChanged: (v) => state.setClickerConfig(
+                      config.copyWith(userInterventionResumeMs: v.round())),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text('ms', style: TextStyle(fontSize: 13, color: muted)),
+            ]),
+          ],
+        ],
+      ]);
+    });
+  }
+
   Widget _buildPositionSelector(BuildContext context, ClickerConfig config, AppState state, FluentThemeData theme) {
     final isFixed = config.positionMode == PositionMode.fixed;
     return Column(children: [
@@ -780,7 +825,7 @@ class _ClickerPageState extends State<ClickerPage> {
   }
 
   Widget _buildFAB(AppState state, FluentThemeData theme) {
-    final isRunning = state.isClickerRunning;
+    final isRunning = state.isClickerRunning || state.clickService.isUserPaused;
     final canStart = state.clickerConfig.autoClickEnabled;
     final hotkey = state.hotkeyConfig.startStopClicker;
     final isDark = theme.brightness == Brightness.dark;
@@ -837,6 +882,8 @@ class _ClickerPageState extends State<ClickerPage> {
 
   Widget _buildStatusBar(AppState state, FluentThemeData theme) {
     final isKeyboard = state.clickerConfig.clickMode == ClickMode.keyboard;
+    final paused = state.clickService.isUserPaused;
+    final statusColor = paused ? const Color(0xFFFFB300) : const Color(0xFF00E676);
     final showStats = state.clickerConfig.statsEnabled;
     String fmtElapsed(Duration? elapsed) => elapsed != null
         ? (elapsed.inHours > 0 ? '${elapsed.inHours}h ${elapsed.inMinutes % 60}m' : (elapsed.inMinutes > 0 ? '${elapsed.inMinutes}m ${elapsed.inSeconds % 60}s' : '${elapsed.inSeconds}s'))
@@ -844,22 +891,22 @@ class _ClickerPageState extends State<ClickerPage> {
     return ExcludeSemantics(
       child: Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(color: const Color(0xFF00E676).withValues(alpha: 0.08), borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF00E676).withValues(alpha: 0.3))),
+      decoration: BoxDecoration(color: statusColor.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: statusColor.withValues(alpha: 0.3))),
       child: ValueListenableBuilder<int>(
         valueListenable: state.clickCountNotifier,
         builder: (_, count, __) => Row(children: [
-          const Icon(FluentIcons.circle_fill, size: 8, color: Color(0xFF00E676)),
+          Icon(FluentIcons.circle_fill, size: 8, color: statusColor),
           const SizedBox(width: 8),
-          Text('运行中 · ${isKeyboard ? "已按键" : "已点击"} $count 次', style: const TextStyle(color: Color(0xFF00E676), fontSize: 13)),
+          Text('${paused ? "已暂停" : "运行中"} · ${isKeyboard ? "已按键" : "已点击"} $count 次', style: TextStyle(color: statusColor, fontSize: 13)),
           if (showStats) ...[
             const SizedBox(width: 12),
-            Text('${state.clickService.averageCps.toStringAsFixed(1)} CPS', style: TextStyle(color: const Color(0xFF00E676).withValues(alpha: 0.8), fontSize: 12)),
+            Text('${state.clickService.averageCps.toStringAsFixed(1)} CPS', style: TextStyle(color: statusColor.withValues(alpha: 0.8), fontSize: 12)),
             const SizedBox(width: 8),
-            Text(fmtElapsed(state.clickService.elapsedDuration), style: TextStyle(color: const Color(0xFF00E676).withValues(alpha: 0.7), fontSize: 12)),
+            Text(fmtElapsed(state.clickService.elapsedDuration), style: TextStyle(color: statusColor.withValues(alpha: 0.7), fontSize: 12)),
           ],
           const Spacer(),
-          Text('${state.clickerConfig.intervalMs}ms/次', style: TextStyle(color: const Color(0xFF00E676).withValues(alpha: 0.7), fontSize: 12)),
+          Text('${state.clickerConfig.intervalMs}ms/次', style: TextStyle(color: statusColor.withValues(alpha: 0.7), fontSize: 12)),
         ]),
       ),
     ));

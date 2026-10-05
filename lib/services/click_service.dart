@@ -67,6 +67,7 @@ class ClickService {
   int _targetCount = 0;
   Timer? _timer;
   Timer? _uiUpdateTimer;
+  Timer? _userPauseTimer;
   DateTime? _startTime;
   Duration? _durationLimit;
   final Random _random = Random();
@@ -190,6 +191,8 @@ class ClickService {
 
   Future<void> start() async {
     if (_status == ClickerStatus.running) return;
+    _userPauseTimer?.cancel();
+    _userPauseTimer = null;
     final isBackgroundMode = _config.backgroundExecutionEnabled && _config.targetHwnd != 0;
     if (!_config.autoClickEnabled && !isBackgroundMode) {
       onError?.call('自动连点功能未启用，请在功能管理中开启');
@@ -779,19 +782,26 @@ class ClickService {
     return false;
   }
 
+  void _stopNativeFastClicker() {
+    if (!_usingNativeClicker) return;
+    _usingNativeClicker = false;
+    _platformChannel.invokeMethod<bool>('stopFastClicker');
+    _fetchNativeClickCount().then((count) {
+      _clickCount = count;
+    });
+  }
+
   void stop() {
     clearFollowTarget();
     _timer?.cancel();
     _timer = null;
     _uiUpdateTimer?.cancel();
     _uiUpdateTimer = null;
+    _userPauseTimer?.cancel();
+    _userPauseTimer = null;
 
     if (_usingNativeClicker) {
-      _usingNativeClicker = false;
-      _platformChannel.invokeMethod<bool>('stopFastClicker');
-      _fetchNativeClickCount().then((count) {
-        _clickCount = count;
-      });
+      _stopNativeFastClicker();
     }
 
     if (_config.clickMode == ClickMode.keyboard &&
@@ -841,6 +851,36 @@ class ClickService {
     } else {
       start();
     }
+  }
+
+  bool get isUserPaused => _status == ClickerStatus.paused;
+
+  void noteUserInput() {
+    if (!_config.userInterventionEnabled) return;
+    if (_status != ClickerStatus.running) return;
+    if (_config.userInterventionStop) {
+      _log('user intervention: stop');
+      stop();
+      return;
+    }
+    final resumeMs = _config.userInterventionResumeMs.clamp(100, 60000);
+    _userPauseTimer?.cancel();
+    if (_status != ClickerStatus.paused) {
+      _log('user intervention: pause');
+      _status = ClickerStatus.paused;
+      _timer?.cancel();
+      _timer = null;
+      if (_usingNativeClicker) _stopNativeFastClicker();
+      onStatusChanged?.call(_status, _clickCount);
+    }
+    _userPauseTimer = Timer(Duration(milliseconds: resumeMs), () {
+      _userPauseTimer = null;
+      if (_status != ClickerStatus.paused) return;
+      _log('user intervention: resume');
+      _status = ClickerStatus.running;
+      onStatusChanged?.call(_status, _clickCount);
+      _scheduleClick();
+    });
   }
 
   void dispose() {
