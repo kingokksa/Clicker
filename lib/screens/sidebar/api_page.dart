@@ -1,5 +1,3 @@
-library;
-
 import 'dart:convert';
 
 import 'package:fluent_ui/fluent_ui.dart';

@@ -44,7 +44,7 @@ class SystemTrayService {
     for (final handler in _externalHandlers) {
       try {
         final result = await handler(call);
-        if (result != null) return result;
+        if (result != null && result != false) return result;
       } catch (_) {}
     }
 

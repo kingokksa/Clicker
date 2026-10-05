@@ -1,5 +1,3 @@
-library;
-
 import 'dart:io';
 
 class AppPaths {

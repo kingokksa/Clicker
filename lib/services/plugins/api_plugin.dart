@@ -1,5 +1,3 @@
-library;
-
 import '../plugin/plugin_api.dart';
 import '../plugin/plugin_manifest.dart';
 import '../../screens/sidebar/api_page.dart';

@@ -25,15 +25,15 @@ class ImageImportService {
   void ensureDropHandler() {
     if (_unregister != null) return;
     _unregister = SystemTrayService().registerExternalHandler((call) async {
-      if (call.method != 'onFilesDropped') return false;
-      if (!_dropController.hasListener) return false;
+      if (call.method != 'onFilesDropped') return null;
+      if (!_dropController.hasListener) return null;
       final args = call.arguments;
-      if (args is! Map) return false;
+      if (args is! Map) return null;
       final raw = args['paths'];
-      if (raw is! List) return false;
+      if (raw is! List) return null;
       final paths = raw.whereType<String>().toList();
       final template = await fromPaths(paths);
-      if (template == null) return false;
+      if (template == null) return null;
       _dropController.add(template);
       return true;
     });

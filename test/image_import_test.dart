@@ -200,4 +200,64 @@ void main() {
       await sub.cancel();
     });
   });
+
+  group('外部处理器分发顺序', () {
+    setUp(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('com.clicker.pro/platform'),
+        (call) async => null,
+      );
+    });
+
+    test('拖拽处理器不会吞掉后续处理器的覆盖层回调', () async {
+      await SystemTrayService().init();
+      ImageImportService.instance.ensureDropHandler();
+
+      final seen = <String>[];
+      SystemTrayService().registerExternalHandler((call) async {
+        if (call.method != 'onOverlayClick') return null;
+        seen.add(call.method);
+        return true;
+      });
+
+      await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(
+        'com.clicker.pro/platform',
+        const StandardMethodCodec().encodeMethodCall(
+          const MethodCall('onOverlayClick', <String, dynamic>{'x': 10, 'y': 20}),
+        ),
+        (_) {},
+      );
+
+      expect(seen, contains('onOverlayClick'));
+    });
+
+    test('返回 false 的处理器不阻断后续处理器', () async {
+      await SystemTrayService().init();
+
+      final seen = <String>[];
+      SystemTrayService().registerExternalHandler((call) async {
+        seen.add('first:${call.method}');
+        return false;
+      });
+      SystemTrayService().registerExternalHandler((call) async {
+        if (call.method != 'onOverlayCancelled') return null;
+        seen.add('second:${call.method}');
+        return true;
+      });
+
+      await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(
+        'com.clicker.pro/platform',
+        const StandardMethodCodec().encodeMethodCall(
+          const MethodCall('onOverlayCancelled', null),
+        ),
+        (_) {},
+      );
+
+      expect(seen, contains('first:onOverlayCancelled'));
+      expect(seen, contains('second:onOverlayCancelled'));
+    });
+  });
 }
