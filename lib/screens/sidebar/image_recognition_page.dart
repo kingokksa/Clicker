@@ -264,6 +264,12 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
       try {
         final list = jsonDecode(triggersJson) as List;
         for (final m in list) {
+          final tx = (m['x'] as num?)?.toInt() ?? 0;
+          final ty = (m['y'] as num?)?.toInt() ?? 0;
+          final tw = (m['w'] as num?)?.toInt() ?? 100;
+          final th = (m['h'] as num?)?.toInt() ?? 100;
+          final ax = (m['actionX'] as num?)?.toInt() ?? 0;
+          final ay = (m['actionY'] as num?)?.toInt() ?? 0;
           _triggers.add(_TriggerEntry(
             id: m['id'] ?? '',
             name: m['name'] ?? '',
@@ -272,7 +278,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
             actionType: _TriggerActionType.values.firstWhere(
               (e) => e.name == m['actionType'], orElse: () => _TriggerActionType.click),
             enabled: m['enabled'] ?? true,
-            x: m['x'] ?? 0, y: m['y'] ?? 0, w: m['w'] ?? 100, h: m['h'] ?? 100,
+            x: tx, y: ty, w: tw, h: th,
             matchThreshold: (m['matchThreshold'] as num?)?.toDouble() ?? 0.8,
             targetText: m['targetText'] ?? '',
             textMatchMode: _TextMatchMode.values.firstWhere(
@@ -282,7 +288,8 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
             targetElementName: m['targetElementName'] ?? '',
             targetElementId: m['targetElementId'] ?? '',
             targetElementType: m['targetElementType'] ?? '',
-            actionX: m['actionX'] ?? 0, actionY: m['actionY'] ?? 0,
+            actionX: ax == 0 && ay == 0 ? tx + tw ~/ 2 : ax,
+            actionY: ax == 0 && ay == 0 ? ty + th ~/ 2 : ay,
             actionKey: m['actionKey'] ?? '',
             macroId: m['macroId'] ?? '',
             intervalMs: m['intervalMs'] ?? 500,
@@ -654,8 +661,15 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
   Future<void> _executeTriggerAction(_TriggerEntry trigger) async {
     switch (trigger.actionType) {
       case _TriggerActionType.click:
-        debugPrint('[触发动作] click (${trigger.actionX}, ${trigger.actionY})');
-        await _platformChannel.invokeMethod('sendClick', [trigger.actionX, trigger.actionY, 0]);
+        var ax = trigger.actionX;
+        var ay = trigger.actionY;
+        if (ax == 0 && ay == 0) {
+          ax = trigger.x + trigger.w ~/ 2;
+          ay = trigger.y + trigger.h ~/ 2;
+          debugPrint('[触发动作] click 坐标未设置，回落到区域中心');
+        }
+        debugPrint('[触发动作] click ($ax, $ay)');
+        await _platformChannel.invokeMethod('sendClick', [ax, ay, 0]);
         break;
       case _TriggerActionType.clickTargetCenter:
         final det = _lastDetectionResults[trigger.id];
@@ -3010,14 +3024,17 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
             child: Text(t.label),
           )).toList(),
           onChanged: (v) {
-            if (v != null) {
-              setState(() {
-                _conditionType = v;
-                if (v == _TriggerConditionType.objectDetect && _actionType != _TriggerActionType.clickTargetCenter && _actionType != _TriggerActionType.keyPress) {
-                  _actionType = _TriggerActionType.clickTargetCenter;
-                }
-              });
-            }
+            if (v == null) return;
+            setState(() {
+              _conditionType = v;
+              final targetLike = v == _TriggerConditionType.imageMatch ||
+                  v == _TriggerConditionType.textMatch ||
+                  v == _TriggerConditionType.objectDetect ||
+                  v == _TriggerConditionType.elementMatch;
+              if (targetLike && _actionType != _TriggerActionType.clickTargetCenter && _actionType != _TriggerActionType.keyPress) {
+                _actionType = _TriggerActionType.clickTargetCenter;
+              }
+            });
           },
         ),
 
@@ -3224,7 +3241,18 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
             value: t,
             child: Text(t.label),
           )).toList(),
-          onChanged: (v) { if (v != null) setState(() => _actionType = v); },
+          onChanged: (v) {
+            if (v == null) return;
+            setState(() {
+              _actionType = v;
+              if (v == _TriggerActionType.click && _actionX == 0 && _actionY == 0) {
+                _actionX = _x + _w ~/ 2;
+                _actionY = _y + _h ~/ 2;
+                _actionXCtrl.text = _actionX.toString();
+                _actionYCtrl.text = _actionY.toString();
+              }
+            });
+          },
         ),
 
         if (_actionType == _TriggerActionType.click) ...[
