@@ -7,6 +7,7 @@ abstract class PlatformInput {
     required int y,
     String button = 'left',
     bool doubleClick = false,
+    int holdMs = 0,
   });
 
   void syncClick({required int x, required int y, String button = 'left'});

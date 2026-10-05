@@ -301,6 +301,8 @@ class ClickerConfig {
   int randomOffsetMinPx;
   int randomOffsetMaxPx;
 
+  int clickHoldMs;
+
   bool holdTriggerEnabled;
   String holdTriggerKey;
 
@@ -376,6 +378,7 @@ class ClickerConfig {
     this.randomOffsetEnabled = false,
     this.randomOffsetMinPx = 1,
     this.randomOffsetMaxPx = 5,
+    this.clickHoldMs = 0,
     this.holdTriggerEnabled = false,
     this.holdTriggerKey = 'F5',
     this.autoClickEnabled = true,
@@ -478,6 +481,7 @@ class ClickerConfig {
       randomOffsetEnabled: json['randomOffsetEnabled'] ?? false,
       randomOffsetMinPx: json['randomOffsetMinPx'] ?? 1,
       randomOffsetMaxPx: json['randomOffsetMaxPx'] ?? 5,
+      clickHoldMs: json['clickHoldMs'] ?? 0,
       holdTriggerEnabled: json['holdTriggerEnabled'] ?? false,
       holdTriggerKey: json['holdTriggerKey'] ?? 'F5',
       autoClickEnabled: json['autoClickEnabled'] ?? true,
@@ -562,6 +566,7 @@ class ClickerConfig {
         'randomOffsetEnabled': randomOffsetEnabled,
         'randomOffsetMinPx': randomOffsetMinPx,
         'randomOffsetMaxPx': randomOffsetMaxPx,
+        'clickHoldMs': clickHoldMs,
         'holdTriggerEnabled': holdTriggerEnabled,
         'holdTriggerKey': holdTriggerKey,
         'autoClickEnabled': autoClickEnabled,
@@ -633,6 +638,7 @@ class ClickerConfig {
     bool? randomOffsetEnabled,
     int? randomOffsetMinPx,
     int? randomOffsetMaxPx,
+    int? clickHoldMs,
     bool? holdTriggerEnabled,
     String? holdTriggerKey,
     bool? autoClickEnabled,
@@ -703,6 +709,7 @@ class ClickerConfig {
       randomOffsetEnabled: randomOffsetEnabled ?? this.randomOffsetEnabled,
       randomOffsetMinPx: randomOffsetMinPx ?? this.randomOffsetMinPx,
       randomOffsetMaxPx: randomOffsetMaxPx ?? this.randomOffsetMaxPx,
+      clickHoldMs: clickHoldMs ?? this.clickHoldMs,
       holdTriggerEnabled: holdTriggerEnabled ?? this.holdTriggerEnabled,
       holdTriggerKey: holdTriggerKey ?? this.holdTriggerKey,
       autoClickEnabled: autoClickEnabled ?? this.autoClickEnabled,

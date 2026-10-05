@@ -509,7 +509,7 @@ class ClickService {
 
     switch (_config.touchAction) {
       case TouchAction.tap:
-        await _input.mouseClick(x: x, y: y, button: 'left');
+        await _input.mouseClick(x: x, y: y, button: 'left', holdMs: _config.clickHoldMs);
         break;
       case TouchAction.longPress:
         await _input.touchLongPress(
@@ -616,6 +616,7 @@ class ClickService {
       y: y,
       button: following ? MouseButton.left.name : _config.mouseButton.name,
       doubleClick: !following && _config.clickType == ClickType.double,
+      holdMs: _config.clickHoldMs,
     );
   }
 
@@ -659,10 +660,10 @@ class ClickService {
       if (_status != ClickerStatus.running) break;
       switch (item.action) {
         case MouseActionType.click:
-          await _input.mouseClick(x: x, y: y, button: item.button.name, doubleClick: false);
+          await _input.mouseClick(x: x, y: y, button: item.button.name, doubleClick: false, holdMs: _config.clickHoldMs);
           break;
         case MouseActionType.doubleClick:
-          await _input.mouseClick(x: x, y: y, button: item.button.name, doubleClick: true);
+          await _input.mouseClick(x: x, y: y, button: item.button.name, doubleClick: true, holdMs: _config.clickHoldMs);
           break;
         case MouseActionType.press:
           await _input.mouseDown(x: x, y: y, button: item.button.name);

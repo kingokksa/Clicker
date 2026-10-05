@@ -54,6 +54,23 @@ static int64_t GetInt64(const flutter::EncodableValue& val) {
   return 0;
 }
 
+static void _prepareBackgroundTarget(HWND hwnd, int x, int y, int fromScreen,
+                                     LPARAM* lp, bool hoverFirst) {
+  if (fromScreen) {
+    POINT pt = {x, y};
+    ScreenToClient(hwnd, &pt);
+    x = pt.x;
+    y = pt.y;
+  }
+  *lp = MAKELPARAM(static_cast<WORD>(x), static_cast<WORD>(y));
+  if (GetForegroundWindow() != hwnd) {
+    PostMessage(hwnd, WM_ACTIVATE, MAKEWPARAM(WA_ACTIVE, 0), 0);
+  }
+  if (hoverFirst) {
+    PostMessage(hwnd, WM_MOUSEMOVE, 0, *lp);
+  }
+}
+
 // ─── Hidden Command Execution ──────────────────────────────
 // Run a command without showing a console window.
 // Uses CreateProcess with CREATE_NO_WINDOW instead of _popen,
@@ -3683,7 +3700,7 @@ bool FlutterWindow::OnCreate() {
           result->Success(flutter::EncodableValue(true));
         } else if (call.method_name() == "backgroundClick") {
           // Send a single background click via PostMessage
-          // args = [hwnd, clientX, clientY, button]
+          // args = [hwnd, clientX, clientY, button, fromScreen]
           const auto* args = std::get_if<flutter::EncodableList>(call.arguments());
           if (!args || args->size() < 4) {
             result->Error("INVALID_ARGS", "Expected [hwnd, clientX, clientY, button]");
@@ -3693,8 +3710,10 @@ bool FlutterWindow::OnCreate() {
           int clientX = GetInt(args->at(1));
           int clientY = GetInt(args->at(2));
           int button = GetInt(args->at(3));  // 0=left, 1=right, 2=middle
+          int fromScreen = args->size() >= 5 ? GetInt(args->at(4)) : 0;
           if (targetHwnd && IsWindow(targetHwnd)) {
-            LPARAM lp = MAKELPARAM(static_cast<WORD>(clientX), static_cast<WORD>(clientY));
+            LPARAM lp = 0;
+            _prepareBackgroundTarget(targetHwnd, clientX, clientY, fromScreen, &lp, true);
             UINT msg_down = WM_LBUTTONDOWN, msg_up = WM_LBUTTONUP;
             WPARAM wp_down = MK_LBUTTON;
             if (button == 1) { msg_down = WM_RBUTTONDOWN; msg_up = WM_RBUTTONUP; wp_down = MK_RBUTTON; }
@@ -3707,7 +3726,7 @@ bool FlutterWindow::OnCreate() {
           }
         } else if (call.method_name() == "backgroundMouseDown") {
           // Send background mouse down via PostMessage
-          // args = [hwnd, clientX, clientY, button]
+          // args = [hwnd, clientX, clientY, button, fromScreen]
           const auto* args = std::get_if<flutter::EncodableList>(call.arguments());
           if (!args || args->size() < 4) {
             result->Error("INVALID_ARGS", "Expected [hwnd, clientX, clientY, button]");
@@ -3717,8 +3736,10 @@ bool FlutterWindow::OnCreate() {
           int clientX = GetInt(args->at(1));
           int clientY = GetInt(args->at(2));
           int button = GetInt(args->at(3));
+          int fromScreen = args->size() >= 5 ? GetInt(args->at(4)) : 0;
           if (targetHwnd && IsWindow(targetHwnd)) {
-            LPARAM lp = MAKELPARAM(static_cast<WORD>(clientX), static_cast<WORD>(clientY));
+            LPARAM lp = 0;
+            _prepareBackgroundTarget(targetHwnd, clientX, clientY, fromScreen, &lp, true);
             UINT msg_down = WM_LBUTTONDOWN; WPARAM wp_down = MK_LBUTTON;
             if (button == 1) { msg_down = WM_RBUTTONDOWN; wp_down = MK_RBUTTON; }
             else if (button == 2) { msg_down = WM_MBUTTONDOWN; wp_down = MK_MBUTTON; }
@@ -3729,7 +3750,7 @@ bool FlutterWindow::OnCreate() {
           }
         } else if (call.method_name() == "backgroundMouseUp") {
           // Send background mouse up via PostMessage
-          // args = [hwnd, clientX, clientY, button]
+          // args = [hwnd, clientX, clientY, button, fromScreen]
           const auto* args = std::get_if<flutter::EncodableList>(call.arguments());
           if (!args || args->size() < 4) {
             result->Error("INVALID_ARGS", "Expected [hwnd, clientX, clientY, button]");
@@ -3739,8 +3760,10 @@ bool FlutterWindow::OnCreate() {
           int clientX = GetInt(args->at(1));
           int clientY = GetInt(args->at(2));
           int button = GetInt(args->at(3));
+          int fromScreen = args->size() >= 5 ? GetInt(args->at(4)) : 0;
           if (targetHwnd && IsWindow(targetHwnd)) {
-            LPARAM lp = MAKELPARAM(static_cast<WORD>(clientX), static_cast<WORD>(clientY));
+            LPARAM lp = 0;
+            _prepareBackgroundTarget(targetHwnd, clientX, clientY, fromScreen, &lp, false);
             UINT msg_up = WM_LBUTTONUP;
             if (button == 1) msg_up = WM_RBUTTONUP;
             else if (button == 2) msg_up = WM_MBUTTONUP;

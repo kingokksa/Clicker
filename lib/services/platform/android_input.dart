@@ -65,6 +65,7 @@ class AndroidInput extends PlatformInput {
     required int y,
     String button = 'left',
     bool doubleClick = false,
+    int holdMs = 0,
   }) async {
     try {
       for (int i = 0; i < (doubleClick ? 2 : 1); i++) {
@@ -72,6 +73,7 @@ class AndroidInput extends PlatformInput {
           'x': x,
           'y': y,
           'action': 'click',
+          'holdMs': holdMs,
         });
         if (doubleClick && i == 0) {
           await Future.delayed(const Duration(milliseconds: 50));

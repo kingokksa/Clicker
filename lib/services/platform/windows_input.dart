@@ -100,6 +100,7 @@ class WindowsInput extends PlatformInput {
     required int y,
     String button = 'left',
     bool doubleClick = false,
+    int holdMs = 0,
   }) async {
     if (button == 'scrollUp' || button == 'scrollDown') {
       if (x >= 0 && y >= 0) SetCursorPos(x, y);
@@ -112,21 +113,21 @@ class WindowsInput extends PlatformInput {
       if (x >= 0 && y >= 0) SetCursorPos(x, y);
       final xData = _xButtonData(button);
       _sendMouseInput(_down(button), mouseData: xData);
+      if (holdMs > 0) {
+        await Future.delayed(Duration(milliseconds: holdMs));
+      }
       _sendMouseInput(_up(button), mouseData: xData);
       return;
     }
     if (_backgroundMode && _backgroundHwnd != 0) {
       final btn = button == 'right' ? 1 : (button == 'middle' ? 2 : 0);
-      final cx = (x > 0 || y > 0) ? x : _backgroundX;
-      final cy = (x > 0 || y > 0) ? y : _backgroundY;
-      await _platformChannel.invokeMethod('backgroundClick', [
-        _backgroundHwnd, cx, cy, btn,
-      ]);
+      final fromScreen = x > 0 || y > 0;
+      final cx = fromScreen ? x : _backgroundX;
+      final cy = fromScreen ? y : _backgroundY;
+      await _backgroundClick(cx, cy, btn, holdMs, fromScreen);
       if (doubleClick) {
         await Future.delayed(const Duration(milliseconds: 50));
-        await _platformChannel.invokeMethod('backgroundClick', [
-          _backgroundHwnd, cx, cy, btn,
-        ]);
+        await _backgroundClick(cx, cy, btn, holdMs, fromScreen);
       }
       return;
     }
@@ -136,12 +137,35 @@ class WindowsInput extends PlatformInput {
     final down = _down(button);
     final up = _up(button);
     _sendMouseInput(down);
+    if (holdMs > 0) {
+      await Future.delayed(Duration(milliseconds: holdMs));
+    }
     _sendMouseInput(up);
     if (doubleClick) {
       await Future.delayed(Duration(milliseconds: GetDoubleClickTime() ~/ 2));
       _sendMouseInput(down);
+      if (holdMs > 0) {
+        await Future.delayed(Duration(milliseconds: holdMs));
+      }
       _sendMouseInput(up);
     }
+  }
+
+  Future<void> _backgroundClick(int cx, int cy, int btn, int holdMs, bool fromScreen) async {
+    final flag = fromScreen ? 1 : 0;
+    if (holdMs <= 0) {
+      await _platformChannel.invokeMethod('backgroundClick', [
+        _backgroundHwnd, cx, cy, btn, flag,
+      ]);
+      return;
+    }
+    await _platformChannel.invokeMethod('backgroundMouseDown', [
+      _backgroundHwnd, cx, cy, btn, flag,
+    ]);
+    await Future.delayed(Duration(milliseconds: holdMs));
+    await _platformChannel.invokeMethod('backgroundMouseUp', [
+      _backgroundHwnd, cx, cy, btn, flag,
+    ]);
   }
 
   @override
@@ -195,10 +219,11 @@ class WindowsInput extends PlatformInput {
     }
     if (_backgroundMode && _backgroundHwnd != 0) {
       final btn = button == 'right' ? 1 : (button == 'middle' ? 2 : 0);
-      final cx = (x > 0 || y > 0) ? x : _backgroundX;
-      final cy = (x > 0 || y > 0) ? y : _backgroundY;
+      final fromScreen = x > 0 || y > 0;
+      final cx = fromScreen ? x : _backgroundX;
+      final cy = fromScreen ? y : _backgroundY;
       await _platformChannel.invokeMethod('backgroundMouseDown', [
-        _backgroundHwnd, cx, cy, btn,
+        _backgroundHwnd, cx, cy, btn, fromScreen ? 1 : 0,
       ]);
       return;
     }
@@ -222,10 +247,11 @@ class WindowsInput extends PlatformInput {
     }
     if (_backgroundMode && _backgroundHwnd != 0) {
       final btn = button == 'right' ? 1 : (button == 'middle' ? 2 : 0);
-      final cx = (x > 0 || y > 0) ? x : _backgroundX;
-      final cy = (x > 0 || y > 0) ? y : _backgroundY;
+      final fromScreen = x > 0 || y > 0;
+      final cx = fromScreen ? x : _backgroundX;
+      final cy = fromScreen ? y : _backgroundY;
       await _platformChannel.invokeMethod('backgroundMouseUp', [
-        _backgroundHwnd, cx, cy, btn,
+        _backgroundHwnd, cx, cy, btn, fromScreen ? 1 : 0,
       ]);
       return;
     }

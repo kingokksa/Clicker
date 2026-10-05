@@ -90,6 +90,10 @@ class _ClickerPageState extends State<ClickerPage> {
       _inlineSection(title: isKeyboard ? '按键间隔' : '点击间隔', child: _buildIntervalSlider(config, state, theme)),
       _spacing,
       _section(title: '重复模式', icon: FluentIcons.refresh, child: _buildRepeatModeSelector(config, state, theme)),
+      if (!isKeyboard) ...[
+        _spacing,
+        _section(title: '按下保持', icon: FluentIcons.timer, child: _buildHoldSelector(config, state, theme)),
+      ],
     ];
 
     final pageContent = ScaffoldPage.scrollable(
@@ -594,6 +598,27 @@ class _ClickerPageState extends State<ClickerPage> {
       _selectChip(labels[btn]!, config.mouseButton == btn,
         () => state.setClickerConfig(config.copyWith(mouseButton: btn))),
     ).toList());
+  }
+
+  Widget _buildHoldSelector(ClickerConfig config, AppState state, FluentThemeData theme) {
+    const presets = [0, 10, 20, 30, 50, 100];
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Wrap(spacing: 6, runSpacing: 4, children: [
+        for (final ms in presets)
+          _selectChip(ms == 0 ? '不保持' : '${ms}ms', config.clickHoldMs == ms,
+            () => state.setClickerConfig(config.copyWith(clickHoldMs: ms))),
+      ]),
+      const SizedBox(height: 8),
+      Row(children: [
+        DebouncedTextBox(
+          value: config.clickHoldMs,
+          min: 0, max: 5000,
+          onChanged: (v) => state.setClickerConfig(config.copyWith(clickHoldMs: v)),
+          width: 100,
+        ),
+        const Text(' ms', style: TextStyle(fontSize: 12)),
+      ]),
+    ]);
   }
 
   Widget _buildPositionSelector(BuildContext context, ClickerConfig config, AppState state, FluentThemeData theme) {

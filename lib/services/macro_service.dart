@@ -565,6 +565,7 @@ class MacroService {
             x: event.x ?? -1,
             y: event.y ?? -1,
             button: btn,
+            holdMs: event.holdMs,
           );
         }
         break;

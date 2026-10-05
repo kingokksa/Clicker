@@ -29,6 +29,7 @@ ClickerConfig _buildFullConfig() => ClickerConfig(
       randomOffsetEnabled: true,
       randomOffsetMinPx: 3,
       randomOffsetMaxPx: 15,
+      clickHoldMs: 25,
       holdTriggerEnabled: true,
       holdTriggerKey: 'F9',
       humanLikeEnabled: true,
@@ -65,6 +66,7 @@ void main() {
       expect(c.randomOffsetEnabled, isFalse);
       expect(c.randomOffsetMinPx, 1);
       expect(c.randomOffsetMaxPx, 5);
+      expect(c.clickHoldMs, 0);
       expect(c.holdTriggerEnabled, isFalse);
       expect(c.holdTriggerKey, 'F5');
       expect(c.humanLikePauseChance, 5);
@@ -128,6 +130,7 @@ void main() {
       expect(restored.randomOffsetEnabled, isTrue);
       expect(restored.randomOffsetMinPx, 3);
       expect(restored.randomOffsetMaxPx, 15);
+      expect(restored.clickHoldMs, 25);
     });
 
     test('hold-trigger and human-like fields survive', () {

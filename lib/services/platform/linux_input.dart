@@ -20,6 +20,7 @@ class LinuxInput extends PlatformInput {
     required int y,
     String button = 'left',
     bool doubleClick = false,
+    int holdMs = 0,
   }) async {
     try {
       await _channel.invokeMethod('mouseClick', {
@@ -27,9 +28,10 @@ class LinuxInput extends PlatformInput {
         'y': y,
         'button': button,
         'doubleClick': doubleClick,
+        'holdMs': holdMs,
       });
     } catch (_) {
-      await _xdotoolClick(x, y, button, doubleClick);
+      await _xdotoolClick(x, y, button, doubleClick, holdMs);
     }
   }
 
@@ -217,9 +219,16 @@ class LinuxInput extends PlatformInput {
     }
   }
 
-  Future<void> _xdotoolClick(int x, int y, String button, bool doubleClick) async {
+  Future<void> _xdotoolClick(int x, int y, String button, bool doubleClick,
+      [int holdMs = 0]) async {
     final btn = _linuxButton(button);
-    await Process.run('xdotool', ['mousemove', '$x', '$y', 'click', btn]);
+    if (holdMs > 0) {
+      await Process.run('xdotool', ['mousemove', '$x', '$y', 'mousedown', btn]);
+      await Future.delayed(Duration(milliseconds: holdMs));
+      await Process.run('xdotool', ['mouseup', btn]);
+    } else {
+      await Process.run('xdotool', ['mousemove', '$x', '$y', 'click', btn]);
+    }
     if (doubleClick) {
       await Future.delayed(const Duration(milliseconds: 50));
       await Process.run('xdotool', ['click', btn]);
