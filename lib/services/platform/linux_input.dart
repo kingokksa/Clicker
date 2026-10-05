@@ -51,6 +51,14 @@ class LinuxInput extends PlatformInput {
   }
 
   @override
+  Future<void> mouseMoveBy(int dx, int dy) async {
+    if (dx == 0 && dy == 0) return;
+    try {
+      await Process.run('xdotool', ['mousemove_relative', '--', '$dx', '$dy']);
+    } catch (_) {}
+  }
+
+  @override
   Future<void> mouseDown({
     required int x,
     required int y,

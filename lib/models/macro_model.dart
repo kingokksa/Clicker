@@ -11,6 +11,7 @@ enum MacroEventType {
   wait,
   drag,
   swipe,
+  mouseMoveBy,
 }
 
 class MacroEvent {

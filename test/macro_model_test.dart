@@ -52,6 +52,8 @@ final Map<String, MacroEvent> _eventCases = {
       endX: 200,
       endY: 100,
       durationMs: 400),
+  'mouseMoveBy': MacroEvent(
+      type: MacroEventType.mouseMoveBy, timestampMs: 950, x: -12, y: 34),
 };
 
 void main() {

@@ -20,6 +20,7 @@ class StorageService {
   static const _keyFloatingAlwaysOnTop = 'floating_always_on_top';
   static const _keyAccentColor = 'accent_color';
   static const _keyUiAnimations = 'ui_animations';
+  static const _keyMacroRecordMouseMove = 'macro_record_mouse_move';
   static const _keyUiScale = 'ui_scale';
   static const _keyProfiles = 'profiles';
   static const _keyHoldTriggerKeys = 'hold_trigger_keys';
@@ -128,6 +129,14 @@ class StorageService {
     await _prefs.setBool(_keyUiAnimations, value);
   }
 
+
+  bool get macroRecordMouseMove =>
+      _prefs.getBool(_keyMacroRecordMouseMove) ?? false;
+
+  Future<void> setMacroRecordMouseMove(bool value) async {
+    await _prefs.setBool(_keyMacroRecordMouseMove, value);
+  }
+
   double get uiScale => _prefs.getDouble(_keyUiScale) ?? 1.15;
 
   Future<void> setUiScale(double value) async {
@@ -222,6 +231,7 @@ class StorageService {
     int? accentColorValue,
     bool? uiAnimations,
     double? uiScale,
+    bool? macroRecordMouseMove,
   }) async {
     final macros = await loadAllMacros();
     final data = {
@@ -233,6 +243,8 @@ class StorageService {
       if (accentColorValue != null) 'accentColor': accentColorValue,
       if (uiAnimations != null) 'uiAnimations': uiAnimations,
       if (uiScale != null) 'uiScale': uiScale,
+      if (macroRecordMouseMove != null)
+        'macroRecordMouseMove': macroRecordMouseMove,
       if (holdTriggerKeys != null)
         'holdTriggerKeys': holdTriggerKeys.map((k) => k.toJson()).toList(),
       'macros': macros.map((m) => m.toJson()).toList(),
@@ -256,6 +268,7 @@ class StorageService {
     int? accentColorValue,
     bool? uiAnimations,
     double? uiScale,
+    bool? macroRecordMouseMove,
   }) async {
     try {
       final json = await exportConfig(
@@ -267,6 +280,7 @@ class StorageService {
         accentColorValue: accentColorValue,
         uiAnimations: uiAnimations,
         uiScale: uiScale,
+        macroRecordMouseMove: macroRecordMouseMove,
       );
       final path = await FilePicker.platform.saveFile(
         dialogTitle: '导出配置',
@@ -291,6 +305,7 @@ class StorageService {
       final accentColorValue = data['accentColor'] as int?;
       final uiAnimations = data['uiAnimations'] as bool?;
       final uiScale = data['uiScale'] as double?;
+      final macroRecordMouseMove = data['macroRecordMouseMove'] as bool?;
 
       await saveClickerConfig(clickerConfig);
       await saveHotkeyConfig(hotkeyConfig);
@@ -299,6 +314,9 @@ class StorageService {
       if (accentColorValue != null) await setAccentColorValue(accentColorValue);
       if (uiAnimations != null) await setUiAnimations(uiAnimations);
       if (uiScale != null) await setUiScale(uiScale);
+      if (macroRecordMouseMove != null) {
+        await setMacroRecordMouseMove(macroRecordMouseMove);
+      }
 
       if (data['macros'] != null) {
         for (final m in data['macros'] as List) {
@@ -336,6 +354,7 @@ class StorageService {
         uiAnimations: uiAnimations,
         uiScale: uiScale,
         holdTriggerKeys: holdTriggerKeys,
+        macroRecordMouseMove: macroRecordMouseMove,
       );
     } catch (e) {
       return ImportResult(success: false, error: e.toString());
@@ -371,6 +390,7 @@ class ImportResult {
   final int? accentColorValue;
   final bool? uiAnimations;
   final double? uiScale;
+  final bool? macroRecordMouseMove;
   final List<HoldTriggerKey>? holdTriggerKeys;
 
   const ImportResult({
@@ -383,6 +403,7 @@ class ImportResult {
     this.accentColorValue,
     this.uiAnimations,
     this.uiScale,
+    this.macroRecordMouseMove,
     this.holdTriggerKeys,
   });
 }

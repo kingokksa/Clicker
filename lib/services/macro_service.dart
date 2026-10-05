@@ -8,6 +8,7 @@ import '../models/macro_model.dart';
 import 'platform/platform_input.dart';
 import 'platform/windows_input.dart';
 import 'platform/android_input.dart';
+import 'raw_input_service.dart';
 import 'plugin/plugin_manager.dart';
 
 void _playSystemSound() {
@@ -61,6 +62,13 @@ class MacroService {
   final List<MacroEvent> _recordingBuffer = [];
   int _recordStartMs = 0;
   Timer? _playbackTimer;
+
+  bool recordMouseMove = false;
+  StreamSubscription<(int, int)>? _rawMoveSub;
+  Timer? _moveFlushTimer;
+  int _pendingMoveDx = 0;
+  int _pendingMoveDy = 0;
+  int _pendingMoveMs = 0;
 
   MacroModel? _currentMacro;
   int _currentRepeat = 0;
@@ -121,6 +129,47 @@ class MacroService {
       };
       await andInput.startRecording();
     }
+
+    if (recordMouseMove) _startRawMoveCapture();
+  }
+
+  void _startRawMoveCapture() {
+    if (!Platform.isWindows) return;
+    _pendingMoveDx = 0;
+    _pendingMoveDy = 0;
+    _rawMoveSub = RawInputService.instance.mouseMoves.listen(_onRawMove);
+    RawInputService.instance.setRawInputEnabled(true);
+  }
+
+  void _onRawMove((int, int) delta) {
+    if (_status != MacroStatus.recording) return;
+    if (_pendingMoveDx == 0 && _pendingMoveDy == 0) {
+      _pendingMoveMs = DateTime.now().millisecondsSinceEpoch - _recordStartMs;
+    }
+    _pendingMoveDx += delta.$1;
+    _pendingMoveDy += delta.$2;
+    _moveFlushTimer ??= Timer(const Duration(milliseconds: 40), _flushRawMove);
+  }
+
+  void _flushRawMove() {
+    _moveFlushTimer = null;
+    if (_pendingMoveDx == 0 && _pendingMoveDy == 0) return;
+    final dx = _pendingMoveDx;
+    final dy = _pendingMoveDy;
+    final timestampMs = _pendingMoveMs;
+    _pendingMoveDx = 0;
+    _pendingMoveDy = 0;
+    if (_status != MacroStatus.recording) return;
+    _addEvent(MacroEventType.mouseMoveBy, timestampMs, x: dx, y: dy);
+  }
+
+  void _stopRawMoveCapture() {
+    _flushRawMove();
+    _moveFlushTimer?.cancel();
+    _moveFlushTimer = null;
+    _rawMoveSub?.cancel();
+    _rawMoveSub = null;
+    if (Platform.isWindows) RawInputService.instance.setRawInputEnabled(false);
   }
 
   void _handleAndroidRecordEvent(Map<String, dynamic> data) {
@@ -301,6 +350,7 @@ class MacroService {
 
   void pauseRecording() {
     if (_status != MacroStatus.recording) return;
+    _stopRawMoveCapture();
 
     if (_input is WindowsInput) {
       final winInput = _input;
@@ -363,6 +413,7 @@ class MacroService {
     if (_status != MacroStatus.recording && _status != MacroStatus.paused) {
       throw StateError('Not recording');
     }
+    _stopRawMoveCapture();
 
     if (_input is WindowsInput) {
       final winInput = _input;
@@ -394,6 +445,7 @@ class MacroService {
   }
 
   void cancelRecording() {
+    _stopRawMoveCapture();
     if (_input is WindowsInput) {
       final winInput = _input;
       winInput.onRecordEvent = null;
@@ -605,6 +657,10 @@ class MacroService {
           endX: event.endX ?? 0, endY: event.endY ?? 0,
           durationMs: event.durationMs ?? 200,
         );
+        break;
+
+      case MacroEventType.mouseMoveBy:
+        await _input.mouseMoveBy(event.x ?? 0, event.y ?? 0);
         break;
 
       case MacroEventType.wait:

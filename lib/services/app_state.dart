@@ -53,6 +53,7 @@ class AppState extends ChangeNotifier {
   bool _minimizeToTray = true;
   bool _floatingAlwaysOnTop = true;
   bool _uiAnimations = true;
+  bool _macroRecordMouseMove = false;
   double _uiScale = 1.15;
 
   ClickerStatus _clickerStatus = ClickerStatus.idle;
@@ -89,6 +90,7 @@ class AppState extends ChangeNotifier {
   bool get hasAskedMinimizeToTray => _storage.hasAskedMinimizeToTray;
   bool get floatingAlwaysOnTop => _floatingAlwaysOnTop;
   bool get uiAnimations => _uiAnimations;
+  bool get macroRecordMouseMove => _macroRecordMouseMove;
   double get uiScale => _uiScale;
   ClickService get clickService => _clickService;
   ClickerStatus get clickerStatus => _clickerStatus;
@@ -147,6 +149,7 @@ class AppState extends ChangeNotifier {
       _minimizeToTray = _storage.minimizeToTray;
       _floatingAlwaysOnTop = _storage.floatingAlwaysOnTop;
       _uiAnimations = _storage.uiAnimations;
+      _macroRecordMouseMove = _storage.macroRecordMouseMove;
       _uiScale = _storage.uiScale;
       _profiles = _storage.listProfiles();
 
@@ -159,6 +162,7 @@ class AppState extends ChangeNotifier {
 
       _macroService = MacroService(_platformInput);
       _macroService.getConfig = () => _clickerConfig;
+      _macroService.recordMouseMove = _macroRecordMouseMove;
 
       _hotkeyService = HotkeyService(_platformInput);
       _hotkeyService.updateConfig(_hotkeyConfig);
@@ -540,6 +544,13 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setMacroRecordMouseMove(bool value) {
+    _macroRecordMouseMove = value;
+    _macroService.recordMouseMove = value;
+    _storage.setMacroRecordMouseMove(value);
+    notifyListeners();
+  }
+
   void setUiScale(double value) {
     _uiScale = value.clamp(0.8, 1.8);
     _storage.setUiScale(_uiScale);
@@ -597,6 +608,7 @@ class AppState extends ChangeNotifier {
     accentColorValue: _accentColor.toARGB32(),
     uiAnimations: _uiAnimations,
     uiScale: _uiScale,
+    macroRecordMouseMove: _macroRecordMouseMove,
   );
 
   Future<ImportResult> importConfig() async {
@@ -617,6 +629,10 @@ class AppState extends ChangeNotifier {
       }
       if (result.uiAnimations != null) _uiAnimations = result.uiAnimations!;
       if (result.uiScale != null) _uiScale = result.uiScale!;
+      if (result.macroRecordMouseMove != null) {
+        _macroRecordMouseMove = result.macroRecordMouseMove!;
+        _macroService.recordMouseMove = _macroRecordMouseMove;
+      }
       _macros = await _storage.loadAllMacros();
       _profiles = _storage.listProfiles();
       if (result.holdTriggerKeys != null) {

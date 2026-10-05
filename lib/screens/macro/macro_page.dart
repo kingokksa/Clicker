@@ -62,6 +62,16 @@ class MacroPage extends StatelessWidget {
             const SizedBox(width: 8),
             Expanded(child: Button(onPressed: () => _showNewMacroEditor(context, state), child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(FluentIcons.add, size: 14), SizedBox(width: 4), Text('新建宏')]))),
           ]),
+          const SizedBox(height: 8),
+          Row(children: [
+            const Icon(FluentIcons.move, size: 14),
+            const SizedBox(width: 8),
+            const Expanded(child: Text('录制鼠标移动', style: TextStyle(fontSize: 13))),
+            ToggleSwitch(
+              checked: state.macroRecordMouseMove,
+              onChanged: (v) => state.setMacroRecordMouseMove(v),
+            ),
+          ]),
         ],
 
         const SizedBox(height: 16),
@@ -583,6 +593,9 @@ class MacroPage extends StatelessWidget {
               buf.writeln('Click, WheelUp, ${dy.abs().round()}');
             }
             break;
+          case MacroEventType.mouseMoveBy:
+            buf.writeln('MouseMove, ${event.x}, ${event.y}, 0, R');
+            break;
           case MacroEventType.wait:
             final ms = delayMs > 0 ? delayMs : 10;
             buf.writeln('Sleep, $ms');
@@ -807,6 +820,8 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
       case MacroEventType.scroll:
         final dir = (e.scrollDy ?? 0) > 0 ? '上' : '下';
         return '滚轮$dir';
+      case MacroEventType.mouseMoveBy:
+        return '移动 (${e.x}, ${e.y})';
       case MacroEventType.wait:
         final ms = e.timestampMs;
         if (ms >= 60000) return '等待 ${(ms / 60000).toStringAsFixed(1)} 分钟';
@@ -827,6 +842,7 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
       case MacroEventType.keyPress: return FluentIcons.keyboard_classic;
       case MacroEventType.keyRelease: return FluentIcons.keyboard_classic;
       case MacroEventType.scroll: return FluentIcons.scroll_up_down;
+      case MacroEventType.mouseMoveBy: return FluentIcons.move;
       case MacroEventType.wait: return FluentIcons.stopwatch;
       case MacroEventType.drag: return FluentIcons.move;
       case MacroEventType.swipe: return FluentIcons.forward;
@@ -1558,6 +1574,16 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
           SizedBox(width: 80, child: TextBox(controller: waitCtrl, placeholder: '0')),
         ]),
         const SizedBox(height: 4),
+        if (event.type == MacroEventType.mouseMoveBy) ...[
+          Row(children: [
+            const SizedBox(width: 60, child: Text('位移X:', style: TextStyle(fontSize: 12))),
+            SizedBox(width: 70, child: TextBox(controller: xCtrl, placeholder: '0')),
+            const SizedBox(width: 12),
+            const Text('位移Y:', style: TextStyle(fontSize: 12)),
+            SizedBox(width: 70, child: TextBox(controller: yCtrl, placeholder: '0')),
+          ]),
+          const SizedBox(height: 4),
+        ],
         if (event.type == MacroEventType.click || event.type == MacroEventType.mouseDown || event.type == MacroEventType.mouseUp) ...[
           Row(children: [
             const SizedBox(width: 60, child: Text('X:', style: TextStyle(fontSize: 12))),
@@ -1677,6 +1703,14 @@ class _MacroEditorDialogState extends State<MacroEditorDialog> {
                   holdMs: newHoldMs, waitMs: newWaitMs,
                   scrollDx: event.scrollDx,
                   scrollDy: double.tryParse(scrollCtrl.text) ?? event.scrollDy,
+                );
+                break;
+              case MacroEventType.mouseMoveBy:
+                newEvent = MacroEvent(
+                  type: event.type, timestampMs: event.timestampMs,
+                  holdMs: newHoldMs, waitMs: newWaitMs,
+                  x: int.tryParse(xCtrl.text) ?? event.x,
+                  y: int.tryParse(yCtrl.text) ?? event.y,
                 );
                 break;
               case MacroEventType.wait:

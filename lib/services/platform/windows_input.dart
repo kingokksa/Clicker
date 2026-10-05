@@ -96,6 +96,25 @@ class WindowsInput extends PlatformInput {
   }
 
   @override
+  Future<void> mouseMoveBy(int dx, int dy) async {
+    if (dx == 0 && dy == 0) return;
+    final p = calloc<INPUT>();
+    p.ref.type = INPUT_MOUSE;
+    p.ref.mi.dx = dx;
+    p.ref.mi.dy = dy;
+    p.ref.mi.dwFlags = const MOUSE_EVENT_FLAGS(MOUSEEVENTF_MOVE);
+    final result = SendInput(1, p, sizeOf<INPUT>());
+    calloc.free(p);
+    if (result == 0) {
+      final cursor = calloc<POINT>();
+      if (GetCursorPos(cursor) != 0) {
+        SetCursorPos(cursor.ref.x + dx, cursor.ref.y + dy);
+      }
+      calloc.free(cursor);
+    }
+  }
+
+  @override
   Future<void> mouseClick({
     required int x,
     required int y,

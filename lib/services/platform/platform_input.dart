@@ -14,6 +14,8 @@ abstract class PlatformInput {
 
   Future<void> mouseMove(int x, int y);
 
+  Future<void> mouseMoveBy(int dx, int dy) async {}
+
   Future<void> mouseDown({required int x, required int y, String button = 'left'});
   Future<void> mouseUp({required int x, required int y, String button = 'left'});
 

@@ -429,6 +429,8 @@ class _MobileMacroEditorState extends State<_MobileMacroEditor> {
         case MacroEventType.scroll:
           final dir = (e.scrollDy ?? 0) > 0 ? '上' : '下';
           return '滚轮$dir';
+        case MacroEventType.mouseMoveBy:
+          return '移动 (${e.x}, ${e.y})';
         case MacroEventType.wait:
           final ms = e.timestampMs;
           if (ms >= 60000) return '等待 ${(ms / 60000).toStringAsFixed(1)} 分钟';
@@ -455,6 +457,8 @@ class _MobileMacroEditorState extends State<_MobileMacroEditor> {
       case MacroEventType.scroll:
         final dir = (e.scrollDy ?? 0) > 0 ? '上' : '下';
         return '滚轮$dir';
+      case MacroEventType.mouseMoveBy:
+        return '移动 (${e.x}, ${e.y})';
       case MacroEventType.wait:
         final ms = e.timestampMs;
         if (ms >= 60000) return '等待 ${(ms / 60000).toStringAsFixed(1)} 分钟';
@@ -474,6 +478,7 @@ class _MobileMacroEditorState extends State<_MobileMacroEditor> {
     MacroEventType.keyPress: Icons.keyboard,
     MacroEventType.keyRelease: Icons.keyboard,
     MacroEventType.scroll: Icons.swap_vert,
+    MacroEventType.mouseMoveBy: Icons.open_with,
     MacroEventType.wait: Icons.timer,
     MacroEventType.drag: Icons.open_with,
     MacroEventType.swipe: Icons.swipe,
