@@ -18,6 +18,7 @@ import '../../services/vision_plugin_manager.dart';
 import '../../services/platform/windows_input.dart';
 import '../../services/app_paths.dart';
 import '../../widgets/app_slider.dart';
+import '../../widgets/debounced_text_box.dart';
 import '../../services/screen_overlay_service.dart';
 import '../../services/key_alias_service.dart';
 import '../../models/macro_model.dart';
@@ -151,6 +152,8 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
   final Map<String, DateTime> _triggerLastCheck = {};
   final Map<String, int> _triggerHitCount = {};
   final Map<String, DateTime> _triggerLastHit = {};
+  final Map<String, DateTime> _followMissSince = {};
+  final Map<String, (int, int)> _followTarget = {};
   String? _followTriggerId;
 
   static const _platformChannel = MethodChannel('com.clicker.pro/platform');
@@ -298,6 +301,8 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
             macroId: m['macroId'] ?? '',
             intervalMs: m['intervalMs'] ?? 500,
             showTrackingBox: m['showTrackingBox'] ?? true,
+            followDeadzonePx: m['followDeadzonePx'] ?? 8,
+            followToleranceMs: m['followToleranceMs'] ?? 800,
             templateData: () {
               final td = m['templateData'];
               if (td == null) return null;
@@ -356,6 +361,8 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
       'actionX': t.actionX, 'actionY': t.actionY,
       'actionKey': t.actionKey, 'macroId': t.macroId, 'intervalMs': t.intervalMs,
       'showTrackingBox': t.showTrackingBox,
+      'followDeadzonePx': t.followDeadzonePx,
+      'followToleranceMs': t.followToleranceMs,
       if (t.templateData != null) 'templateData': {
         'width': t.templateData!.width,
         'height': t.templateData!.height,
@@ -620,7 +627,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
         if (conditionMet) {
           await _runFollowClicker(trigger);
         } else {
-          _stopFollowClicker(trigger.id);
+          _handleFollowMiss(trigger);
         }
       } else if (conditionMet) {
         await _executeTriggerAction(trigger);
@@ -642,14 +649,35 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
   }
 
   Future<void> _runFollowClicker(_TriggerEntry t) async {
+    _followMissSince.remove(t.id);
     final det = _lastDetectionResults[t.id];
     final cx = det != null ? t.x + det.centerX : t.x + t.w ~/ 2;
     final cy = det != null ? t.y + det.centerY : t.y + t.h ~/ 2;
     final svc = context.read<AppState>().clickService;
+    final prev = _followTarget[t.id];
+    if (_followTriggerId == t.id && prev != null) {
+      final moved = (cx - prev.$1).abs() + (cy - prev.$2).abs();
+      if (moved < t.followDeadzonePx) {
+        _triggerStatus[t.id] = '连点中 (${prev.$1}, ${prev.$2}) ${t.intervalMs}ms';
+        return;
+      }
+    }
+    _followTarget[t.id] = (cx, cy);
     _followTriggerId = t.id;
     svc.setFollowTarget(cx, cy, t.intervalMs);
     if (!svc.isRunning) await svc.start();
     _triggerStatus[t.id] = svc.isRunning ? '连点中 ($cx, $cy) ${t.intervalMs}ms' : '连点未启动';
+  }
+
+  void _handleFollowMiss(_TriggerEntry t) {
+    if (_followTriggerId != t.id) return;
+    final since = _followMissSince.putIfAbsent(t.id, DateTime.now);
+    final missed = DateTime.now().difference(since).inMilliseconds;
+    if (missed < t.followToleranceMs) {
+      _triggerStatus[t.id] = '暂时未找到目标 (${missed}ms)';
+      return;
+    }
+    _stopFollowClicker(t.id);
   }
 
   void _stopFollowClicker([String? id]) {
@@ -657,6 +685,8 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     if (owner == null) return;
     if (id != null && owner != id) return;
     _followTriggerId = null;
+    _followTarget.remove(owner);
+    _followMissSince.remove(owner);
     context.read<AppState>().clickService.stop();
     _triggerStatus[owner] = '已停止连点';
   }
@@ -1127,6 +1157,8 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
                                     macroId: result.macroId,
                                     intervalMs: result.intervalMs,
                                     showTrackingBox: result.showTrackingBox,
+                                    followDeadzonePx: result.followDeadzonePx,
+                                    followToleranceMs: result.followToleranceMs,
                                   );
                                 }
                               });
@@ -1309,7 +1341,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
       case _TriggerActionType.stopClicker:
         return '停止连点';
       case _TriggerActionType.followClicker:
-        return '匹配启动连点 / 失去停止';
+        return '死区 ${t.followDeadzonePx}px · 容忍 ${t.followToleranceMs}ms';
     }
   }
 
@@ -1428,11 +1460,16 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
           textMatchMode: result.textMatchMode,
           targetObjectClass: result.targetObjectClass,
           detectConfidence: result.detectConfidence,
+          targetElementName: result.targetElementName,
+          targetElementId: result.targetElementId,
+          targetElementType: result.targetElementType,
           actionX: result.actionX, actionY: result.actionY,
           actionKey: result.actionKey,
           macroId: result.macroId,
           intervalMs: result.intervalMs,
           showTrackingBox: result.showTrackingBox,
+          followDeadzonePx: result.followDeadzonePx,
+          followToleranceMs: result.followToleranceMs,
           enabled: true,
         ));
       });
@@ -1499,6 +1536,8 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
           macroId: result.macroId,
           intervalMs: result.intervalMs,
           showTrackingBox: result.showTrackingBox,
+          followDeadzonePx: result.followDeadzonePx,
+          followToleranceMs: result.followToleranceMs,
           enabled: true,
         ));
       });
@@ -3027,6 +3066,8 @@ class _TriggerEntry {
   final String macroId;
   int intervalMs;
   bool showTrackingBox;
+  final int followDeadzonePx;
+  final int followToleranceMs;
 
   _TriggerEntry({
     required this.id, required this.name, required this.conditionType,
@@ -3044,6 +3085,8 @@ class _TriggerEntry {
     this.actionKey = '', this.macroId = '',
     this.intervalMs = 500,
     this.showTrackingBox = true,
+    this.followDeadzonePx = 8,
+    this.followToleranceMs = 800,
   });
 }
 
@@ -3067,6 +3110,8 @@ class _TriggerConfig {
   final String macroId;
   final int intervalMs;
   final bool showTrackingBox;
+  final int followDeadzonePx;
+  final int followToleranceMs;
   _TriggerConfig({
     required this.name, required this.conditionType, required this.actionType,
     required this.x, required this.y, required this.w, required this.h,
@@ -3082,6 +3127,8 @@ class _TriggerConfig {
     this.actionKey = '', this.macroId = '',
     this.intervalMs = 500,
     this.showTrackingBox = true,
+    this.followDeadzonePx = 8,
+    this.followToleranceMs = 800,
   });
 }
 
@@ -3127,6 +3174,8 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
   String _targetElementId = '';
   String _targetElementType = '';
   bool _showTrackingBox = true;
+  int _followDeadzonePx = 8;
+  int _followToleranceMs = 800;
 
   @override
   void initState() {
@@ -3150,6 +3199,8 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
       _macroId = t.macroId;
       _intervalMs = t.intervalMs;
       _showTrackingBox = t.showTrackingBox;
+      _followDeadzonePx = t.followDeadzonePx;
+      _followToleranceMs = t.followToleranceMs;
       _templateData = t.templateData;
       if (t.templateData != null) {
         _templateInfo = '${t.templateData!.width}x${t.templateData!.height}';
@@ -3519,6 +3570,18 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
                 Expanded(child: Text('不受「连点」页设置影响：固定鼠标左键单击、无限重复，间隔用下方「连点间隔」',
                   style: TextStyle(fontSize: 11, color: Color(0xFF00B0FF)))),
               ]),
+              const SizedBox(height: 8),
+              Row(children: [
+                const Text('落点死区: ', style: TextStyle(fontSize: 12)),
+                SizedBox(width: 70, child: DebouncedTextBox(value: _followDeadzonePx, min: 0, max: 500, onChanged: (v) => _followDeadzonePx = v)),
+                const SizedBox(width: 6),
+                const Text('px', style: TextStyle(fontSize: 12)),
+                const SizedBox(width: 16),
+                const Text('失去目标容忍: ', style: TextStyle(fontSize: 12)),
+                SizedBox(width: 70, child: DebouncedTextBox(value: _followToleranceMs, min: 0, max: 10000, onChanged: (v) => _followToleranceMs = v)),
+                const SizedBox(width: 6),
+                const Text('ms', style: TextStyle(fontSize: 12)),
+              ]),
               if (!context.read<AppState>().clickerConfig.autoClickEnabled) ...[
                 const SizedBox(height: 4),
                 const Row(children: [
@@ -3608,6 +3671,8 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
           macroId: _macroId,
           intervalMs: _intervalMs,
           showTrackingBox: _showTrackingBox,
+          followDeadzonePx: _followDeadzonePx,
+          followToleranceMs: _followToleranceMs,
         )), child: Text(_isEditing ? '保存' : '添加')),
       ],
     );
