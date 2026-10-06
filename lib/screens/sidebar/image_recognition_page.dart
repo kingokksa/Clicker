@@ -1183,7 +1183,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
                           }),
                         ]),
                         const SizedBox(height: 8),
-                        Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                        IntrinsicHeight(child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                           Expanded(flex: 3, child: _triggerBlock('条件', condColor, [
                             Text(t.conditionType.label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: condColor)),
                             const SizedBox(height: 3),
@@ -1222,7 +1222,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
                             const SizedBox(height: 3),
                             Text(_actionSummary(t), style: TextStyle(fontSize: 11, color: muted), maxLines: 3, overflow: TextOverflow.ellipsis),
                           ])),
-                        ]),
+                        ])),
                         const SizedBox(height: 8),
                         Row(children: [
                           Icon(FluentIcons.speed_high, size: 11, color: muted),

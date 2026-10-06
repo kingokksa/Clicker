@@ -2220,15 +2220,24 @@ bool FlutterWindow::OnCreate() {
             const double minTplDim = static_cast<double>(std::min(tplW0, tplH0));
             auto levelFor = [minTplDim](double s) -> int {
               const double d = minTplDim * s;
-              if (d >= 48.0) return 4;
-              if (d >= 24.0) return 2;
+              if (d >= 72.0) return 4;
+              if (d >= 36.0) return 2;
               return 1;
             };
 
             double globalBest = -1.0;
 
-            for (double scale : scales) {
-              if (!(scale > 0.0)) continue;
+            std::vector<double> orderedScales;
+            orderedScales.reserve(scales.size());
+            for (double s : scales) { if (std::abs(s - 1.0) < 1e-9) orderedScales.push_back(s); }
+            for (double s : scales) { if (std::abs(s - 1.0) >= 1e-9) orderedScales.push_back(s); }
+
+            auto hasHitAtThreshold = [&]() {
+              for (const auto& f : found) { if (f.score >= threshold) return true; }
+              return false;
+            };
+
+            for (double scale : orderedScales) {
               const int level = levelFor(scale);
               const GrayRegion& reg = regionAt(level);
 
@@ -2324,6 +2333,7 @@ bool FlutterWindow::OnCreate() {
                     found.push_back({m.score, regionX + m.sx, regionY + m.sy, coarseW, coarseH});
                   }
                 }
+                if (hasHitAtThreshold()) break;
                 continue;
               }
 
@@ -2373,6 +2383,8 @@ bool FlutterWindow::OnCreate() {
               });
               for (double v : fineMax) { if (v > globalBest) globalBest = v; }
               for (const auto& v : fineHits) found.insert(found.end(), v.begin(), v.end());
+
+              if (hasHitAtThreshold()) break;
             }
 
             // 跨尺度去重：按分数降序贪心保留，IoU 超阈值的丢弃
