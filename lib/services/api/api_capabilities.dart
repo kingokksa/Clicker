@@ -1308,7 +1308,18 @@ List<ApiAction> _scheduleActions(AppState state) => [
             'timing': strField('触发方式',
                 def: 'clock', enumValues: const ['clock', 'countdown']),
             'repeat': strField('重复方式',
-                def: 'once', enumValues: const ['once', 'daily']),
+                def: 'once',
+                enumValues: const [
+                  'once',
+                  'daily',
+                  'weekly',
+                  'weekdays',
+                  'interval'
+                ]),
+            'weekday': intField('星期 1~7（repeat=weekly 时使用，1 为周一）',
+                min: 1, max: 7, def: 1),
+            'intervalMinutes': intField('间隔分钟数（repeat=interval 时使用）',
+                min: 1, max: 1440, def: 30),
             'hour': intField('小时 0~23（timing=clock 时使用）',
                 min: 0, max: 23, def: 8),
             'minute': intField('分钟 0~59（timing=clock 时使用）',
@@ -1330,6 +1341,8 @@ List<ApiAction> _scheduleActions(AppState state) => [
           final hour = optionalInt(args, 'hour', 8);
           final minute = optionalInt(args, 'minute', 0);
           final after = optionalInt(args, 'afterMinutes', 10);
+          final weekday = optionalInt(args, 'weekday', 1);
+          final intervalMinutes = optionalInt(args, 'intervalMinutes', 30);
           final enabled = optionalBool(args, 'enabled', true);
           final macroId = asString(args['macroId']);
 
@@ -1351,6 +1364,8 @@ List<ApiAction> _scheduleActions(AppState state) => [
             hour: hour,
             minute: minute,
             afterMinutes: after,
+            weekday: weekday,
+            intervalMinutes: intervalMinutes,
             enabled: enabled,
             macroId: macroId,
           );
@@ -1373,7 +1388,7 @@ List<ApiAction> _scheduleActions(AppState state) => [
           {
             'index': intField('任务下标，从 0 开始', min: 0),
             'patch': objField(
-                '要修改的字段，可含 action/timing/repeat/hour/minute/afterMinutes/macroId/enabled',
+                '要修改的字段，可含 action/timing/repeat/weekday/intervalMinutes/hour/minute/afterMinutes/macroId/enabled',
                 {},
                 const [],
                 true),
@@ -1415,7 +1430,8 @@ List<ApiAction> _scheduleActions(AppState state) => [
             repeat = _enumByName(patch['repeat'], ScheduleRepeat.values);
             if (repeat == null) {
               throw ApiError.invalidArgument('repeat 取值不合法',
-                  hint: '可选值：once | daily');
+                  hint:
+                      '可选值：${ScheduleRepeat.values.map((e) => e.name).join(' | ')}');
             }
           }
           final macroId = asString(patch['macroId']);
@@ -1428,6 +1444,8 @@ List<ApiAction> _scheduleActions(AppState state) => [
             hour: asInt(patch['hour']),
             minute: asInt(patch['minute']),
             afterMinutes: asInt(patch['afterMinutes']),
+            weekday: asInt(patch['weekday']),
+            intervalMinutes: asInt(patch['intervalMinutes']),
             enabled: asBool(patch['enabled']),
             macroId: macroId,
           );

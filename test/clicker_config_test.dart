@@ -255,6 +255,30 @@ void main() {
       final json = s.toJson();
       expect(json['fireAtEpochMs'], 1700000000000);
     });
+
+    test('schedule weekday / intervalMinutes round-trips', () {
+      final s = ClickerSchedule(
+          id: 'x',
+          repeat: ScheduleRepeat.weekly,
+          weekday: 5,
+          intervalMinutes: 45);
+      final restored = ClickerSchedule.fromJson(s.toJson());
+      expect(restored.repeat, ScheduleRepeat.weekly);
+      expect(restored.weekday, 5);
+      expect(restored.intervalMinutes, 45);
+    });
+
+    test('schedule 缺 weekday / intervalMinutes 时用默认值', () {
+      final restored = ClickerSchedule.fromJson({'id': 'x'});
+      expect(restored.weekday, 1);
+      expect(restored.intervalMinutes, 30);
+    });
+
+    test('未知 repeat 字符串回退到 once', () {
+      final restored =
+          ClickerSchedule.fromJson({'id': 'x', 'repeat': 'monthly'});
+      expect(restored.repeat, ScheduleRepeat.once);
+    });
   });
 
   group('ClickerConfig enum fallback', () {

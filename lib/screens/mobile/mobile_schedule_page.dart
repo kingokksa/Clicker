@@ -182,19 +182,46 @@ class _ScheduleCard extends StatelessWidget {
 
           if (task.timing == ScheduleTiming.clock) ...[
             const SizedBox(height: 8),
-            Row(children: [
+            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const SizedBox(width: 60, child: Text('重复', style: TextStyle(fontSize: 13))),
-              _chip('仅一次', task.repeat == ScheduleRepeat.once, accent, isDark,
-                  () => update(task.copyWith(repeat: ScheduleRepeat.once), rearm: true)),
-              const SizedBox(width: 6),
-              _chip('每天', task.repeat == ScheduleRepeat.daily, accent, isDark,
-                  () => update(task.copyWith(repeat: ScheduleRepeat.daily), rearm: true)),
+              Expanded(child: Wrap(spacing: 6, runSpacing: 6, children: [
+                _chip('仅一次', task.repeat == ScheduleRepeat.once, accent, isDark,
+                    () => update(task.copyWith(repeat: ScheduleRepeat.once), rearm: true)),
+                _chip('每天', task.repeat == ScheduleRepeat.daily, accent, isDark,
+                    () => update(task.copyWith(repeat: ScheduleRepeat.daily), rearm: true)),
+                _chip('每周', task.repeat == ScheduleRepeat.weekly, accent, isDark,
+                    () => update(task.copyWith(repeat: ScheduleRepeat.weekly), rearm: true)),
+                _chip('工作日', task.repeat == ScheduleRepeat.weekdays, accent, isDark,
+                    () => update(task.copyWith(repeat: ScheduleRepeat.weekdays), rearm: true)),
+                _chip('间隔', task.repeat == ScheduleRepeat.interval, accent, isDark,
+                    () => update(task.copyWith(repeat: ScheduleRepeat.interval), rearm: true)),
+              ])),
             ]),
+            if (task.repeat == ScheduleRepeat.weekly) ...[
+              const SizedBox(height: 8),
+              Row(children: [
+                const SizedBox(width: 60, child: Text('星期', style: TextStyle(fontSize: 13))),
+                Expanded(child: Wrap(spacing: 6, runSpacing: 6, children: [
+                  for (var d = 1; d <= 7; d++)
+                    _chip(_weekdayLabel(d), task.weekday == d, accent, isDark,
+                        () => update(task.copyWith(weekday: d), rearm: true)),
+                ])),
+              ]),
+            ],
           ],
 
           const SizedBox(height: 10),
 
-          if (task.timing == ScheduleTiming.clock)
+          if (task.timing == ScheduleTiming.clock && task.repeat == ScheduleRepeat.interval)
+            Row(children: [
+              const SizedBox(width: 60, child: Text('间隔', style: TextStyle(fontSize: 13))),
+              _numBox(task.intervalMinutes, isDark, (v) {
+                if (v > 0) update(task.copyWith(intervalMinutes: v), rearm: true);
+              }, width: 64),
+              const SizedBox(width: 6),
+              const Text('分钟触发', style: TextStyle(fontSize: 13)),
+            ])
+          else if (task.timing == ScheduleTiming.clock)
             Row(children: [
               const SizedBox(width: 60, child: Text('时刻', style: TextStyle(fontSize: 13))),
               _numBox(task.hour, isDark, (v) => update(task.copyWith(hour: v % 24), rearm: true)),
@@ -270,6 +297,9 @@ class _ScheduleCard extends StatelessWidget {
       ),
     );
   }
+
+  String _weekdayLabel(int weekday) =>
+      const ['一', '二', '三', '四', '五', '六', '日'][weekday - 1];
 
   Widget _chip(String label, bool selected, Color accent, bool isDark, VoidCallback onTap) {
     final unselectedBg = isDark ? const Color(0xFF303050) : const Color(0xFFE8E8F0);

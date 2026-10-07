@@ -123,7 +123,7 @@ class MouseActionItem {
 
 enum ScheduleTiming { clock, countdown }
 
-enum ScheduleRepeat { once, daily }
+enum ScheduleRepeat { once, daily, weekly, weekdays, interval }
 
 enum ScheduleAction {
   startClick('启动连点'),
@@ -150,6 +150,8 @@ class ClickerSchedule {
   final int minute;
   final int afterMinutes;
   final int fireAtEpochMs;
+  final int weekday;
+  final int intervalMinutes;
 
   const ClickerSchedule({
     this.id = '',
@@ -162,6 +164,8 @@ class ClickerSchedule {
     this.minute = 0,
     this.afterMinutes = 10,
     this.fireAtEpochMs = 0,
+    this.weekday = 1,
+    this.intervalMinutes = 30,
   });
 
   ClickerSchedule copyWith({
@@ -175,6 +179,8 @@ class ClickerSchedule {
     int? minute,
     int? afterMinutes,
     int? fireAtEpochMs,
+    int? weekday,
+    int? intervalMinutes,
     bool clearMacroId = false,
   }) => ClickerSchedule(
     id: id ?? this.id,
@@ -187,6 +193,8 @@ class ClickerSchedule {
     minute: minute ?? this.minute,
     afterMinutes: afterMinutes ?? this.afterMinutes,
     fireAtEpochMs: fireAtEpochMs ?? this.fireAtEpochMs,
+    weekday: weekday ?? this.weekday,
+    intervalMinutes: intervalMinutes ?? this.intervalMinutes,
   );
 
   Map<String, dynamic> toJson() => {
@@ -200,6 +208,8 @@ class ClickerSchedule {
     'minute': minute,
     'afterMinutes': afterMinutes,
     if (fireAtEpochMs != 0) 'fireAtEpochMs': fireAtEpochMs,
+    'weekday': weekday,
+    'intervalMinutes': intervalMinutes,
   };
 
   factory ClickerSchedule.fromJson(Map<String, dynamic> json,
@@ -222,6 +232,8 @@ class ClickerSchedule {
     minute: json['minute'] ?? 0,
     afterMinutes: json['afterMinutes'] ?? 10,
     fireAtEpochMs: json['fireAtEpochMs'] ?? 0,
+    weekday: json['weekday'] ?? 1,
+    intervalMinutes: json['intervalMinutes'] ?? 30,
   );
 }
 

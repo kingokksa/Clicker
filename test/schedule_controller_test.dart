@@ -398,6 +398,10 @@ void main() {
       expect(ScheduleController.formatFireAt(at(1, 1, 15, 30), now: now), '今天 15:30');
     });
 
+    test('一小时内 — N 分钟后', () {
+      expect(ScheduleController.formatFireAt(at(1, 1, 10, 42), now: now), '42 分钟后');
+    });
+
     test('明天的时刻 — 明天 hh:mm', () {
       expect(ScheduleController.formatFireAt(at(1, 2, 8, 5), now: now), '明天 08:05');
     });
@@ -415,6 +419,149 @@ void main() {
         DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch,
       );
       expect(s, isNotEmpty);
+    });
+  });
+
+  group('armTime — 每周 / 工作日 / 间隔', () {
+    final base = DateTime(2026, 1, 1, 10, 0);
+
+    test('每周 — 取本周内的目标星期', () {
+      final s = ClickerSchedule(
+          hour: 12,
+          minute: 0,
+          repeat: ScheduleRepeat.weekly,
+          weekday: DateTime.saturday);
+      final t = DateTime.fromMillisecondsSinceEpoch(
+          ScheduleController.armTime(s, now: base));
+      expect(t, DateTime(2026, 1, 3, 12, 0));
+      expect(t.weekday, DateTime.saturday);
+    });
+
+    test('每周 — 目标星期已过则顺延到下周', () {
+      final s = ClickerSchedule(
+          hour: 9,
+          minute: 0,
+          repeat: ScheduleRepeat.weekly,
+          weekday: DateTime.thursday);
+      final t = DateTime.fromMillisecondsSinceEpoch(
+          ScheduleController.armTime(s, now: base));
+      expect(t, DateTime(2026, 1, 8, 9, 0));
+    });
+
+    test('每周 — 目标星期是今天且时刻未过，取今天', () {
+      final s = ClickerSchedule(
+          hour: 20,
+          minute: 0,
+          repeat: ScheduleRepeat.weekly,
+          weekday: DateTime.thursday);
+      final t = DateTime.fromMillisecondsSinceEpoch(
+          ScheduleController.armTime(s, now: base));
+      expect(t, DateTime(2026, 1, 1, 20, 0));
+    });
+
+    test('工作日 — 周五之后跳到周一', () {
+      final s = ClickerSchedule(
+          hour: 9, minute: 0, repeat: ScheduleRepeat.weekdays);
+      final t = DateTime.fromMillisecondsSinceEpoch(
+          ScheduleController.armTime(s, now: DateTime(2026, 1, 2, 10, 0)));
+      expect(t, DateTime(2026, 1, 5, 9, 0));
+      expect(t.weekday, DateTime.monday);
+    });
+
+    test('工作日 — 周末布防落到周一', () {
+      final s = ClickerSchedule(
+          hour: 9, minute: 0, repeat: ScheduleRepeat.weekdays);
+      final t = DateTime.fromMillisecondsSinceEpoch(
+          ScheduleController.armTime(s, now: DateTime(2026, 1, 4, 10, 0)));
+      expect(t, DateTime(2026, 1, 5, 9, 0));
+    });
+
+    test('工作日 — 周内时刻未过取当天', () {
+      final s = ClickerSchedule(
+          hour: 18, minute: 30, repeat: ScheduleRepeat.weekdays);
+      final t = DateTime.fromMillisecondsSinceEpoch(
+          ScheduleController.armTime(s, now: DateTime(2026, 1, 6, 10, 0)));
+      expect(t, DateTime(2026, 1, 6, 18, 30));
+    });
+
+    test('间隔 — 取基准时刻 + N 分钟', () {
+      final s = ClickerSchedule(
+          repeat: ScheduleRepeat.interval, intervalMinutes: 15);
+      expect(ScheduleController.armTime(s, now: base),
+          base.add(const Duration(minutes: 15)).millisecondsSinceEpoch);
+    });
+
+    test('间隔 — N 为 0 时按 1 分钟兜底', () {
+      final s = ClickerSchedule(
+          repeat: ScheduleRepeat.interval, intervalMinutes: 0);
+      expect(ScheduleController.armTime(s, now: base),
+          base.add(const Duration(minutes: 1)).millisecondsSinceEpoch);
+    });
+
+    test('间隔 — 忽略 hour/minute', () {
+      final s = ClickerSchedule(
+          hour: 23,
+          minute: 59,
+          repeat: ScheduleRepeat.interval,
+          intervalMinutes: 5);
+      expect(ScheduleController.armTime(s, now: base),
+          base.add(const Duration(minutes: 5)).millisecondsSinceEpoch);
+    });
+  });
+
+  group('checkAt — 每周 / 间隔', () {
+    test('每周触发后重新布防到下周同一天并保持启用', () {
+      final h = _Harness();
+      final s = ClickerSchedule(
+        id: 'w1',
+        enabled: true,
+        repeat: ScheduleRepeat.weekly,
+        weekday: DateTime.thursday,
+        hour: 9,
+        minute: 0,
+        fireAtEpochMs: DateTime(2026, 1, 1, 9, 0).millisecondsSinceEpoch,
+      );
+      h.schedules.add(s);
+      h.ctrl.checkAt(0, s);
+      expect(h.actions.log, ['startClick']);
+      expect(h.schedules[0].enabled, isTrue);
+      expect(
+          DateTime.fromMillisecondsSinceEpoch(h.schedules[0].fireAtEpochMs),
+          DateTime(2026, 1, 8, 9, 0));
+    });
+
+    test('间隔触发后按间隔重新布防', () {
+      final h = _Harness();
+      final s = ClickerSchedule(
+        id: 'i1',
+        enabled: true,
+        repeat: ScheduleRepeat.interval,
+        intervalMinutes: 20,
+        fireAtEpochMs: DateTime(2026, 1, 1, 10, 0).millisecondsSinceEpoch,
+      );
+      h.schedules.add(s);
+      h.ctrl.checkAt(0, s);
+      expect(h.actions.log, ['startClick']);
+      expect(
+          DateTime.fromMillisecondsSinceEpoch(h.schedules[0].fireAtEpochMs),
+          DateTime(2026, 1, 1, 10, 20));
+    });
+
+    test('倒计时即使选了间隔也只触发一次', () {
+      final h = _Harness();
+      final s = ClickerSchedule(
+        id: 'c1',
+        enabled: true,
+        timing: ScheduleTiming.countdown,
+        repeat: ScheduleRepeat.interval,
+        intervalMinutes: 20,
+        fireAtEpochMs: DateTime(2026, 1, 1, 10, 0).millisecondsSinceEpoch,
+      );
+      h.schedules.add(s);
+      h.ctrl.checkAt(0, s);
+      expect(h.actions.log, ['startClick']);
+      expect(h.schedules[0].enabled, isFalse);
+      expect(h.schedules[0].fireAtEpochMs, 0);
     });
   });
 

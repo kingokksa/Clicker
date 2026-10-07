@@ -84,9 +84,25 @@ class ScheduleController {
     if (s.timing == ScheduleTiming.countdown) {
       return base.millisecondsSinceEpoch + s.afterMinutes * 60000;
     }
+    if (s.repeat == ScheduleRepeat.interval) {
+      final minutes = s.intervalMinutes.clamp(1, 1440);
+      return base.millisecondsSinceEpoch + minutes * 60000;
+    }
     var target = DateTime(base.year, base.month, base.day, s.hour, s.minute);
     if (!target.isAfter(base)) {
       target = DateTime(base.year, base.month, base.day + 1, s.hour, s.minute);
+    }
+    if (s.repeat == ScheduleRepeat.weekly) {
+      final wanted = s.weekday.clamp(1, 7);
+      while (target.weekday != wanted) {
+        target =
+            DateTime(target.year, target.month, target.day + 1, s.hour, s.minute);
+      }
+    } else if (s.repeat == ScheduleRepeat.weekdays) {
+      while (target.weekday > DateTime.friday) {
+        target =
+            DateTime(target.year, target.month, target.day + 1, s.hour, s.minute);
+      }
     }
     return target.millisecondsSinceEpoch;
   }
@@ -131,6 +147,8 @@ class ScheduleController {
     if (epochMs <= 0) return '未布防';
     final t = DateTime.fromMillisecondsSinceEpoch(epochMs);
     final base = now ?? DateTime.now();
+    final minutes = t.difference(base).inMinutes;
+    if (minutes >= 0 && minutes < 60) return '$minutes 分钟后';
     final today = DateTime(base.year, base.month, base.day);
     final day = DateTime(t.year, t.month, t.day);
     final diff = day.difference(today).inDays;
