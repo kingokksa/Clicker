@@ -7,6 +7,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'dart:io';
 import 'package:window_manager/window_manager.dart';
 import '../../services/app_state.dart';
+import '../../services/app_logger.dart';
 import '../../services/update_service.dart';
 import '../../models/hotkey_config.dart';
 import '../../models/clicker_config.dart' show SoundConfig;
@@ -62,6 +63,8 @@ class _SettingsPageState extends State<SettingsPage> {
       _sectionCard(title: '开机自启', icon: FluentIcons.brightness, child: _buildAutoStartSection(state)),
       const SizedBox(height: 12),
       _sectionCard(title: '配置管理', icon: FluentIcons.save, child: _buildProfileSection(context, state)),
+      const SizedBox(height: 12),
+      _sectionCard(title: '诊断', icon: FluentIcons.developer_tools, child: _buildDiagnosticsSection(context)),
       const SizedBox(height: 12),
       _sectionCard(title: '关于', icon: FluentIcons.info, child: _buildAboutSection()),
     ];
@@ -301,6 +304,94 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+
+  Widget _buildDiagnosticsSection(BuildContext context) {
+    final logger = AppLogger.instance;
+    final dir = logger.directory;
+    final isDark = FluentTheme.of(context).brightness == Brightness.dark;
+    final subtitleColor = isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A);
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(dir ?? '日志目录不可用', style: TextStyle(fontSize: 12, color: subtitleColor)),
+      const SizedBox(height: 12),
+      Wrap(spacing: 8, runSpacing: 8, children: [
+        Button(
+          onPressed: dir == null ? null : () => Process.run('explorer', [dir]),
+          child: const Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(FluentIcons.folder, size: 14),
+            SizedBox(width: 6),
+            Text('打开日志目录'),
+          ]),
+        ),
+        Button(
+          onPressed: () => _showLogPreview(context),
+          child: const Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(FluentIcons.text_document, size: 14),
+            SizedBox(width: 6),
+            Text('查看最近日志'),
+          ]),
+        ),
+        Button(
+          onPressed: () => _confirmClearLogs(context),
+          child: const Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(FluentIcons.delete, size: 14),
+            SizedBox(width: 6),
+            Text('清空日志'),
+          ]),
+        ),
+      ]),
+    ]);
+  }
+
+  Future<void> _showLogPreview(BuildContext context) async {
+    final lines = await AppLogger.instance.readTail(maxLines: 300);
+    if (!context.mounted) return;
+    final isDark = FluentTheme.of(context).brightness == Brightness.dark;
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => ContentDialog(
+        constraints: const BoxConstraints(maxWidth: 720, maxHeight: 640),
+        title: const Text('最近日志'),
+        content: SizedBox(
+          width: 680,
+          height: 460,
+          child: lines.isEmpty
+              ? const Center(child: Text('暂无日志'))
+              : Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: isDark ? const Color(0xFF15152A) : const Color(0xFFF5F5FA),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: SingleChildScrollView(
+                    child: SelectableText(
+                      lines.join('\n'),
+                      style: const TextStyle(fontFamily: 'Consolas', fontSize: 11, height: 1.5),
+                    ),
+                  ),
+                ),
+        ),
+        actions: [
+          Button(onPressed: () => Navigator.pop(dialogContext), child: const Text('关闭')),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _confirmClearLogs(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => ContentDialog(
+        constraints: const BoxConstraints(maxWidth: 420, maxHeight: 400),
+        title: const Text('清空日志'),
+        content: const Text('将删除所有历史日志文件。'),
+        actions: [
+          Button(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('清空')),
+        ],
+      ),
+    );
+    if (confirmed == true) await AppLogger.instance.clear();
+  }
 
   Widget _buildAboutSection() {
     final update = UpdateService.instance;

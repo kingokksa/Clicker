@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'platform_input.dart';
 import '../key_alias_service.dart';
+import '../app_logger.dart';
 
 class AndroidInput extends PlatformInput {
   static const _inputChannel = MethodChannel('clicker/input');
@@ -81,10 +82,10 @@ class AndroidInput extends PlatformInput {
         }
       }
     } on PlatformException catch (e) {
-      print('[AndroidInput] mouseClick failed: ${e.code} - ${e.message}');
+      AppLogger.instance.log('AndroidInput', 'mouseClick failed: ${e.code} - ${e.message}');
       rethrow;
     } catch (e) {
-      print('[AndroidInput] mouseClick failed: $e');
+      AppLogger.instance.log('AndroidInput', 'mouseClick failed: $e');
       rethrow;
     }
   }

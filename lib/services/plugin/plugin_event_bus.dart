@@ -1,6 +1,8 @@
 
 import 'dart:async';
 
+import '../app_logger.dart';
+
 class PluginEvent {
   final String name;
   final Map<String, dynamic> data;
@@ -59,10 +61,7 @@ class PluginEventBus {
   int subscriptionCount(String event) => _subscriptions[event]?.length ?? 0;
 
   void _log(String msg) {
-    assert(() {
-      print('[PluginEventBus] $msg');
-      return true;
-    }());
+    AppLogger.instance.log('PluginEventBus', msg);
   }
 }
 

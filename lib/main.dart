@@ -18,9 +18,11 @@ import 'services/plugins/api_plugin.dart';
 import 'services/plugins/key_alias_plugin.dart';
 import 'services/plugins/script_plugin.dart';
 import 'services/system_tray_service.dart';
+import 'services/app_logger.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await AppLogger.instance.init();
 
   if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
     _registerBuiltinPlugins();

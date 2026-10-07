@@ -5,6 +5,7 @@ import '../models/hotkey_config.dart';
 import '../models/macro_model.dart';
 import 'platform/platform_input.dart';
 import 'platform/windows_input.dart';
+import 'app_logger.dart';
 
 class HotkeyService {
   final PlatformInput _input;
@@ -57,19 +58,19 @@ class HotkeyService {
   }
 
   void _handleKeyEvent(String field) {
-    print('[HotkeyService] received: $field');
+    AppLogger.instance.log('HotkeyService', 'received: $field');
     final fieldId = int.tryParse(field);
     if (fieldId != null && fieldId >= _macroHotkeyBaseId) {
       final macroId = _macroHotkeyIds[fieldId];
       if (macroId != null) {
-        print('[HotkeyService] → playMacroById: $macroId');
+        AppLogger.instance.log('HotkeyService', 'playMacroById: $macroId');
         onPlayMacroById?.call(macroId);
         return;
       }
     }
     switch (field) {
       case 'startStopClicker':
-        print('[HotkeyService] → toggle clicker');
+        AppLogger.instance.log('HotkeyService', 'toggle clicker');
         onStartStopClicker?.call();
         break;
       case 'startStopRecording':

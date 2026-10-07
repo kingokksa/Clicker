@@ -7,6 +7,7 @@ import 'package:ffi/ffi.dart';
 import 'package:flutter/services.dart';
 import '../models/clicker_config.dart';
 import '../models/click_settings.dart';
+import 'app_logger.dart';
 import 'platform/platform_input.dart';
 import 'platform/windows_input.dart';
 import 'platform/android_input.dart';
@@ -128,7 +129,7 @@ class ClickService {
   bool _usingNativeClicker = false;
 
   static void _log(String msg) {
-    print('[ClickService] $msg');
+    AppLogger.instance.log('ClickService', msg);
   }
 
   void Function(ClickerStatus status, int count)? onStatusChanged;

@@ -37,6 +37,35 @@
 #define DBG_LOG(msg) ((void)0)
 #endif
 
+static void ClickerLog(const std::string& line) {
+  OutputDebugStringA(line.c_str());
+  OutputDebugStringA("\n");
+  static std::mutex logMutex;
+  static std::string logDir;
+  std::lock_guard<std::mutex> lock(logMutex);
+  if (logDir.empty()) {
+    char exePath[MAX_PATH];
+    GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+    std::string exeDir(exePath);
+    auto lastSlash = exeDir.find_last_of("\\/");
+    if (lastSlash != std::string::npos) exeDir = exeDir.substr(0, lastSlash);
+    CreateDirectoryA((exeDir + "\\data").c_str(), nullptr);
+    logDir = exeDir + "\\data\\logs";
+    CreateDirectoryA(logDir.c_str(), nullptr);
+  }
+  SYSTEMTIME st;
+  GetLocalTime(&st);
+  char dateBuf[16];
+  sprintf_s(dateBuf, "%04d-%02d-%02d", st.wYear, st.wMonth, st.wDay);
+  std::string path = logDir + "\\clicker-native-" + dateBuf + ".log";
+  FILE* f = nullptr;
+  if (fopen_s(&f, path.c_str(), "a") == 0 && f != nullptr) {
+    fprintf(f, "%04d-%02d-%02d %02d:%02d:%02d.%03d %s\n", st.wYear, st.wMonth, st.wDay,
+            st.wHour, st.wMinute, st.wSecond, st.wMilliseconds, line.c_str());
+    fclose(f);
+  }
+}
+
 #include "flutter/generated_plugin_registrant.h"
 #include "flutter/standard_method_codec.h"
 
@@ -1868,11 +1897,11 @@ bool FlutterWindow::OnCreate() {
           for (size_t i = 0; i < physPixels.size() && nonZeroCount < 10; i++) {
             if (physPixels[i] != 0) nonZeroCount++;
           }
-          OutputDebugStringA(("[captureScreenRect] physPixels nonZero(first10)=" + std::to_string(nonZeroCount) + "/" + std::to_string(physPixels.size()) + "\n").c_str());
+          ClickerLog(("[captureScreenRect] physPixels nonZero(first10)=" + std::to_string(nonZeroCount) + "/" + std::to_string(physPixels.size()) + "\n").c_str());
 
           // Downscale physical pixels back to logical pixel size for Dart
           std::vector<uint8_t> pixels(w * h * 4);
-          OutputDebugStringA(("[captureScreenRect] x=" + std::to_string(x) + " y=" + std::to_string(y) + " w=" + std::to_string(w) + " h=" + std::to_string(h) + " physW=" + std::to_string(physW) + " physH=" + std::to_string(physH) + " dpiScale=" + std::to_string(dpiScale) + " physPixels=" + std::to_string(physPixels.size()) + "\n").c_str());
+          ClickerLog(("[captureScreenRect] x=" + std::to_string(x) + " y=" + std::to_string(y) + " w=" + std::to_string(w) + " h=" + std::to_string(h) + " physW=" + std::to_string(physW) + " physH=" + std::to_string(physH) + " dpiScale=" + std::to_string(dpiScale) + " physPixels=" + std::to_string(physPixels.size()) + "\n").c_str());
           if (dpiScale == 1.0) {
             pixels = std::move(physPixels);
           } else {
@@ -2166,7 +2195,7 @@ bool FlutterWindow::OnCreate() {
             for (size_t i = 0; i < physRegionPixels.size() && nonZeroCount < 10; i++) {
               if (physRegionPixels[i] != 0) nonZeroCount++;
             }
-            OutputDebugStringA(("[findImage] physRegionPixels nonZero(first10)=" + std::to_string(nonZeroCount) + "/" + std::to_string(physRegionPixels.size()) + "\n").c_str());
+            ClickerLog(("[findImage] physRegionPixels nonZero(first10)=" + std::to_string(nonZeroCount) + "/" + std::to_string(physRegionPixels.size()) + "\n").c_str());
           }
 
           // Template matching using normalized cross-correlation (in logical pixel space)
@@ -2412,7 +2441,7 @@ bool FlutterWindow::OnCreate() {
               if ((int)kept.size() >= maxResults) break;
             }
 
-            OutputDebugStringA(("[findImage] final: matches=" + std::to_string(kept.size()) + "\n").c_str());
+            ClickerLog(("[findImage] final: matches=" + std::to_string(kept.size()) + "\n").c_str());
 
             {
               std::lock_guard<std::mutex> lock(g_frame_cache_mutex);
@@ -3528,7 +3557,7 @@ bool FlutterWindow::OnCreate() {
             const auto* triggerNamePtr = std::get_if<std::string>(&cfg[0]);
             if (triggerNamePtr) {
               entry.trigger_vk = KeyNameToVk(*triggerNamePtr);
-              OutputDebugStringA(("[HoldTrigger] trigger=" + *triggerNamePtr + " vk=" + std::to_string(entry.trigger_vk) + "\n").c_str());
+              ClickerLog(("[HoldTrigger] trigger=" + *triggerNamePtr + " vk=" + std::to_string(entry.trigger_vk) + "\n").c_str());
             }
             int actionType = GetInt(cfg[1]);
             entry.interval_ms = GetInt(cfg[2]);
@@ -3607,7 +3636,15 @@ bool FlutterWindow::OnCreate() {
             if (keyboard_hook_) { UnhookWindowsHookEx(keyboard_hook_); keyboard_hook_ = nullptr; }
             if (mouse_hook_) { UnhookWindowsHookEx(mouse_hook_); mouse_hook_ = nullptr; }
             g_flutter_window_for_hooks = nullptr;
+          } else {
+            ClickerLog("[Hooks] kept after unregisterHoldTriggerKeys: recording=" +
+                       std::to_string(is_recording_ ? 1 : 0) + " hotkeys=" +
+                       std::to_string(g_hook_hotkey_count) + " userInputMonitor=" +
+                       std::to_string(g_user_input_monitor ? 1 : 0));
           }
+          ClickerLog("[Hooks] after unregisterHoldTriggerKeys: keyboard=" +
+                     std::to_string(keyboard_hook_ != nullptr ? 1 : 0) + " mouse=" +
+                     std::to_string(mouse_hook_ != nullptr ? 1 : 0));
 
           result->Success(flutter::EncodableValue(true));
         } else if (call.method_name() == "enumerateWindows") {
@@ -3896,6 +3933,9 @@ bool FlutterWindow::OnCreate() {
           }
           g_user_input_monitor = enable;
           GetCursorPos(&g_user_move_last);
+          ClickerLog("[UserInputMonitor] enable=" + std::to_string(enable ? 1 : 0) +
+                     " keyboard=" + std::to_string(keyboard_hook_ != nullptr ? 1 : 0) +
+                     " mouse=" + std::to_string(mouse_hook_ != nullptr ? 1 : 0));
           result->Success(flutter::EncodableValue(
               enable ? (keyboard_hook_ != nullptr && mouse_hook_ != nullptr) : true));
         } else {
@@ -3940,6 +3980,9 @@ bool FlutterWindow::OnCreate() {
             if (mouse_hook_) { UnhookWindowsHookEx(mouse_hook_); mouse_hook_ = nullptr; }
             is_recording_ = false;
             g_flutter_window_for_hooks = nullptr;
+            ClickerLog("[Hooks] recording hook install failed: keyboard=" +
+                       std::to_string(keyboard_hook_ != nullptr ? 1 : 0) + " mouse=" +
+                       std::to_string(mouse_hook_ != nullptr ? 1 : 0));
             result->Error("HOOK_FAILED", "SetWindowsHookEx low-level hooks failed");
             return;
           }
@@ -3958,6 +4001,11 @@ bool FlutterWindow::OnCreate() {
             }
             g_flutter_window_for_hooks = nullptr;
           }
+          ClickerLog("[Hooks] stopRecording: holdTriggers=" + std::to_string(g_hold_trigger_count) +
+                     " hotkeys=" + std::to_string(g_hook_hotkey_count) + " userInputMonitor=" +
+                     std::to_string(g_user_input_monitor ? 1 : 0) + " keyboard=" +
+                     std::to_string(keyboard_hook_ != nullptr ? 1 : 0) + " mouse=" +
+                     std::to_string(mouse_hook_ != nullptr ? 1 : 0));
           result->Success();
         } else {
           result->NotImplemented();
@@ -4114,10 +4162,10 @@ LRESULT CALLBACK FlutterWindow::KeyboardHookProc(int code, WPARAM wparam, LPARAM
       for (int i = 0; i < g_hold_trigger_count; i++) {
         if (g_hold_triggers[i].trigger_vk == vk) {
           if (key_down && !g_hold_triggers[i].active) {
-            OutputDebugStringA("[HoldTrigger] KEY DOWN matched trigger, starting\n");
+            ClickerLog("[HoldTrigger] KEY DOWN matched trigger, starting\n");
             StartHoldTrigger(&g_hold_triggers[i]);
           } else if (key_up && g_hold_triggers[i].active) {
-            OutputDebugStringA("[HoldTrigger] KEY UP matched trigger, stopping\n");
+            ClickerLog("[HoldTrigger] KEY UP matched trigger, stopping\n");
             StopHoldTrigger(&g_hold_triggers[i]);
           }
           break;
@@ -4415,7 +4463,7 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     flutter::EncodableMap meta;
     meta[flutter::EncodableValue("best_score")] = flutter::EncodableValue(data.bestScore);
     matches.push_back(flutter::EncodableValue(meta));
-    OutputDebugStringA(("[findImage] main thread callback: matches=" + std::to_string(data.matches.size()) + "\n").c_str());
+    ClickerLog(("[findImage] main thread callback: matches=" + std::to_string(data.matches.size()) + "\n").c_str());
     data.result_ptr->Success(flutter::EncodableValue(matches));
     delete data.result_ptr;
     return 0;
@@ -4907,7 +4955,7 @@ void FlutterWindow::StartFastClicker(int intervalUs, int x, int y, int button, i
   if (!clicker_thread_) {
     g_clicker.running = false;
     g_clicker.stop_requested = true;
-    OutputDebugStringA("[StartFastClicker] CreateThread FAILED!");
+    ClickerLog("[StartFastClicker] CreateThread FAILED!");
   }
   clicker_running_ = (clicker_thread_ != nullptr);
 }
