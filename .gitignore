@@ -66,3 +66,7 @@ requirements.txt
 plugins/*/windows/*.dll
 plugins/*/windows/*.exp
 plugins/*/windows/*.lib
+# Local tool caches and logs (never publish)
+.pi-lens/
+.kotlin/
+AGENTS.md
