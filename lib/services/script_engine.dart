@@ -73,6 +73,43 @@ class ScriptEngine {
   Future<void> Function()? doStartClicker;
   Future<void> Function()? doStopClicker;
 
+  static String formatScript(List<ScriptCommand> commands) {
+    final lines = <String>[];
+    for (final cmd in commands) {
+      final p = cmd.params;
+      switch (cmd.action) {
+        case 'click':
+          lines.add('click ${p['x'] ?? 0} ${p['y'] ?? 0} ${p['button'] ?? 'left'}');
+          break;
+        case 'key':
+          lines.add('key ${p['key'] ?? 'enter'}');
+          break;
+        case 'delay':
+          lines.add('delay ${p['ms'] ?? 100}');
+          break;
+        case 'move':
+          lines.add('move ${p['x'] ?? 0} ${p['y'] ?? 0}');
+          break;
+        case 'scroll':
+          lines.add('scroll ${p['dx'] ?? 0} ${p['dy'] ?? 0}');
+          break;
+        case 'type':
+          lines.add('type ${p['text'] ?? ''} ${p['delayMs'] ?? 30}');
+          break;
+        case 'repeat':
+          lines.add('repeat ${p['count'] ?? 1}');
+          break;
+        case 'start_clicker':
+          lines.add('start_clicker');
+          break;
+        case 'stop_clicker':
+          lines.add('stop_clicker');
+          break;
+      }
+    }
+    return lines.join('\n');
+  }
+
   static List<ScriptCommand> parseScript(String text) {
     final commands = <ScriptCommand>[];
     for (final line in text.split('\n')) {

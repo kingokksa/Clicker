@@ -16,6 +16,7 @@ import 'services/plugins/schedule_plugin.dart';
 import 'services/plugins/humanize_plugin.dart';
 import 'services/plugins/api_plugin.dart';
 import 'services/plugins/key_alias_plugin.dart';
+import 'services/plugins/script_plugin.dart';
 import 'services/system_tray_service.dart';
 
 void main() async {
@@ -43,6 +44,7 @@ void _registerBuiltinPlugins() {
   pm.registerDartPlugin(HumanizePlugin.new);
   pm.registerDartPlugin(ApiPlugin.new);
   pm.registerDartPlugin(KeyAliasPlugin.new);
+  pm.registerDartPlugin(ScriptPlugin.new);
   PluginManager.declarativePageFactory = buildDeclarativePluginPage;
 }
 

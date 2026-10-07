@@ -31,6 +31,12 @@ class AppPaths {
     if (!await dir.exists()) await dir.create(recursive: true);
     return dir.path;
   }
+  static Future<String> getScriptsDir() async {
+    final dataDir = await getDataDir();
+    final dir = Directory('$dataDir${sep}scripts');
+    if (!await dir.exists()) await dir.create(recursive: true);
+    return dir.path;
+  }
 
   static Future<String> getPluginsDir() async {
     final dataDir = await getDataDir();

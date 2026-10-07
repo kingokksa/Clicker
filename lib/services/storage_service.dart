@@ -6,6 +6,7 @@ import 'dart:io';
 import 'app_paths.dart';
 import 'local_storage.dart';
 import 'key_alias_service.dart';
+import 'script_engine.dart';
 import '../models/clicker_config.dart';
 import '../models/hold_trigger_key.dart';
 import '../models/hotkey_config.dart';
@@ -27,12 +28,15 @@ class StorageService {
   static const _keyFloatingPanelVisible = 'floating_panel_visible';
 
   late String _macrosDir;
+  late String _scriptsDir;
 
   Future<void> init() async {
     await LocalStorage.instance.init();
     await KeyAliasService.instance.ensureLoaded();
     _macrosDir = await AppPaths.getMacrosDir();
     await Directory(_macrosDir).create(recursive: true);
+    _scriptsDir = await AppPaths.getScriptsDir();
+    await Directory(_scriptsDir).create(recursive: true);
   }
 
   LocalStorage get _prefs => LocalStorage.instance;
@@ -219,6 +223,33 @@ class StorageService {
     }
     macros.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return macros;
+  }
+
+  Future<void> saveScript(ScriptModel script) async {
+    final file = File('$_scriptsDir/${script.id}.json');
+    await file.writeAsString(jsonEncode(script.toJson()));
+  }
+
+  Future<void> deleteScript(String id) async {
+    final file = File('$_scriptsDir/$id.json');
+    if (await file.exists()) {
+      await file.delete();
+    }
+  }
+
+  Future<List<ScriptModel>> loadAllScripts() async {
+    final dir = Directory(_scriptsDir);
+    if (!await dir.exists()) return [];
+    final scripts = <ScriptModel>[];
+    for (final f in dir.listSync().whereType<File>()) {
+      if (!f.path.endsWith('.json')) continue;
+      try {
+        final json = jsonDecode(await f.readAsString());
+        scripts.add(ScriptModel.fromJson(json as Map<String, dynamic>));
+      } catch (_) {}
+    }
+    scripts.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return scripts;
   }
 
 

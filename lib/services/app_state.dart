@@ -73,7 +73,7 @@ class AppState extends ChangeNotifier {
   List<MacroModel> _macros = [];
   List<String> _profiles = [];
 
-  final List<ScriptModel> _scripts = [];
+  List<ScriptModel> _scripts = [];
 
   final List<WindowRule> _windowRules = [];
 
@@ -304,6 +304,7 @@ class AppState extends ChangeNotifier {
       };
 
       _macros = await _storage.loadAllMacros();
+      _scripts = await _storage.loadAllScripts();
 
       await _hotkeyService.reregisterAllMacroHotkeys(_macros);
 
@@ -402,13 +403,26 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void addScript(ScriptModel script) {
-    _scripts.add(script);
+  Future<void> addScript(ScriptModel script) async {
+    _scripts.insert(0, script);
+    await _storage.saveScript(script);
     notifyListeners();
   }
 
-  void removeScript(String id) {
+  Future<void> updateScript(ScriptModel script) async {
+    final index = _scripts.indexWhere((s) => s.id == script.id);
+    if (index < 0) {
+      await addScript(script);
+      return;
+    }
+    _scripts[index] = script;
+    await _storage.saveScript(script);
+    notifyListeners();
+  }
+
+  Future<void> removeScript(String id) async {
     _scripts.removeWhere((s) => s.id == id);
+    await _storage.deleteScript(id);
     notifyListeners();
   }
 
@@ -634,6 +648,7 @@ class AppState extends ChangeNotifier {
         _macroService.recordMouseMove = _macroRecordMouseMove;
       }
       _macros = await _storage.loadAllMacros();
+      _scripts = await _storage.loadAllScripts();
       _profiles = _storage.listProfiles();
       if (result.holdTriggerKeys != null) {
         _holdTriggerKeys = result.holdTriggerKeys!;
