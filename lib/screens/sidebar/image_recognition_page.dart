@@ -3236,6 +3236,7 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
   Widget build(BuildContext context) {
     return ContentDialog(
       title: Text(_isEditing ? '编辑触发条件' : '添加触发条件'),
+      constraints: const BoxConstraints(maxWidth: 560, maxHeight: 756),
       content: SizedBox(width: 560, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
         _dialogSectionTitle('条件'),
         const SizedBox(height: 10),

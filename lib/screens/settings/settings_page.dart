@@ -600,6 +600,7 @@ class _HotkeyPickerDialogState extends State<_HotkeyPickerDialog> {
     final preview = HotkeyConfig.buildHotkey(_selectedModifiers, _selectedKey);
     return ContentDialog(
       title: const Text('选择快捷键'),
+      constraints: const BoxConstraints(maxWidth: 420, maxHeight: 756),
       content: SizedBox(width: 420, child: Column(mainAxisSize: MainAxisSize.min, children: [
         Text('选择修饰键和功能键', style: TextStyle(fontSize: 12, color: FluentTheme.of(context).brightness == Brightness.dark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A))),
         const SizedBox(height: 16),

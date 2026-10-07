@@ -314,6 +314,7 @@ class _AliasEditDialogState extends State<_AliasEditDialog> {
     final category = keySpecCategories[_categoryIndex];
     return ContentDialog(
       title: Text(widget.initial == null ? '添加别名' : '编辑别名'),
+      constraints: const BoxConstraints(maxWidth: 380, maxHeight: 756),
       content: SizedBox(
         width: 380,
         child: Column(mainAxisSize: MainAxisSize.min, children: [

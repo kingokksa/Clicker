@@ -1894,6 +1894,7 @@ class _ComboBuilderDialogState extends State<_ComboBuilderDialog> {
     final containerBg = isDark ? const Color(0xFF303050) : const Color(0xFFF0F0F8);
     return ContentDialog(
       title: const Text('组合键构建器'),
+      constraints: const BoxConstraints(maxWidth: 440, maxHeight: 756),
       content: SizedBox(width: 440, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
         TextBox(controller: _nameCtrl, placeholder: '宏名称'),
         const SizedBox(height: 10),
@@ -1981,6 +1982,7 @@ class _TextTypeBuilderDialogState extends State<_TextTypeBuilderDialog> {
     final containerBg = isDark ? const Color(0xFF303050) : const Color(0xFFF0F0F8);
     return ContentDialog(
       title: const Text('自动打字宏'),
+      constraints: const BoxConstraints(maxWidth: 400, maxHeight: 756),
       content: SizedBox(width: 400, child: Column(mainAxisSize: MainAxisSize.min, children: [
         TextBox(controller: _nameCtrl, placeholder: '宏名称'),
         const SizedBox(height: 10),
@@ -2048,6 +2050,7 @@ class _ScrollBuilderDialogState extends State<_ScrollBuilderDialog> {
     final direction = _scrollDy >= 0 ? '向下' : '向上';
     return ContentDialog(
       title: const Text('滚轮宏'),
+      constraints: const BoxConstraints(maxWidth: 400, maxHeight: 756),
       content: SizedBox(width: 400, child: Column(mainAxisSize: MainAxisSize.min, children: [
         TextBox(controller: _nameCtrl, placeholder: '宏名称'),
         const SizedBox(height: 10),
@@ -2132,6 +2135,7 @@ class _DelayBuilderDialogState extends State<_DelayBuilderDialog> {
     final containerBg = isDark ? const Color(0xFF303050) : const Color(0xFFF0F0F8);
     return ContentDialog(
       title: const Text('延时宏'),
+      constraints: const BoxConstraints(maxWidth: 400, maxHeight: 756),
       content: SizedBox(width: 400, child: Column(mainAxisSize: MainAxisSize.min, children: [
         TextBox(controller: _nameCtrl, placeholder: '宏名称'),
         const SizedBox(height: 10),
@@ -2237,6 +2241,7 @@ class _DragSwipeBuilderDialogState extends State<_DragSwipeBuilderDialog> {
     final containerBg = isDark ? const Color(0xFF303050) : const Color(0xFFF0F0F8);
     return ContentDialog(
       title: Text(label),
+      constraints: const BoxConstraints(maxWidth: 420, maxHeight: 756),
       content: SizedBox(width: 420, child: Column(mainAxisSize: MainAxisSize.min, children: [
         TextBox(controller: _nameCtrl, placeholder: '宏名称'),
         const SizedBox(height: 12),

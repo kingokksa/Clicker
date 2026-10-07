@@ -608,7 +608,7 @@ class _ClickerPageState extends State<ClickerPage> {
       final muted = isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A);
       return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          Expanded(child: Text('真实鼠标/键盘输入时', style: TextStyle(fontSize: 13, color: muted))),
+          Expanded(child: Text('用户输入时', style: TextStyle(fontSize: 13, color: muted))),
           ToggleSwitch(
             checked: config.userInterventionEnabled,
             onChanged: (v) => state.setClickerConfig(config.copyWith(userInterventionEnabled: v)),
@@ -920,6 +920,7 @@ class _KeyPickerDialogState extends State<_KeyPickerDialog> {
     final unselectedText = isDark ? const Color(0xFFC0C0D8) : const Color(0xFF5A5A70);
     return ContentDialog(
       title: const Text('选择按键'),
+      constraints: const BoxConstraints(maxWidth: 400, maxHeight: 756),
       content: SizedBox(width: 400, child: Column(mainAxisSize: MainAxisSize.min, children: [
         Center(child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
@@ -1002,6 +1003,7 @@ class _SequenceKeyPickerDialogState extends State<_SequenceKeyPickerDialog> {
     final unselectedText = isDark ? const Color(0xFFC0C0D8) : const Color(0xFF5A5A70);
     return ContentDialog(
       title: const Text('添加按键'),
+      constraints: const BoxConstraints(maxWidth: 400, maxHeight: 756),
       content: SizedBox(width: 400, child: Column(mainAxisSize: MainAxisSize.min, children: [
         Center(child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
@@ -1067,6 +1069,7 @@ class _ComboKeyPickerDialogState extends State<_ComboKeyPickerDialog> {
     final keys = widget.isModifier ? _modifierKeys : null;
     return ContentDialog(
       title: Text(widget.isModifier ? '选择修饰键' : '选择普通键'),
+      constraints: const BoxConstraints(maxWidth: 400, maxHeight: 756),
       content: SizedBox(width: 400, child: Column(mainAxisSize: MainAxisSize.min, children: [
         if (keys != null)
           Wrap(spacing: 6, runSpacing: 6, children: keys.map((key) {
@@ -1136,6 +1139,7 @@ class _MouseActionPickerDialogState extends State<_MouseActionPickerDialog> {
     final unselectedText = isDark ? const Color(0xFFC0C0D8) : const Color(0xFF5A5A70);
     return ContentDialog(
       title: const Text('添加动作'),
+      constraints: const BoxConstraints(maxWidth: 400, maxHeight: 756),
       content: SizedBox(width: 400, child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
         const Text('动作类型', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
         const SizedBox(height: 6),
