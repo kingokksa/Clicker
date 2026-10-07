@@ -54,6 +54,7 @@ class ScriptModel {
 class ScriptEngine {
   ScriptStatus _status = ScriptStatus.idle;
   int _currentLine = 0;
+  int _steps = 0;
   Completer<void>? _pauseCompleter;
 
   void Function(ScriptStatus status)? onStatusChanged;
@@ -75,43 +76,79 @@ class ScriptEngine {
 
   static String formatScript(List<ScriptCommand> commands) {
     final lines = <String>[];
+    _formatCommands(commands, 0, lines);
+    return lines.join('\n');
+  }
+
+  static void _formatCommands(
+      List<ScriptCommand> commands, int indent, List<String> lines) {
+    final pad = '  ' * indent;
     for (final cmd in commands) {
       final p = cmd.params;
       switch (cmd.action) {
         case 'click':
-          lines.add('click ${p['x'] ?? 0} ${p['y'] ?? 0} ${p['button'] ?? 'left'}');
+          lines.add('${pad}click ${p['x'] ?? 0} ${p['y'] ?? 0} ${p['button'] ?? 'left'}');
           break;
         case 'key':
-          lines.add('key ${p['key'] ?? 'enter'}');
+          lines.add('${pad}key ${p['key'] ?? 'enter'}');
           break;
         case 'delay':
-          lines.add('delay ${p['ms'] ?? 100}');
+          lines.add('${pad}delay ${p['ms'] ?? 100}');
           break;
         case 'move':
-          lines.add('move ${p['x'] ?? 0} ${p['y'] ?? 0}');
+          lines.add('${pad}move ${p['x'] ?? 0} ${p['y'] ?? 0}');
           break;
         case 'scroll':
-          lines.add('scroll ${p['dx'] ?? 0} ${p['dy'] ?? 0}');
+          lines.add('${pad}scroll ${p['dx'] ?? 0} ${p['dy'] ?? 0}');
           break;
         case 'type':
-          lines.add('type ${p['text'] ?? ''} ${p['delayMs'] ?? 30}');
+          lines.add('${pad}type ${p['text'] ?? ''} ${p['delayMs'] ?? 30}');
           break;
         case 'repeat':
-          lines.add('repeat ${p['count'] ?? 1}');
+          lines.add('${pad}repeat ${p['count'] ?? 1}');
+          break;
+        case 'repeat_block':
+          lines.add('${pad}repeat ${p['count'] ?? 1}');
+          _formatCommands(_blockBody(p), indent + 1, lines);
+          lines.add('${pad}end');
           break;
         case 'start_clicker':
-          lines.add('start_clicker');
+          lines.add('${pad}start_clicker');
           break;
         case 'stop_clicker':
-          lines.add('stop_clicker');
+          lines.add('${pad}stop_clicker');
           break;
       }
     }
-    return lines.join('\n');
   }
 
+  static List<ScriptCommand> _blockBody(Map<String, dynamic> p) {
+    final body = p['body'];
+    if (body is! List) return const [];
+    return body
+        .whereType<Map>()
+        .map((e) => ScriptCommand.fromJson(e.cast<String, dynamic>()))
+        .toList();
+  }
+
+  static const int _maxRepeatCount = 10000;
+
+  static const int _maxRepeatDepth = 8;
+
+  static const int _maxSteps = 200000;
+
   static List<ScriptCommand> parseScript(String text) {
-    final commands = <ScriptCommand>[];
+    final root = <ScriptCommand>[];
+    final stack = <_RepeatFrame>[];
+
+    void emit(ScriptCommand cmd) {
+      if (stack.isEmpty) {
+        root.add(cmd);
+      } else {
+        stack.last.body.add(cmd);
+      }
+    }
+
     for (final line in text.split('\n')) {
       final trimmed = line.trim();
       if (trimmed.isEmpty || trimmed.startsWith('//') || trimmed.startsWith('#')) continue;
@@ -119,10 +156,21 @@ class ScriptEngine {
       final parts = trimmed.split(RegExp(r'\s+'));
       final action = parts[0].toLowerCase();
 
+      if (action == 'end') {
+        if (stack.isNotEmpty) {
+          final frame = stack.removeLast();
+          emit(ScriptCommand('repeat_block', {
+            'count': frame.count,
+            'body': frame.body.map((c) => c.toJson()).toList(),
+          }));
+        }
+        continue;
+      }
+
       switch (action) {
         case 'click':
           if (parts.length >= 3) {
-            commands.add(ScriptCommand('click', {
+            emit(ScriptCommand('click', {
               'x': int.tryParse(parts[1]) ?? 0,
               'y': int.tryParse(parts[2]) ?? 0,
               'button': parts.length > 3 ? parts[3] : 'left',
@@ -131,17 +179,17 @@ class ScriptEngine {
           break;
         case 'key':
           if (parts.length >= 2) {
-            commands.add(ScriptCommand('key', {'key': parts[1]}));
+            emit(ScriptCommand('key', {'key': parts[1]}));
           }
           break;
         case 'delay':
           if (parts.length >= 2) {
-            commands.add(ScriptCommand('delay', {'ms': int.tryParse(parts[1]) ?? 100}));
+            emit(ScriptCommand('delay', {'ms': int.tryParse(parts[1]) ?? 100}));
           }
           break;
         case 'move':
           if (parts.length >= 3) {
-            commands.add(ScriptCommand('move', {
+            emit(ScriptCommand('move', {
               'x': int.tryParse(parts[1]) ?? 0,
               'y': int.tryParse(parts[2]) ?? 0,
             }));
@@ -149,7 +197,7 @@ class ScriptEngine {
           break;
         case 'scroll':
           if (parts.length >= 3) {
-            commands.add(ScriptCommand('scroll', {
+            emit(ScriptCommand('scroll', {
               'dx': double.tryParse(parts[1]) ?? 0,
               'dy': double.tryParse(parts[2]) ?? 0,
             }));
@@ -158,28 +206,43 @@ class ScriptEngine {
         case 'type':
           final text = parts.length > 2 ? parts.sublist(1, parts.length - 1).join(' ') : '';
           final delay = parts.length > 2 ? int.tryParse(parts.last) ?? 30 : 30;
-          commands.add(ScriptCommand('type', {'text': text, 'delayMs': delay}));
+          emit(ScriptCommand('type', {'text': text, 'delayMs': delay}));
           break;
         case 'repeat':
           if (parts.length >= 2) {
-            commands.add(ScriptCommand('repeat', {'count': int.tryParse(parts[1]) ?? 1}));
+            final count = (int.tryParse(parts[1]) ?? 1).clamp(1, _maxRepeatCount);
+            if (stack.length >= _maxRepeatDepth) {
+              emit(ScriptCommand('repeat', {'count': count}));
+            } else {
+              stack.add(_RepeatFrame(count));
+            }
           }
           break;
         case 'start_clicker':
-          commands.add(const ScriptCommand('start_clicker', {}));
+          emit(const ScriptCommand('start_clicker', {}));
           break;
         case 'stop_clicker':
-          commands.add(const ScriptCommand('stop_clicker', {}));
+          emit(const ScriptCommand('stop_clicker', {}));
           break;
       }
     }
-    return commands;
+
+    while (stack.isNotEmpty) {
+      final frame = stack.removeLast();
+      emit(ScriptCommand('repeat', {'count': frame.count}));
+      for (final cmd in frame.body) {
+        emit(cmd);
+      }
+    }
+
+    return root;
   }
 
   Future<void> run(ScriptModel script) async {
     if (_status == ScriptStatus.running) return;
     _status = ScriptStatus.running;
     _currentLine = 0;
+    _steps = 0;
     onStatusChanged?.call(_status);
     onLog?.call('脚本 "${script.name}" 开始执行 (${script.commands.length} 条命令)');
 
@@ -215,6 +278,10 @@ class ScriptEngine {
   }
 
   Future<void> _executeCommand(ScriptCommand cmd) async {
+    _steps++;
+    if (_steps > _maxSteps) {
+      throw StateError('脚本执行步数超过上限');
+    }
     switch (cmd.action) {
       case 'click':
         await doClick?.call(
@@ -257,6 +324,14 @@ class ScriptEngine {
           await Future.delayed(const Duration(milliseconds: 50));
         }
         break;
+      case 'repeat_block':
+        final count =
+            (cmd.params['count'] as int? ?? 1).clamp(1, _maxRepeatCount);
+        final body = _blockBody(cmd.params);
+        for (int r = 0; r < count && _status == ScriptStatus.running; r++) {
+          await _executeCommands(body);
+        }
+        break;
       case 'start_clicker':
         await doStartClicker?.call();
         break;
@@ -290,4 +365,11 @@ class ScriptEngine {
   void dispose() {
     stop();
   }
+}
+
+class _RepeatFrame {
+  final int count;
+  final List<ScriptCommand> body = [];
+
+  _RepeatFrame(this.count);
 }

@@ -227,7 +227,7 @@ class _ScriptEditDialogState extends State<_ScriptEditDialog> {
           ),
           const SizedBox(height: 8),
           const Text(
-            'click x y [按键] · key 键名 · delay 毫秒 · move x y · scroll dx dy · type 文本 延迟 · repeat 次数 · start_clicker · stop_clicker',
+            'click x y [按键] · key 键名 · delay 毫秒 · move x y · scroll dx dy · type 文本 延迟 · repeat 次数 ... end 块 · start_clicker · stop_clicker',
             style: TextStyle(fontSize: 12),
           ),
         ]),

@@ -1556,7 +1556,7 @@ List<ApiAction> _scriptActions(AppState state) => [
         summary: '执行一段脚本',
         description: '直接执行脚本文本，无需先创建脚本对象。'
             '支持的指令：click x y / key <键名> / delay <毫秒> / move x y / '
-            'scroll dx dy / type <文本> / repeat <次数> / start_clicker / stop_clicker。'
+            'scroll dx dy / type <文本> / repeat <次数> … end 块（可嵌套） / start_clicker / stop_clicker。'
             'wait=true 时等待执行结束再返回。',
         inputSchema: objSchema(
           {
