@@ -452,10 +452,12 @@ class ClickService {
         delay += _random.nextInt(variation * 2 + 1) - variation;
       }
 
-      if (!following && _config.humanLikeRandomPause && _random.nextInt(100) < _config.humanLikePauseChance) {
-        final lo = _config.humanLikePauseMinMs;
-        final hi = _config.humanLikePauseMaxMs;
-        final pauseMs = hi > lo ? lo + _random.nextInt(hi - lo + 1) : lo;
+      final pauseEnabled = following ? (fs?.humanLikeRandomPause ?? false) : _config.humanLikeRandomPause;
+      final pauseChance = following ? (fs?.humanLikePauseChance ?? 0) : _config.humanLikePauseChance;
+      final pauseLo = following ? (fs?.humanLikePauseMinMs ?? 0) : _config.humanLikePauseMinMs;
+      final pauseHi = following ? (fs?.humanLikePauseMaxMs ?? 0) : _config.humanLikePauseMaxMs;
+      if (pauseEnabled && _random.nextInt(100) < pauseChance) {
+        final pauseMs = pauseHi > pauseLo ? pauseLo + _random.nextInt(pauseHi - pauseLo + 1) : pauseLo;
         delay += pauseMs * 1000;
       }
     }

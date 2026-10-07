@@ -43,98 +43,61 @@ class ClickSettingsPanel extends StatelessWidget {
             onChanged: (v) => onChanged(settings.copyWith(intervalMs: v)),
           )));
         case ClickSettingGroup.mouseButton:
-          children.add(_row('鼠标按键', SizedBox(
-            width: 140,
-            child: ComboBox<MouseButton>(
-              value: settings.mouseButton,
-              items: MouseButton.values
-                  .map((b) => ComboBoxItem<MouseButton>(value: b, child: Text(kMouseButtonLabels[b]!)))
-                  .toList(),
-              onChanged: (v) {
-                if (v != null) onChanged(settings.copyWith(mouseButton: v));
-              },
-            ),
-          )));
+          children.add(Wrap(spacing: 6, runSpacing: 4, children: [
+            for (final btn in MouseButton.values)
+              _chip(
+                kMouseButtonLabels[btn]!,
+                settings.mouseButton == btn,
+                () => onChanged(settings.copyWith(mouseButton: btn)),
+              ),
+          ]));
         case ClickSettingGroup.clickType:
-          children.add(_row('点击方式', SizedBox(
-            width: 140,
-            child: ComboBox<bool>(
-              value: settings.doubleClick,
-              items: [
-                const ComboBoxItem<bool>(value: false, child: Text('单击')),
-                const ComboBoxItem<bool>(value: true, child: Text('双击')),
-              ],
-              onChanged: (v) {
-                if (v != null) onChanged(settings.copyWith(doubleClick: v));
-              },
-            ),
-          )));
+          children.add(Wrap(spacing: 6, runSpacing: 4, children: [
+            _chip('单击', !settings.doubleClick,
+              () => onChanged(settings.copyWith(doubleClick: false))),
+            _chip('双击', settings.doubleClick,
+              () => onChanged(settings.copyWith(doubleClick: true))),
+          ]));
         case ClickSettingGroup.holdMs:
-          children.add(_row('按住时长', _number(
+          children.add(Wrap(spacing: 6, runSpacing: 4, children: [
+            for (final ms in const [0, 10, 20, 30, 50, 100])
+              _chip(
+                ms == 0 ? '不保持' : '${ms}ms',
+                settings.holdMs == ms,
+                () => onChanged(settings.copyWith(holdMs: ms)),
+              ),
+          ]));
+          children.add(const SizedBox(height: 8));
+          children.add(_number(
             value: settings.holdMs,
             min: 0,
             max: 5000,
+            width: 100,
             onChanged: (v) => onChanged(settings.copyWith(holdMs: v)),
-          )));
+          ));
         case ClickSettingGroup.randomDelay:
           children.add(_toggle('随机延迟', settings.randomDelayEnabled,
             (v) => onChanged(settings.copyWith(randomDelayEnabled: v))));
           if (settings.randomDelayEnabled) {
             children.add(const SizedBox(height: 6));
-            children.add(_row('延迟范围', Row(mainAxisSize: MainAxisSize.min, children: [
-              _number(
-                value: settings.randomDelayMinMs,
-                min: 0,
-                max: 10000,
-                width: 70,
-                unit: '',
-                onChanged: (v) => onChanged(settings.copyWith(randomDelayMinMs: v)),
-              ),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 6),
-                child: Text('~', style: TextStyle(fontSize: 13)),
-              ),
-              _number(
-                value: settings.randomDelayMaxMs,
-                min: 0,
-                max: 10000,
-                width: 70,
-                unit: '',
-                onChanged: (v) => onChanged(settings.copyWith(randomDelayMaxMs: v)),
-              ),
-              const SizedBox(width: 6),
-              const Text('ms', style: TextStyle(fontSize: 12)),
-            ])));
+            children.add(_range('延迟范围', 'ms',
+              settings.randomDelayMinMs,
+              settings.randomDelayMaxMs,
+              (v) => onChanged(settings.copyWith(randomDelayMinMs: v)),
+              (v) => onChanged(settings.copyWith(randomDelayMaxMs: v)),
+            ));
           }
         case ClickSettingGroup.randomOffset:
           children.add(_toggle('随机偏移', settings.randomOffsetEnabled,
             (v) => onChanged(settings.copyWith(randomOffsetEnabled: v))));
           if (settings.randomOffsetEnabled) {
             children.add(const SizedBox(height: 6));
-            children.add(_row('偏移范围', Row(mainAxisSize: MainAxisSize.min, children: [
-              _number(
-                value: settings.randomOffsetMinPx,
-                min: 0,
-                max: 500,
-                width: 70,
-                unit: '',
-                onChanged: (v) => onChanged(settings.copyWith(randomOffsetMinPx: v)),
-              ),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 6),
-                child: Text('~', style: TextStyle(fontSize: 13)),
-              ),
-              _number(
-                value: settings.randomOffsetMaxPx,
-                min: 0,
-                max: 500,
-                width: 70,
-                unit: '',
-                onChanged: (v) => onChanged(settings.copyWith(randomOffsetMaxPx: v)),
-              ),
-              const SizedBox(width: 6),
-              const Text('px', style: TextStyle(fontSize: 12)),
-            ])));
+            children.add(_range('偏移范围', 'px',
+              settings.randomOffsetMinPx,
+              settings.randomOffsetMaxPx,
+              (v) => onChanged(settings.copyWith(randomOffsetMinPx: v)),
+              (v) => onChanged(settings.copyWith(randomOffsetMaxPx: v)),
+            ));
           }
         case ClickSettingGroup.humanLike:
           children.add(_toggle('拟人化移动', settings.humanLikeEnabled,
@@ -143,6 +106,29 @@ class ClickSettingsPanel extends StatelessWidget {
             children.add(const SizedBox(height: 6));
             children.add(_toggle('贝塞尔轨迹', settings.humanLikeBezierCurve,
               (v) => onChanged(settings.copyWith(humanLikeBezierCurve: v))));
+            children.add(const SizedBox(height: 6));
+            children.add(_toggle('随机暂停', settings.humanLikeRandomPause,
+              (v) => onChanged(settings.copyWith(humanLikeRandomPause: v))));
+            if (settings.humanLikeRandomPause) {
+              children.add(const SizedBox(height: 6));
+              children.add(_row('暂停概率', Row(mainAxisSize: MainAxisSize.min, children: [
+                _number(
+                  value: settings.humanLikePauseChance,
+                  min: 1,
+                  max: 100,
+                  width: 70,
+                  unit: '%',
+                  onChanged: (v) => onChanged(settings.copyWith(humanLikePauseChance: v)),
+                ),
+              ])));
+              children.add(const SizedBox(height: 6));
+              children.add(_range('暂停时长', 'ms',
+                settings.humanLikePauseMinMs,
+                settings.humanLikePauseMaxMs,
+                (v) => onChanged(settings.copyWith(humanLikePauseMinMs: v)),
+                (v) => onChanged(settings.copyWith(humanLikePauseMaxMs: v)),
+              ));
+            }
           }
       }
     }
@@ -163,6 +149,26 @@ class ClickSettingsPanel extends StatelessWidget {
     ]);
   }
 
+  Widget _range(
+    String label,
+    String unit,
+    int minValue,
+    int maxValue,
+    ValueChanged<int> onMinChanged,
+    ValueChanged<int> onMaxChanged,
+  ) {
+    return _row(label, Row(mainAxisSize: MainAxisSize.min, children: [
+      _number(value: minValue, min: 0, max: 10000, width: 70, unit: '', onChanged: onMinChanged),
+      const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 6),
+        child: Text('~', style: TextStyle(fontSize: 13)),
+      ),
+      _number(value: maxValue, min: 0, max: 10000, width: 70, unit: '', onChanged: onMaxChanged),
+      const SizedBox(width: 6),
+      Text(unit, style: const TextStyle(fontSize: 12)),
+    ]));
+  }
+
   Widget _number({
     required int value,
     required int min,
@@ -181,5 +187,35 @@ class ClickSettingsPanel extends StatelessWidget {
         Text(unit, style: const TextStyle(fontSize: 12)),
       ],
     ]);
+  }
+
+  Widget _chip(String label, bool selected, VoidCallback onTap) {
+    return Builder(builder: (context) {
+      final isDark = FluentTheme.of(context).brightness == Brightness.dark;
+      final accent = FluentTheme.of(context).accentColor;
+      final unselectedBg = isDark ? const Color(0xFF303050) : const Color(0xFFE8E8F0);
+      final unselectedBorder = isDark ? const Color(0xFF404060) : const Color(0xFFD0D0D8);
+      final unselectedText = isDark ? const Color(0xFFC0C0D8) : const Color(0xFF5A5A70);
+      return MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          onTap: onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: selected ? accent.withValues(alpha: 0.15) : unselectedBg,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: selected ? accent : unselectedBorder),
+            ),
+            child: Text(label, style: TextStyle(
+              fontSize: 13,
+              fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+              color: selected ? accent : unselectedText,
+            )),
+          ),
+        ),
+      );
+    });
   }
 }

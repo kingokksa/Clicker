@@ -5,6 +5,8 @@ import 'package:provider/provider.dart';
 import '../../services/app_state.dart';
 import '../../services/screen_overlay_service.dart';
 import '../../models/clicker_config.dart';
+import '../../models/click_settings.dart';
+import '../../widgets/click_settings_panel.dart';
 import '../../models/hotkey_config.dart';
 import '../../models/key_alias.dart';
 import '../../services/key_alias_service.dart';
@@ -72,7 +74,7 @@ class _ClickerPageState extends State<ClickerPage> {
       modeSections.addAll([
         _spacing, _section(title: '操作类型', icon: FluentIcons.touch, child: _buildMouseActionSelector(config, state, theme)),
         if (config.clickType == ClickType.single || config.clickType == ClickType.double) ...[
-          _spacing, _section(title: '鼠标按键', icon: FluentIcons.touch_pointer, child: _buildMouseButtonSelector(config, state, theme)),
+          _spacing, _section(title: '鼠标按键', icon: FluentIcons.touch_pointer, child: _clickPanel(config, state, const [ClickSettingGroup.mouseButton])),
           _spacing, _section(title: '点击位置', icon: FluentIcons.map_pin, child: _buildPositionSelector(context, config, state, theme)),
         ],
         if (config.clickType == ClickType.drag) ...[
@@ -94,7 +96,7 @@ class _ClickerPageState extends State<ClickerPage> {
       _section(title: '重复模式', icon: FluentIcons.refresh, child: _buildRepeatModeSelector(config, state, theme)),
       if (!isKeyboard) ...[
         _spacing,
-        _section(title: '按下保持', icon: FluentIcons.timer, child: _buildHoldSelector(config, state, theme)),
+        _section(title: '按下保持', icon: FluentIcons.timer, child: _clickPanel(config, state, const [ClickSettingGroup.holdMs])),
       ],
       _spacing,
       _section(title: '用户介入', icon: FluentIcons.pause, child: _buildUserIntervention(config, state, theme)),
@@ -592,37 +594,12 @@ class _ClickerPageState extends State<ClickerPage> {
     ]);
   }
 
-  Widget _buildMouseButtonSelector(ClickerConfig config, AppState state, FluentThemeData theme) {
-    final labels = {
-      MouseButton.left: '左键', MouseButton.right: '右键', MouseButton.middle: '中键',
-      MouseButton.scrollUp: '滚轮上', MouseButton.scrollDown: '滚轮下',
-      MouseButton.x1: '侧键1', MouseButton.x2: '侧键2',
-    };
-    return Wrap(spacing: 6, runSpacing: 4, children: MouseButton.values.map((btn) =>
-      _selectChip(labels[btn]!, config.mouseButton == btn,
-        () => state.setClickerConfig(config.copyWith(mouseButton: btn))),
-    ).toList());
-  }
-
-  Widget _buildHoldSelector(ClickerConfig config, AppState state, FluentThemeData theme) {
-    const presets = [0, 10, 20, 30, 50, 100];
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Wrap(spacing: 6, runSpacing: 4, children: [
-        for (final ms in presets)
-          _selectChip(ms == 0 ? '不保持' : '${ms}ms', config.clickHoldMs == ms,
-            () => state.setClickerConfig(config.copyWith(clickHoldMs: ms))),
-      ]),
-      const SizedBox(height: 8),
-      Row(children: [
-        DebouncedTextBox(
-          value: config.clickHoldMs,
-          min: 0, max: 5000,
-          onChanged: (v) => state.setClickerConfig(config.copyWith(clickHoldMs: v)),
-          width: 100,
-        ),
-        const Text(' ms', style: TextStyle(fontSize: 12)),
-      ]),
-    ]);
+  Widget _clickPanel(ClickerConfig config, AppState state, List<ClickSettingGroup> groups) {
+    return ClickSettingsPanel(
+      settings: ClickSettings.fromConfig(config),
+      groups: groups,
+      onChanged: (s) => state.setClickerConfig(s.applyTo(config)),
+    );
   }
 
   Widget _buildUserIntervention(ClickerConfig config, AppState state, FluentThemeData theme) {
