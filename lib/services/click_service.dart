@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:ffi/ffi.dart';
 import 'package:flutter/services.dart';
 import '../models/clicker_config.dart';
+import '../models/click_settings.dart';
 import 'platform/platform_input.dart';
 import 'platform/windows_input.dart';
 import 'platform/android_input.dart';
@@ -82,7 +83,7 @@ class ClickService {
   int _lastLandingY = -1;
   int _followX = -1;
   int _followY = -1;
-  int _followIntervalMs = 200;
+  ClickSettings? _followSettings;
 
   Future<void> _resolveAnchor() async {
     if (!Platform.isWindows) return;
@@ -110,9 +111,9 @@ class ClickService {
     }
   }
 
-  (int, int) _applyRandomOffset(int x, int y) {
-    final offsetMin = _config.randomOffsetMinPx;
-    final offsetMax = _config.randomOffsetMaxPx;
+  (int, int) _applyRandomOffset(int x, int y, [ClickSettings? settings]) {
+    final offsetMin = settings?.randomOffsetMinPx ?? _config.randomOffsetMinPx;
+    final offsetMax = settings?.randomOffsetMaxPx ?? _config.randomOffsetMaxPx;
     final range = (offsetMax - offsetMin + 1) > 0 ? offsetMax - offsetMin + 1 : 1;
     final nx = x +
         (offsetMin + _random.nextInt(range)) * (_random.nextBool() ? 1 : -1);
@@ -142,13 +143,14 @@ class ClickService {
   bool get isRunning => _status == ClickerStatus.running;
 
   bool get hasFollowTarget => _followX >= 0 && _followY >= 0;
-  int get followIntervalMs => _followIntervalMs;
+  ClickSettings? get followSettings => _followSettings;
+  int get followIntervalMs => _followSettings?.intervalMs ?? 200;
 
-  void setFollowTarget(int x, int y, int intervalMs) {
+  void setFollowTarget(int x, int y, ClickSettings settings) {
     final wasFollowing = hasFollowTarget;
     _followX = x;
     _followY = y;
-    if (intervalMs > 0) _followIntervalMs = intervalMs;
+    _followSettings = settings;
     if (!wasFollowing) onFollowChanged?.call(true);
   }
 
@@ -156,6 +158,7 @@ class ClickService {
     final wasFollowing = hasFollowTarget;
     _followX = -1;
     _followY = -1;
+    _followSettings = null;
     if (wasFollowing) onFollowChanged?.call(false);
   }
 
@@ -274,7 +277,7 @@ class ClickService {
   void _scheduleClick({Stopwatch? prevActionElapsed}) {
     if (_status != ClickerStatus.running) return;
 
-    final baseUs = ((hasFollowTarget ? _followIntervalMs : _config.intervalMs) * 1000).round();
+    final baseUs = ((hasFollowTarget ? followIntervalMs : _config.intervalMs) * 1000).round();
 
     final wantsRandom = !hasFollowTarget &&
         (_config.randomDelayMinMs > 0 ||
@@ -436,16 +439,20 @@ class ClickService {
   }
 
   int _getDelayUs() {
-    final baseUs = (_config.intervalMs * 1000).round().clamp(1, 1 << 30).toInt();
+    final following = hasFollowTarget;
+    final fs = _followSettings;
+    final baseMs = following ? (fs?.intervalMs ?? 200) : _config.intervalMs;
+    final baseUs = (baseMs * 1000).round().clamp(1, 1 << 30).toInt();
     var delay = baseUs;
 
-    if (_config.humanLikeEnabled) {
+    final humanLike = following ? (fs?.humanLikeEnabled ?? false) : _config.humanLikeEnabled;
+    if (humanLike) {
       final variation = (baseUs * 0.4).round();
       if (variation > 0) {
         delay += _random.nextInt(variation * 2 + 1) - variation;
       }
 
-      if (_config.humanLikeRandomPause && _random.nextInt(100) < _config.humanLikePauseChance) {
+      if (!following && _config.humanLikeRandomPause && _random.nextInt(100) < _config.humanLikePauseChance) {
         final lo = _config.humanLikePauseMinMs;
         final hi = _config.humanLikePauseMaxMs;
         final pauseMs = hi > lo ? lo + _random.nextInt(hi - lo + 1) : lo;
@@ -453,9 +460,10 @@ class ClickService {
       }
     }
 
-    final lo = _config.randomDelayMinMs;
-    final hi = _config.randomDelayMaxMs;
-    if (lo > 0 && hi > 0) {
+    final delayEnabled = following ? (fs?.randomDelayEnabled ?? false) : true;
+    final lo = following ? (fs?.randomDelayMinMs ?? 0) : _config.randomDelayMinMs;
+    final hi = following ? (fs?.randomDelayMaxMs ?? 0) : _config.randomDelayMaxMs;
+    if (delayEnabled && lo > 0 && hi > 0) {
       final mn = lo < hi ? lo : hi;
       final mx = lo < hi ? hi : lo;
       final randomExtraMs = mn + _random.nextInt(mx - mn + 1);
@@ -590,6 +598,7 @@ class ClickService {
 
   Future<void> _performMouseClick() async {
     final bool following = hasFollowTarget;
+    final fs = _followSettings;
     int x = following
         ? _followX
         : (_config.positionMode == PositionMode.fixed ||
@@ -615,8 +624,9 @@ class ClickService {
         _config.positionMode == PositionMode.fixed ||
         _config.positionMode == PositionMode.pick;
 
-    if (!following && hasFixedTarget && _config.humanLikeEnabled &&
-        _config.humanLikeBezierCurve && targetX >= 0 && targetY >= 0) {
+    final humanLike = following ? (fs?.humanLikeEnabled ?? false) : _config.humanLikeEnabled;
+    final bezier = following ? (fs?.humanLikeBezierCurve ?? false) : _config.humanLikeBezierCurve;
+    if (hasFixedTarget && humanLike && bezier && targetX >= 0 && targetY >= 0) {
       if (_lastMoveX != targetX || _lastMoveY != targetY) {
         await _moveMouseBezier(targetX, targetY);
         _lastMoveX = targetX;
@@ -624,8 +634,9 @@ class ClickService {
       }
     }
 
-    if (!following && x >= 0 && y >= 0 && _config.randomOffsetEnabled) {
-      final p = _applyRandomOffset(x, y);
+    final offsetEnabled = following ? (fs?.randomOffsetEnabled ?? false) : _config.randomOffsetEnabled;
+    if (x >= 0 && y >= 0 && offsetEnabled) {
+      final p = _applyRandomOffset(x, y, following ? fs : null);
       x = p.$1;
       y = p.$2;
     }
@@ -633,9 +644,9 @@ class ClickService {
     await _input.mouseClick(
       x: x,
       y: y,
-      button: following ? MouseButton.left.name : _config.mouseButton.name,
-      doubleClick: !following && _config.clickType == ClickType.double,
-      holdMs: _config.clickHoldMs,
+      button: (following ? (fs?.mouseButton ?? MouseButton.left) : _config.mouseButton).name,
+      doubleClick: following ? (fs?.doubleClick ?? false) : _config.clickType == ClickType.double,
+      holdMs: following ? (fs?.holdMs ?? 0) : _config.clickHoldMs,
     );
   }
 

@@ -19,6 +19,8 @@ import '../../services/platform/windows_input.dart';
 import '../../services/app_paths.dart';
 import '../../widgets/app_slider.dart';
 import '../../widgets/debounced_text_box.dart';
+import '../../widgets/click_settings_panel.dart';
+import '../../models/click_settings.dart';
 import '../../services/screen_overlay_service.dart';
 import '../../services/key_alias_service.dart';
 import '../../models/macro_model.dart';
@@ -132,8 +134,6 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
   int _selectedTab = 0;
   final ScreenMonitorService _monitor = ScreenMonitorService();
   final VisionService _vision = VisionService.instance;
-
-  int _checkIntervalMs = 500;
 
   final String _ocrLanguage = 'zh-Hans-CN';
 
@@ -303,6 +303,8 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
             showTrackingBox: m['showTrackingBox'] ?? true,
             followDeadzonePx: m['followDeadzonePx'] ?? 8,
             followToleranceMs: m['followToleranceMs'] ?? 800,
+            clickSettings: ClickSettings.fromJson(
+              m['clickSettings'] is Map ? Map<String, dynamic>.from(m['clickSettings'] as Map) : const {}),
             templateData: () {
               final td = m['templateData'];
               if (td == null) return null;
@@ -363,6 +365,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
       'showTrackingBox': t.showTrackingBox,
       'followDeadzonePx': t.followDeadzonePx,
       'followToleranceMs': t.followToleranceMs,
+      'clickSettings': t.clickSettings.toJson(),
       if (t.templateData != null) 'templateData': {
         'width': t.templateData!.width,
         'height': t.templateData!.height,
@@ -374,18 +377,22 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
 
   bool _triggerRunning = false;
 
+  int _effectiveInterval(_TriggerEntry t) {
+    final base = t.intervalMs < 100 ? 100 : t.intervalMs;
+    final expensive = t.conditionType == _TriggerConditionType.imageMatch ||
+        t.conditionType == _TriggerConditionType.textMatch ||
+        t.conditionType == _TriggerConditionType.objectDetect ||
+        t.conditionType == _TriggerConditionType.elementMatch;
+    return expensive && base < 1000 ? 1000 : base;
+  }
+
   void _startTriggerChecker() {
     _triggerCheckTimer?.cancel();
     final enabledTriggers = _triggers.where((t) => t.enabled).toList();
     if (enabledTriggers.isEmpty) return;
 
-    int interval = _checkIntervalMs;
-    final hasExpensiveTriggers = enabledTriggers.any((t) =>
-      t.conditionType == _TriggerConditionType.imageMatch ||
-      t.conditionType == _TriggerConditionType.textMatch ||
-      t.conditionType == _TriggerConditionType.objectDetect ||
-      t.conditionType == _TriggerConditionType.elementMatch);
-    if (hasExpensiveTriggers && interval < 1000) interval = 1000;
+    var interval = enabledTriggers.map(_effectiveInterval).reduce((a, b) => a < b ? a : b);
+    if (interval < 100) interval = 100;
 
     debugPrint('[条件触发] 启动检测: interval=${interval}ms, triggers=${enabledTriggers.length}');
     _triggerCheckTimer = Timer.periodic(Duration(milliseconds: interval), (_) => _checkTriggers());
@@ -411,8 +418,9 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
         continue;
       }
 
-      final lastFired = _triggerLastFired[trigger.id];
-      if (lastFired != null && now.difference(lastFired).inMilliseconds < trigger.intervalMs) continue;
+      final lastCheck = _triggerLastCheck[trigger.id];
+      if (lastCheck != null && now.difference(lastCheck).inMilliseconds < _effectiveInterval(trigger)) continue;
+      _triggerLastCheck[trigger.id] = now;
 
       bool conditionMet = false;
       String statusText = '';
@@ -658,15 +666,15 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
     if (_followTriggerId == t.id && prev != null) {
       final moved = (cx - prev.$1).abs() + (cy - prev.$2).abs();
       if (moved < t.followDeadzonePx) {
-        _triggerStatus[t.id] = '连点中 (${prev.$1}, ${prev.$2}) ${t.intervalMs}ms';
+        _triggerStatus[t.id] = '连点中 (${prev.$1}, ${prev.$2}) ${t.clickSettings.intervalMs}ms';
         return;
       }
     }
     _followTarget[t.id] = (cx, cy);
     _followTriggerId = t.id;
-    svc.setFollowTarget(cx, cy, t.intervalMs);
+    svc.setFollowTarget(cx, cy, t.clickSettings);
     if (!svc.isRunning) await svc.start();
-    _triggerStatus[t.id] = svc.isRunning ? '连点中 ($cx, $cy) ${t.intervalMs}ms' : '连点未启动';
+    _triggerStatus[t.id] = svc.isRunning ? '连点中 ($cx, $cy) ${t.clickSettings.intervalMs}ms' : '连点未启动';
   }
 
   void _handleFollowMiss(_TriggerEntry t) {
@@ -968,19 +976,6 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
           const SizedBox(height: 8),
           Row(children: [
             Icon(FluentIcons.speed_high, size: 12, color: isDark ? const Color(0xFF9090B0) : const Color(0xFF8A8A9A)),
-            const SizedBox(width: 4),
-            const Text('间隔:', style: TextStyle(fontSize: 12)),
-            const SizedBox(width: 4),
-            ComboBox<String>(
-              items: ['100ms', '200ms', '500ms', '1000ms', '2000ms'].map((l) => ComboBoxItem(value: l, child: Text(l))).toList(),
-              value: ['100ms', '200ms', '500ms', '1000ms', '2000ms'].contains('${_checkIntervalMs}ms') ? '${_checkIntervalMs}ms' : '500ms',
-              onChanged: (v) {
-                if (v != null) {
-                  setState(() => _checkIntervalMs = int.parse(v.replaceAll('ms', '')));
-                  if (_triggerRunning) _startTriggerChecker();
-                }
-              },
-            ),
             const SizedBox(width: 12),
             Expanded(child: Wrap(spacing: 4, runSpacing: 4, alignment: WrapAlignment.end, children: ocrPlugins.map((p) => Padding(
               padding: const EdgeInsets.only(left: 4),
@@ -1159,6 +1154,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
                                     showTrackingBox: result.showTrackingBox,
                                     followDeadzonePx: result.followDeadzonePx,
                                     followToleranceMs: result.followToleranceMs,
+                                    clickSettings: result.clickSettings,
                                   );
                                 }
                               });
@@ -1227,7 +1223,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
                         Row(children: [
                           Icon(FluentIcons.speed_high, size: 11, color: muted),
                           const SizedBox(width: 4),
-                          Text(t.actionType == _TriggerActionType.followClicker ? '连点间隔' : '间隔', style: TextStyle(fontSize: 11, color: muted)),
+                          Text('检查间隔', style: TextStyle(fontSize: 11, color: muted)),
                           const SizedBox(width: 6),
                           Expanded(child: AppSlider(
                             value: t.intervalMs.toDouble(),
@@ -1341,7 +1337,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
       case _TriggerActionType.stopClicker:
         return '停止连点';
       case _TriggerActionType.followClicker:
-        return '死区 ${t.followDeadzonePx}px · 容忍 ${t.followToleranceMs}ms';
+        return '${kMouseButtonLabels[t.clickSettings.mouseButton] ?? "左键"} ${t.clickSettings.doubleClick ? "双击" : "单击"} · ${t.clickSettings.intervalMs}ms · 死区 ${t.followDeadzonePx}px · 容忍 ${t.followToleranceMs}ms';
     }
   }
 
@@ -1470,6 +1466,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
           showTrackingBox: result.showTrackingBox,
           followDeadzonePx: result.followDeadzonePx,
           followToleranceMs: result.followToleranceMs,
+          clickSettings: result.clickSettings,
           enabled: true,
         ));
       });
@@ -1538,6 +1535,7 @@ class _ImageRecognitionPageState extends State<ImageRecognitionPage> {
           showTrackingBox: result.showTrackingBox,
           followDeadzonePx: result.followDeadzonePx,
           followToleranceMs: result.followToleranceMs,
+          clickSettings: result.clickSettings,
           enabled: true,
         ));
       });
@@ -2199,23 +2197,6 @@ class _AdvancedModelsTabState extends State<_AdvancedModelsTab> {
         const Divider(style: DividerThemeData(horizontalMargin: EdgeInsets.zero)),
 
         const SizedBox(height: 8),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: const Color(0x1F4FC3F7),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: const Color(0x4D4FC3F7)),
-          ),
-          child: const Row(children: [
-            Icon(FluentIcons.info, size: 14, color: Color(0xFF4FC3F7)),
-            SizedBox(width: 8),
-            Expanded(child: Text(
-              '安装依赖后，可在「条件触发」中使用「目标检测」条件类型。\n目标检测功能已整合到条件触发系统中。',
-              style: TextStyle(fontSize: 12, color: Color(0xFF4FC3F7)),
-            )),
-          ]),
-        ),
       ],
     ]));
   }
@@ -3068,6 +3049,7 @@ class _TriggerEntry {
   bool showTrackingBox;
   final int followDeadzonePx;
   final int followToleranceMs;
+  final ClickSettings clickSettings;
 
   _TriggerEntry({
     required this.id, required this.name, required this.conditionType,
@@ -3087,6 +3069,7 @@ class _TriggerEntry {
     this.showTrackingBox = true,
     this.followDeadzonePx = 8,
     this.followToleranceMs = 800,
+    required this.clickSettings,
   });
 }
 
@@ -3112,6 +3095,7 @@ class _TriggerConfig {
   final bool showTrackingBox;
   final int followDeadzonePx;
   final int followToleranceMs;
+  final ClickSettings clickSettings;
   _TriggerConfig({
     required this.name, required this.conditionType, required this.actionType,
     required this.x, required this.y, required this.w, required this.h,
@@ -3129,6 +3113,7 @@ class _TriggerConfig {
     this.showTrackingBox = true,
     this.followDeadzonePx = 8,
     this.followToleranceMs = 800,
+    required this.clickSettings,
   });
 }
 
@@ -3176,6 +3161,7 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
   bool _showTrackingBox = true;
   int _followDeadzonePx = 8;
   int _followToleranceMs = 800;
+  ClickSettings _clickSettings = ClickSettings();
 
   @override
   void initState() {
@@ -3201,6 +3187,7 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
       _showTrackingBox = t.showTrackingBox;
       _followDeadzonePx = t.followDeadzonePx;
       _followToleranceMs = t.followToleranceMs;
+      _clickSettings = t.clickSettings;
       _templateData = t.templateData;
       if (t.templateData != null) {
         _templateInfo = '${t.templateData!.width}x${t.templateData!.height}';
@@ -3249,7 +3236,7 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
   Widget build(BuildContext context) {
     return ContentDialog(
       title: Text(_isEditing ? '编辑触发条件' : '添加触发条件'),
-      content: SizedBox(width: 400, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+      content: SizedBox(width: 560, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
         _dialogSectionTitle('条件'),
         const SizedBox(height: 10),
         const Text('条件类型:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
@@ -3448,23 +3435,6 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
             isExpanded: true,
           ),
           const SizedBox(height: 6),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(6),
-            decoration: BoxDecoration(
-              color: const Color(0x1F7C4DFF),
-              borderRadius: BorderRadius.circular(4),
-              border: Border.all(color: const Color(0x4D7C4DFF)),
-            ),
-            child: const Row(children: [
-              Icon(FluentIcons.info, size: 12, color: Color(0xFF7C4DFF)),
-              SizedBox(width: 4),
-              Expanded(child: Text(
-                '走 Windows UI Automation，按屏幕全局查找。三项至少填一项。',
-                style: TextStyle(fontSize: 10, color: Color(0xFF7C4DFF)),
-              )),
-            ]),
-          ),
         ],
 
         const SizedBox(height: 12),
@@ -3520,57 +3490,23 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
             const SizedBox(width: 6),
             SizedBox(width: 70, child: TextBox(controller: _actionYCtrl, placeholder: 'Y', onChanged: (v) => _actionY = int.tryParse(v) ?? _actionY)),
           ]),
-        ] else if (_actionType == _TriggerActionType.clickTargetCenter) ...[
-          const SizedBox(height: 4),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFF5252).withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: const Color(0xFFFF5252).withValues(alpha: 0.2)),
-            ),
-            child: const Row(children: [
-              Icon(FluentIcons.machine_learning, size: 14, color: Color(0xFFFF5252)),
-              SizedBox(width: 6),
-              Expanded(child: Text(
-                '检测到目标后，自动点击目标中心位置',
-                style: TextStyle(fontSize: 11, color: Color(0xFFFF5252)),
-              )),
-            ]),
-          ),
         ] else if (_actionType == _TriggerActionType.followClicker) ...[
           const SizedBox(height: 4),
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.all(8),
+            padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
-              color: const Color(0xFF00B0FF).withValues(alpha: 0.08),
+              color: const Color(0xFF00B0FF).withValues(alpha: 0.06),
               borderRadius: BorderRadius.circular(6),
               border: Border.all(color: const Color(0xFF00B0FF).withValues(alpha: 0.25)),
             ),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Row(children: [
-                Icon(FluentIcons.play, size: 13, color: Color(0xFF00B0FF)),
-                SizedBox(width: 6),
-                Expanded(child: Text('匹配到目标：启动连点，落点跟随目标中心',
-                  style: TextStyle(fontSize: 11, color: Color(0xFF00B0FF)))),
-              ]),
-              const SizedBox(height: 4),
-              const Row(children: [
-                Icon(FluentIcons.stop, size: 13, color: Color(0xFF00B0FF)),
-                SizedBox(width: 6),
-                Expanded(child: Text('失去目标：自动停止连点',
-                  style: TextStyle(fontSize: 11, color: Color(0xFF00B0FF)))),
-              ]),
-              const SizedBox(height: 4),
-              const Row(children: [
-                Icon(FluentIcons.settings, size: 13, color: Color(0xFF00B0FF)),
-                SizedBox(width: 6),
-                Expanded(child: Text('不受「连点」页设置影响：固定鼠标左键单击、无限重复，间隔用下方「连点间隔」',
-                  style: TextStyle(fontSize: 11, color: Color(0xFF00B0FF)))),
-              ]),
-              const SizedBox(height: 8),
+              ClickSettingsPanel(
+                settings: _clickSettings,
+                intervalLabel: '连点间隔',
+                onChanged: (s) => setState(() => _clickSettings = s),
+              ),
+              const SizedBox(height: 10),
               Row(children: [
                 const Text('落点死区: ', style: TextStyle(fontSize: 12)),
                 SizedBox(width: 70, child: DebouncedTextBox(value: _followDeadzonePx, min: 0, max: 500, onChanged: (v) => _followDeadzonePx = v)),
@@ -3643,7 +3579,7 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
         _dialogSectionTitle('其它'),
         const SizedBox(height: 10),
         Row(children: [
-          Text(_actionType == _TriggerActionType.followClicker ? '连点间隔: ' : '检查间隔: ', style: const TextStyle(fontSize: 13)),
+          const Text('检查间隔: ', style: TextStyle(fontSize: 13)),
           Expanded(child: AppSlider(value: _intervalMs.toDouble(), min: 100, max: 5000, divisions: 49, label: '${_intervalMs}ms', onChanged: (v) => setState(() => _intervalMs = v.round()))),
           const SizedBox(width: 8),
           Text('$_intervalMs ms', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
@@ -3673,6 +3609,7 @@ class _AddTriggerDialogState extends State<_AddTriggerDialog> {
           showTrackingBox: _showTrackingBox,
           followDeadzonePx: _followDeadzonePx,
           followToleranceMs: _followToleranceMs,
+          clickSettings: _clickSettings,
         )), child: Text(_isEditing ? '保存' : '添加')),
       ],
     );
