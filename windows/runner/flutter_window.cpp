@@ -1112,6 +1112,7 @@ static bool g_raw_input_enabled = false;
 static bool g_user_input_monitor = false;
 static flutter::MethodChannel<flutter::EncodableValue>* g_raw_input_channel = nullptr;
 static POINT g_user_move_last = {0, 0};
+static POINT g_self_set_pos = {-1, -1};
 
 static bool RegisterRawInputDevicesFor(HWND hwnd, bool enable) {
   RAWINPUTDEVICE devices[2] = {};
@@ -3601,11 +3602,11 @@ bool FlutterWindow::OnCreate() {
           g_hold_trigger_count = 0;
           LeaveCriticalSection(&g_hold_trigger_cs);
 
-          // Uninstall hooks if not recording and no hotkeys registered
-          if (!is_recording_ && g_hook_hotkey_count == 0) {
+          // Uninstall hooks only when nothing else needs them
+          if (!is_recording_ && g_hook_hotkey_count == 0 && !g_user_input_monitor) {
             if (keyboard_hook_) { UnhookWindowsHookEx(keyboard_hook_); keyboard_hook_ = nullptr; }
             if (mouse_hook_) { UnhookWindowsHookEx(mouse_hook_); mouse_hook_ = nullptr; }
-            if (!is_recording_ && g_hook_hotkey_count == 0) g_flutter_window_for_hooks = nullptr;
+            g_flutter_window_for_hooks = nullptr;
           }
 
           result->Success(flutter::EncodableValue(true));
@@ -3882,17 +3883,21 @@ bool FlutterWindow::OnCreate() {
             result->Error("RAW_INPUT_FAILED", "RegisterRawInputDevices failed");
           }
         } else if (call.method_name() == "setUserInputMonitor") {
-          if (enable && !keyboard_hook_) {
+          if (enable) {
             g_flutter_window_for_hooks = this;
-            keyboard_hook_ =
-                SetWindowsHookExW(WH_KEYBOARD_LL, KeyboardHookProc, nullptr, 0);
-            mouse_hook_ =
-                SetWindowsHookExW(WH_MOUSE_LL, MouseHookProc, nullptr, 0);
+            if (!keyboard_hook_) {
+              keyboard_hook_ =
+                  SetWindowsHookExW(WH_KEYBOARD_LL, KeyboardHookProc, nullptr, 0);
+            }
+            if (!mouse_hook_) {
+              mouse_hook_ =
+                  SetWindowsHookExW(WH_MOUSE_LL, MouseHookProc, nullptr, 0);
+            }
           }
           g_user_input_monitor = enable;
           GetCursorPos(&g_user_move_last);
           result->Success(flutter::EncodableValue(
-              enable ? (keyboard_hook_ != nullptr) : true));
+              enable ? (keyboard_hook_ != nullptr && mouse_hook_ != nullptr) : true));
         } else {
           result->NotImplemented();
         }
@@ -3942,7 +3947,7 @@ bool FlutterWindow::OnCreate() {
         } else if (call.method_name() == "stopRecording") {
           is_recording_ = false;
           // Only uninstall hooks if hold trigger is not active and no hotkeys registered
-          if (g_hold_trigger_count == 0 && g_hook_hotkey_count == 0) {
+          if (g_hold_trigger_count == 0 && g_hook_hotkey_count == 0 && !g_user_input_monitor) {
             if (keyboard_hook_) {
               UnhookWindowsHookEx(keyboard_hook_);
               keyboard_hook_ = nullptr;
@@ -4162,9 +4167,15 @@ LRESULT CALLBACK FlutterWindow::MouseHookProc(int code, WPARAM wparam, LPARAM lp
     if (g_user_input_monitor && !is_mouse_injected && g_raw_input_channel) {
       int kind_delta = 0;
       if (wparam == WM_MOUSEMOVE) {
-        kind_delta = std::abs(static_cast<int>(ms->pt.x) - g_user_move_last.x) +
-                     std::abs(static_cast<int>(ms->pt.y) - g_user_move_last.y);
-        g_user_move_last = ms->pt;
+        if (g_self_set_pos.x == ms->pt.x && g_self_set_pos.y == ms->pt.y) {
+          // 连点自己挪的鼠标不算用户输入
+          g_user_move_last = ms->pt;
+        } else {
+          kind_delta = std::abs(static_cast<int>(ms->pt.x) - g_user_move_last.x) +
+                       std::abs(static_cast<int>(ms->pt.y) - g_user_move_last.y);
+          // 慢速移动累计到 4px 才算，上报后重置基准
+          if (kind_delta >= 4) g_user_move_last = ms->pt;
+        }
       }
       const bool button_event =
           wparam == WM_LBUTTONDOWN || wparam == WM_LBUTTONUP ||
@@ -4706,6 +4717,8 @@ static void SendOneClick() {
 
   {
     if (g_clicker.x >= 0 && g_clicker.y >= 0) {
+      g_self_set_pos.x = g_clicker.x;
+      g_self_set_pos.y = g_clicker.y;
       SetCursorPos(g_clicker.x, g_clicker.y);
     }
 

@@ -352,7 +352,7 @@ class AppState extends ChangeNotifier {
   Future<void> _syncUserInputMonitor() async {
     final want = _clickerConfig.userInterventionEnabled &&
         _clickerStatus == ClickerStatus.running;
-    if (want == RawInputService.instance.monitoring) return;
+    if (!want && !RawInputService.instance.monitoring) return;
     await RawInputService.instance.setUserInputMonitor(want);
   }
 
